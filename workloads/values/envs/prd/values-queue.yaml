@@ -1,0 +1,4 @@
+# queue — prd 환경값 (골격). 승격 최종(수동 승인 MR). 정의만 — 배포 비활성.
+image:
+  tag: prd
+replicaCount: 3        # 예시: prd는 더 많은 replica. 실제값은 실측·용량에 맞춰.

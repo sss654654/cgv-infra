@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cgv-redis
+description: CGV Redis 래퍼 — bitnami redis(Sentinel HA)를 dependency로 품고 SealedSecret 글루를 얹음.
+type: application
+version: 0.1.0
+appVersion: "7.4"
+dependencies:
+  - name: redis
+    version: "~27.0.15"
+    repository: https://charts.bitnami.com/bitnami

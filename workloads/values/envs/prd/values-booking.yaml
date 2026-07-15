@@ -1,0 +1,4 @@
+# booking — prd 환경값 (골격). 수동 승인 게이트. 정의만 — 배포 비활성.
+image:
+  tag: prd
+replicaCount: 3

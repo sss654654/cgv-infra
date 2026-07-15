@@ -1,0 +1,11 @@
+# frontend dev 환경값. 정적 서버라 가벼움.
+image:
+  tag: dev
+
+replicaCount: 2
+
+resources:
+  requests: { cpu: 50m, memory: 32Mi }
+  limits:   { cpu: 200m, memory: 64Mi }
+
+# ingress.host 미지정 → dev는 path-only 라우팅(LB IP 접근). prd는 envs/prd에서 host 도메인 지정.

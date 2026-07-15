@@ -1,0 +1,26 @@
+# charts/cgv-redis — bitnami redis 래퍼.
+# ★dev = standalone + auth off. 정합검증(2026-07): Sentinel HA는 클라가 sentinel-aware가 아니라 안 뜸
+#   (redis-master 서비스 미생성 + auth 비번경로 없음). standalone이 단일-host 클라·로컬 compose와 정합, 즉시 배포 가능.
+#   → 서비스 = redis-master.data.svc:6379 (values-queue/booking의 REDIS_HOST와 일치).
+# ★Sentinel HA 업그레이드(prd): 코드변경 후(코드-반영사항 #3: queue NewFailoverClient · booking password 필드) →
+#   architecture=replication, sentinel.enabled=true, auth.enabled=true+existingSecret, 클라 sentinel-aware.
+redis:
+  fullnameOverride: redis            # standalone → 서비스 redis-master
+  architecture: standalone           # 단일 master (HA는 코드변경 후 replication+sentinel)
+  auth:
+    enabled: false                   # dev: 무인증(로컬 compose 동일). prd: true + existingSecret(redis-secret).
+  master:
+    count: 1
+    persistence:
+      enabled: false                 # 큐 상태=운영성. durable 기록은 MySQL.
+  metrics:
+    enabled: true                    # redis_exporter + ServiceMonitor
+    serviceMonitor:
+      enabled: true
+
+# SealedSecret 글루 — auth 켤 때(prd) redis-secret 생성용. dev(auth off)는 미사용.
+sealedSecret:
+  enabled: false
+  name: redis-secret
+  key: redis-password
+  encryptedPassword: ""

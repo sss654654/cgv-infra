@@ -1,0 +1,39 @@
+# 앱 ApplicationSet — workloads/apps/* 를 순회해 queue/booking/frontend Application 자동 생성(§3-4).
+# 각 App = workloads/charts/cgv-app(틀) + workloads/apps/<name>/values.yaml(정체성) + workloads/envs/dev/values-<name>.yaml(환경).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+        revision: main
+        directories:
+          - path: workloads/values/apps/*
+  template:
+    metadata:
+      name: '{{.path.basename}}'          # queue / booking / frontend
+      annotations:
+        argocd.argoproj.io/sync-wave: "3"   # 미들웨어(-1)·관측(0~1) 뒤에 앱
+    spec:
+      project: apps
+      source:
+        repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+        targetRevision: main
+        path: workloads/charts/cgv-app     # 공통 틀
+        helm:
+          valueFiles:
+            - values.yaml                                              # 차트 기본값
+            - '../../values/apps/{{.path.basename}}/values.yaml'       # 정체성(env 무관)
+            - '../../values/envs/dev/values-{{.path.basename}}.yaml'   # 환경값
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: app
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true

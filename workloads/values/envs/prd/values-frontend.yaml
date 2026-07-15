@@ -1,0 +1,4 @@
+# frontend — prd 환경값 (골격). 정의만 — 배포 비활성.
+image:
+  tag: prd
+replicaCount: 2

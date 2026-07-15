@@ -1,0 +1,65 @@
+# booking (Java/Spring Boot 3.3) 인스턴스 정체성 — env 무관.
+# 근거 = cgv-onprem/booking (application.yml PORT 8091·actuator probes / Dockerfile nonroot 1001 / pom Flyway 없음).
+
+image:
+  repository: registry.cgv.local/booking
+
+containerPort: 8091
+
+service:
+  port: 8091
+
+# 메트릭 = 본 앱 포트의 /actuator/prometheus (micrometer). → ServiceMonitor (queue의 PodMonitor와 대비).
+metrics:
+  enabled: true
+  kind: ServiceMonitor
+  path: /actuator/prometheus
+  interval: 15s
+
+# temurin useradd -u 1001. JVM은 /tmp에 hsperfdata·temp 씀 → readOnlyRootFilesystem + /tmp emptyDir.
+securityContext:
+  runAsUser: 1001
+  runAsGroup: 1001
+
+volumes:
+  - name: tmp
+    emptyDir: {}
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+# actuator 프로브 (application.yml probes.enabled=true, readiness=db·redis).
+# JVM 느린 기동 → startupProbe로 감싸고(최대 150s), liveness/readiness는 기동 후 시작.
+startupProbe:
+  httpGet: { path: /actuator/health/readiness, port: http }
+  periodSeconds: 5
+  failureThreshold: 30
+livenessProbe:
+  httpGet: { path: /actuator/health/liveness, port: http }
+  periodSeconds: 15
+readinessProbe:
+  httpGet: { path: /actuator/health/readiness, port: http }
+  periodSeconds: 10
+
+# Spring graceful shutdown(30s) + preStop Endpoints 유예. terminationGrace를 그보다 넉넉히.
+lifecycle:
+  preStop:
+    sleep:
+      seconds: 5
+terminationGracePeriodSeconds: 45
+
+# 비밀번호는 평문 금지 → SealedSecret을 envFrom으로. (SealedSecret 생성은 시크릿 글루 단계 TODO.)
+envFrom:
+  - secretRef:
+      name: booking-secrets   # MYSQL_PASSWORD (+ 필요 시 REDIS_PASSWORD)
+
+# dev는 replica 1(스키마 레이스 회피)이라 PDB 없음. topologySpread는 멀티replica 승격 대비.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: booking
+
+partOf: cgv

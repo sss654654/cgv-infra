@@ -1,0 +1,4 @@
+# queue — stg 환경값 (골격). dev와 "다른 것만"(§4-2 delta). 승격 파이프라인(GitLab MR) 붙일 때 채움.
+# ⚠️ 정의만 — 지금 appset는 envs/dev만 순회하므로 stg는 배포 비활성.
+image:
+  tag: stg

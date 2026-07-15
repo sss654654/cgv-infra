@@ -1,0 +1,4 @@
+# argocd helm 값 (최소). 내부 접근·Traefik 뒤라 insecure. 단일 운영자라 dex/SSO 미사용.
+configs:
+  params:
+    server.insecure: true

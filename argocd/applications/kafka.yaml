@@ -1,0 +1,26 @@
+# kafka — 손 나열 개별 Application. CR(매니페스트)만 배달, 실제 브로커는 Strimzi 오퍼레이터가 만듦(operator 패턴).
+# 오퍼레이터·CRD는 install.sh(set-once). 여긴 KafkaCluster·KafkaTopic CR만 GitOps로.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"    # 앱보다 먼저
+spec:
+  project: infra
+  source:
+    repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/kafka
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true   # Strimzi CRD 존재 전제, 안전 보조(§7)

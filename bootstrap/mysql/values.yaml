@@ -1,0 +1,14 @@
+# MySQL (bitnami) — booking의 durable 예매기록. 데이터 안전상 argocd 밖(install.sh).
+architecture: standalone
+auth:
+  database: cgv
+  username: root
+  existingSecret: mysql-secret        # SealedSecret(시크릿-계약): 키 mysql-root-password
+                                      # ★ booking-secrets의 MYSQL_PASSWORD와 같은 값이어야 booking이 붙음
+primary:
+  persistence:
+    enabled: true
+    storageClass: local-path
+    size: 8Gi
+  nodeSelector:
+    cgv.io/data: db                   # mysqldata LV가 있는 k3s-1에 핀

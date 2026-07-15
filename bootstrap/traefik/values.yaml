@@ -1,0 +1,9 @@
+# Traefik — Ingress 컨트롤러(k3s 번들은 disable, 자체 설치). MetalLB LB로 노출.
+service:
+  type: LoadBalancer
+ingressClass:
+  enabled: true
+  isDefaultClass: true               # ingressClassName: traefik 를 기본으로
+providers:
+  kubernetesIngress:
+    enabled: true

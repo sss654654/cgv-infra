@@ -1,0 +1,22 @@
+# queue dev 환경값 — replica·리소스·연결·데모 파라미터.
+# 리소스는 실측 전 추정(노드설계 기준). 부하테스트 후 확정.
+
+image:
+  tag: dev
+
+replicaCount: 2
+
+resources:
+  requests: { cpu: 250m, memory: 64Mi }
+  limits:   { cpu: 500m, memory: 64Mi }   # 메모리 req=limit(Guaranteed), CPU만 버스트
+
+# 연결 대상 서비스명은 미들웨어 차트 배포 후 확정(placeholder). MAX_SESSIONS/SESSION_TIMEOUT=데모값.
+env:
+  PORT: "8090"
+  REDIS_HOST: redis-master.data.svc.cluster.local
+  REDIS_PORT: "6379"
+  KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
+  MAX_SESSIONS: "2"
+  SESSION_TIMEOUT: "60"
+  METRICS_PORT: "9091"
+  OTLP_GRPC_ENDPOINT: alloy.observability.svc.cluster.local:4317

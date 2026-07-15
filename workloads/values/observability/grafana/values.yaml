@@ -1,0 +1,43 @@
+# grafana/grafana 10.5.15 (Grafana 12.3.1) — 내부 접근(ClusterIP), 데이터소스 프로비저닝.
+# ★admin 크레덴셜: grafana-admin(SealedSecret) 필요, 키 admin-user / admin-password.
+# ★데이터소스 URL은 각 차트 릴리스명=컴포넌트명 가정 — 배포 후 실제 서비스명 확인(특히 mimir 게이트웨이명).
+replicas: 1
+deploymentStrategy:
+  type: Recreate                     # RWO local-path 단일볼륨 → 롤링 교착 회피
+admin:
+  existingSecret: grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
+service:
+  enabled: true
+  type: ClusterIP
+  port: 80
+ingress:
+  enabled: false
+persistence:
+  enabled: true
+  type: pvc
+  storageClassName: local-path
+  accessModes: [ReadWriteOnce]
+  size: 2Gi
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Mimir
+        uid: mimir
+        type: prometheus
+        access: proxy
+        url: http://mimir-gateway.observability.svc.cluster.local/prometheus
+        isDefault: true
+        jsonData: { httpMethod: POST }
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki-gateway.observability.svc.cluster.local
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.observability.svc.cluster.local:3200

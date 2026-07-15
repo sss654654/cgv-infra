@@ -1,0 +1,10 @@
+# 패키징(helm package) 시 제외할 패턴.
+.DS_Store
+.git/
+.gitignore
+*.tmp
+*.bak
+*.swp
+*.orig
+.vscode/
+.idea/

@@ -1,0 +1,48 @@
+# 관측 ApplicationSet — 컴포넌트마다 다른 업스트림 차트를 생성(§3-2 "appset이 이종 차트도 생성").
+# list generator(차트 좌표 inline) + multi-source(업스트림 차트 + git의 values).
+# 버전은 조사(2026-07)로 확정·helm 검증됨. ★loki는 grafana-community 리포(포크됨).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: observability
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - { name: loki,               repoURL: https://grafana-community.github.io/helm-charts,    chart: loki,                     version: "18.5.0" }
+          - { name: mimir,              repoURL: https://grafana.github.io/helm-charts,             chart: mimir-distributed,        version: "6.1.0" }
+          - { name: tempo,              repoURL: https://grafana.github.io/helm-charts,             chart: tempo,                    version: "1.24.4" }
+          - { name: grafana,            repoURL: https://grafana.github.io/helm-charts,             chart: grafana,                  version: "10.5.15" }
+          - { name: alloy,              repoURL: https://grafana.github.io/helm-charts,             chart: alloy,                    version: "1.10.1" }
+          - { name: minio,              repoURL: https://charts.min.io/,                            chart: minio,                    version: "5.4.0" }
+          - { name: kube-state-metrics, repoURL: https://prometheus-community.github.io/helm-charts, chart: kube-state-metrics,       version: "7.8.1" }
+          - { name: node-exporter,      repoURL: https://prometheus-community.github.io/helm-charts, chart: prometheus-node-exporter, version: "4.56.1" }
+  template:
+    metadata:
+      name: '{{.name}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{ if eq .name "minio" }}0{{ else }}1{{ end }}'   # MinIO 먼저(S3 백엔드) → LGTM/수집기
+    spec:
+      project: infra
+      sources:
+        - repoURL: '{{.repoURL}}'          # 업스트림 차트(직접 참조)
+          chart: '{{.chart}}'
+          targetRevision: '{{.version}}'
+          helm:
+            valueFiles:
+              - $values/workloads/values/observability/{{.name}}/values.yaml
+        - repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git   # 값 제공용 git 소스
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: observability
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ServerSideApply=true          # 관측 큰 CRD 대비(§7)

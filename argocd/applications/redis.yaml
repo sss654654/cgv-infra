@@ -1,0 +1,27 @@
+# redis — 손 나열 개별 Application(이질·소수라 appset 대신, §3-4). workloads/charts/cgv-redis(래퍼) 배포.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"    # 앱보다 먼저(앱이 Redis에 의존)
+spec:
+  project: infra
+  source:
+    repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/charts/cgv-redis
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../../values/envs/dev/values-redis.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true              # bitnami 큰 리소스 대비

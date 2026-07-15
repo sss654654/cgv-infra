@@ -1,0 +1,19 @@
+# Calico Installation — flannel-backend=none 위에 CNI 제공. tigera-operator가 이 CR을 소비.
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+      - blockSize: 26
+        cidr: 10.42.0.0/16            # k3s 기본 cluster-cidr
+        encapsulation: VXLAN
+        natOutgoing: Enabled
+        nodeSelector: all()
+---
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}

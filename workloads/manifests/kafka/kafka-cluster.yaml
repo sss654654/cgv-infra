@@ -1,0 +1,54 @@
+# KafkaCluster CR — Strimzi 오퍼레이터(install.sh로 먼저 설치)가 이걸 보고 실제 브로커를 만든다(operator 패턴).
+# 클러스터명 "cgv" → bootstrap 서비스 = cgv-kafka-bootstrap.data.svc:9092 (queue/booking env와 일치).
+# ★조사 확정(Strimzi 1.1.0): API = kafka.strimzi.io/v1 (v1beta2 제거됨). KRaft+NodePool이 유일 모드라
+#   strimzi.io/kraft·node-pools annotation 불필요(0.48에서 제거). Kafka 4.3.0 = operator 1.1.0 default.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: cgv-pool
+  namespace: data
+  labels:
+    strimzi.io/cluster: cgv
+spec:
+  replicas: 3                        # 3 브로커 (노드 3, RF3 성립)
+  roles:
+    - controller
+    - broker                         # combined(dual-role) — 소규모
+  storage:
+    type: persistent-claim           # 단일 볼륨. 확장 여지 원하면 jbod 권장(조사 노트)
+    size: 10Gi
+    class: local-path                # kafkadata LV
+    deleteClaim: false
+  template:
+    pod:
+      affinity:
+        podAntiAffinity:             # 브로커 3개를 서로 다른 노드에 (co-location 방지)
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: cgv
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: cgv
+  namespace: data
+spec:
+  kafka:
+    version: 4.3.0
+    metadataVersion: 4.3-IV0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false                   # 내부 평문·무인증(홈랩). 노출 시 tls 리스너 추가
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+  entityOperator:
+    topicOperator: {}                # KafkaTopic CR을 실제 토픽으로
+    userOperator: {}

@@ -1,0 +1,24 @@
+# KafkaTopic CR — 토픽 소유권을 GitOps로(§검증②). auto-create 대신 명시 선언.
+# admissions: queue→booking(입장 발행) / bookings-completed: booking→queue(완료 → ZREM).
+# partition 1 = 순서 보장(단일 컨슈머). RF 3 = 브로커 하나 죽어도 유지.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: admissions
+  namespace: data
+  labels:
+    strimzi.io/cluster: cgv
+spec:
+  partitions: 1
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: bookings-completed
+  namespace: data
+  labels:
+    strimzi.io/cluster: cgv
+spec:
+  partitions: 1
+  replicas: 3

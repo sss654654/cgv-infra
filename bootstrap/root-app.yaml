@@ -1,0 +1,22 @@
+# root-app (app-of-apps) — install.sh가 마지막에 딱 이거 하나 apply하면 argocd/가 폭포로 딸려 옴(§3-7).
+# argocd/ 하위: projects/(AppProject) + applicationsets/ + applications/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default                         # 부트스트랩 진입점(AppProject·ApplicationSet 생성 허용)
+  source:
+    repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+    targetRevision: main
+    path: argocd
+    directory:
+      recurse: true                        # argocd/ 하위(projects·applicationsets·applications) 전부
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd                      # argocd 객체(App·AppProject·AppSet)가 사는 곳
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
