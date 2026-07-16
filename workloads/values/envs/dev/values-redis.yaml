@@ -1,15 +1,15 @@
-# redis dev 환경값 — 서브차트(bitnami)로 전달. 리소스=실측 전 추정.
+# redis dev 환경값 — 서브차트(bitnami)로 전달. Sentinel HA(auth on). 리소스=실측 전 추정.
+# sentinel 모드: node StatefulSet은 replica.*, sentinel 컨테이너는 sentinel.resources로 governed.
 redis:
-  master:
-    resources:
-      requests: { cpu: 100m, memory: 128Mi }
-      limits:   { cpu: 250m, memory: 256Mi }
   replica:
     resources:
       requests: { cpu: 100m, memory: 128Mi }
       limits:   { cpu: 250m, memory: 256Mi }
+  sentinel:
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits:   { cpu: 100m, memory: 128Mi }
 
-# sealedSecret.encryptedPassword 는 sealed-secrets 컨트롤러 up 후 kubeseal 생성값을 여기 주입:
+# sealedSecret.encryptedPassword 는 §4에서 sealed-secrets 컨트롤러 up 후 kubeseal 출력값을 여기 주입:
 # sealedSecret:
-#   enabled: true
 #   encryptedPassword: "AgB...(kubeseal 출력)"

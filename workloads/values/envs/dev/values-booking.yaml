@@ -15,8 +15,10 @@ resources:
 # 비밀번호(MYSQL_PASSWORD)는 여기 없음 → booking-secrets(SealedSecret)에서 envFrom. 서비스명은 미들웨어 배포 후 확정.
 env:
   PORT: "8091"
-  REDIS_HOST: redis-master.data.svc.cluster.local
-  REDIS_PORT: "6379"
+  # Redis Sentinel HA — redis-sentinel 프로파일 활성. REDIS_PASSWORD는 booking-secrets(envFrom, apps/booking).
+  SPRING_PROFILES_ACTIVE: redis-sentinel
+  REDIS_MASTER_NAME: cgvmaster
+  REDIS_SENTINEL_NODES: redis.data.svc.cluster.local:26379
   MYSQL_HOST: mysql.data.svc.cluster.local
   MYSQL_PORT: "3306"
   MYSQL_DB: cgv

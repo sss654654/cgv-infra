@@ -11,5 +11,7 @@ kubectl create secret generic mysql-secret -n data \
 ```
 ★ **booking-secrets의 MYSQL_PASSWORD = mysql-secret의 mysql-root-password** (같은 값이어야 booking이 붙음).
 
-필요 목록: `mysql-secret`(data) · `booking-secrets`(app) · `minio-root-secret`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
-※ dev redis는 auth off(standalone)라 redis-secret 불필요.
+필요 목록(dev HA, 9종): `mysql-secret`·`redis-secret`(data) · `booking-secrets`·`queue-secrets`(app) · `minio-root-secret`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
+
+★ **dev = Redis Sentinel HA(auth on)**: `redis-secret`(서버, data ns, 키 `redis-password`) + 클라 비번은 app ns에 `queue-secrets`·`booking-secrets`로 복제(둘 다 키 `REDIS_PASSWORD` — cgv-app은 envFrom만 지원해 키명=env명, cross-ns 불가). 세 시크릿 **같은 값**.
+★ **mysql-secret은 install.sh [9] 전에 수동 apply** 필요(argocd 배달은 [10] 이후) — install.sh `[MySQL 시크릿 선행]` 스텝이 처리하나, **그 전에 여기 봉인·커밋 선행 필수**(컨트롤러[6] up 후 kubeseal).

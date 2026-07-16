@@ -13,8 +13,9 @@ resources:
 # 연결 대상 서비스명은 미들웨어 차트 배포 후 확정(placeholder). MAX_SESSIONS/SESSION_TIMEOUT=데모값.
 env:
   PORT: "8090"
-  REDIS_HOST: redis-master.data.svc.cluster.local
-  REDIS_PORT: "6379"
+  # Redis Sentinel HA — master 승격 시 재조회(코드 NewFailoverClient). REDIS_PASSWORD는 queue-secrets(envFrom, apps/queue).
+  REDIS_MASTER_NAME: cgvmaster
+  REDIS_SENTINEL_ADDRS: redis.data.svc.cluster.local:26379
   KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
   MAX_SESSIONS: "2"
   SESSION_TIMEOUT: "60"

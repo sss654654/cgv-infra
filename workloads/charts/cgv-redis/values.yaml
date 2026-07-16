@@ -1,26 +1,35 @@
 # charts/cgv-redis — bitnami redis 래퍼.
-# ★dev = standalone + auth off. 정합검증(2026-07): Sentinel HA는 클라가 sentinel-aware가 아니라 안 뜸
-#   (redis-master 서비스 미생성 + auth 비번경로 없음). standalone이 단일-host 클라·로컬 compose와 정합, 즉시 배포 가능.
-#   → 서비스 = redis-master.data.svc:6379 (values-queue/booking의 REDIS_HOST와 일치).
-# ★Sentinel HA 업그레이드(prd): 코드변경 후(코드-반영사항 #3: queue NewFailoverClient · booking password 필드) →
-#   architecture=replication, sentinel.enabled=true, auth.enabled=true+existingSecret, 클라 sentinel-aware.
+# ★dev = Sentinel HA(master1 + replica2 + Sentinel3, auth on). 클라 sentinel-aware 완료(코드-반영 #3/#5):
+#   queue NewFailoverClient(REDIS_SENTINEL_ADDRS) · booking redis-sentinel 프로파일 · booking redis password 필드.
+#   → master 승격이 앱까지 반영(failover 유효). 접속 = sentinel 서비스 redis.data.svc:26379
+#     (values-queue/booking의 REDIS_SENTINEL_ADDRS/NODES와 일치).
+# ⚠️ bitnami sentinel 모드의 실제 파드 수·서비스명·포트는 helm template 렌더로 확인(빌드 검증).
 redis:
-  fullnameOverride: redis            # standalone → 서비스 redis-master
-  architecture: standalone           # 단일 master (HA는 코드변경 후 replication+sentinel)
+  fullnameOverride: redis            # 서비스 redis(-headless)·sentinel 포트 26379
+  architecture: replication          # master1 + replica2 (각 노드 sentinel 사이드카 = Sentinel3)
   auth:
-    enabled: false                   # dev: 무인증(로컬 compose 동일). prd: true + existingSecret(redis-secret).
+    enabled: true                    # dev HA: auth on. redis-secret(SealedSecret) 사용.
+    existingSecret: redis-secret     # 키 redis-password (시크릿-계약)
+    sentinel: true                   # sentinel도 인증 → 클라 SentinelPassword 필요(코드 반영됨)
   master:
-    count: 1
     persistence:
       enabled: false                 # 큐 상태=운영성. durable 기록은 MySQL.
+  replica:
+    replicaCount: 3                  # sentinel 모드 = 총 노드 수(master 포함). 3노드 → Sentinel3. 렌더로 확인.
+    persistence:
+      enabled: false
+  sentinel:
+    enabled: true
+    masterSet: cgvmaster             # 클라 REDIS_MASTER_NAME과 일치
+    quorum: 2                        # sentinel 3 중 2 합의(split-brain 방지)
   metrics:
     enabled: true                    # redis_exporter + ServiceMonitor
     serviceMonitor:
       enabled: true
 
-# SealedSecret 글루 — auth 켤 때(prd) redis-secret 생성용. dev(auth off)는 미사용.
+# SealedSecret 글루 — redis auth(dev HA) 비번을 봉인 배달. encryptedPassword는 §4 kubeseal 출력 주입.
 sealedSecret:
-  enabled: false
+  enabled: true
   name: redis-secret
   key: redis-password
-  encryptedPassword: ""
+  encryptedPassword: ""              # ★§4: 빈값이면 SealedSecret 미렌더 → redis가 secret 없어 못 뜸(빌드 때 주입)
