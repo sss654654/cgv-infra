@@ -1,0 +1,23 @@
+# charts/data/cgv-mysql — bitnami mysql 래퍼(벤더링: charts/mysql-14.0.3.tgz).
+# 채널: install.sh 손 설치에서 GitOps로 이동(argocd/applications/mysql.yaml, wave -1, prune=false).
+# 이미지: docker.io/bitnami/mysql 태그 전부 제거됨 → bitnamilegacy(동결 미러) + digest 지정.
+mysql:
+  fullnameOverride: mysql             # 서비스 mysql.data.svc:3306 (booking MYSQL_HOST와 일치)
+  architecture: standalone
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/mysql
+    tag: 9.4.0-debian-12-r1           # 차트 14.0.3 기본 태그와 동일(레지스트리만 legacy)
+    digest: "sha256:504dbf46c911e124f168d364d2b4abff3ee799968b8c8f35445e6a0a57eda44e"
+  auth:
+    database: cgv
+    username: root
+    existingSecret: mysql-secret      # SealedSecret(시크릿-계약): 키 mysql-root-password
+                                      # booking-secrets의 MYSQL_PASSWORD와 같은 값이어야 booking이 붙음
+  primary:
+    persistence:
+      enabled: true
+      storageClass: local-mysqldata   # 정적 PV(bootstrap/storage/) — mysqldata 디스크 통마운트(k3s-1)
+      size: 8Gi                       # PV capacity 20Gi ≥ 요청 8Gi → 바인딩. 실상한 = 디스크 20G
+    nodeSelector:
+      cgv.io/data: db                 # mysqldata LV가 있는 k3s-1에 핀

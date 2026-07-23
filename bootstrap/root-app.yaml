@@ -1,4 +1,4 @@
-# root-app (app-of-apps) — install.sh가 마지막에 딱 이거 하나 apply하면 argocd/가 폭포로 딸려 옴(§3-7).
+# root-app (app-of-apps) — install.sh가 마지막에 이 하나만 apply하면 argocd/가 폭포로 딸려 온다.
 # argocd/ 하위: projects/(AppProject) + applicationsets/ + applications/.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default                         # 부트스트랩 진입점(AppProject·ApplicationSet 생성 허용)
   source:
-    repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+    repoURL: https://github.com/sss654654/cgv-infra.git
     targetRevision: main
     path: argocd
     directory:

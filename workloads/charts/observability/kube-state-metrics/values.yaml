@@ -1,0 +1,11 @@
+# prometheus-community/kube-state-metrics 7.8.1 (KSM 2.19.1) — 쿠버 오브젝트 상태 메트릭.
+# ServiceMonitor로 노출 → Alloy가 발견·스크레이프 → Mimir. S3/시크릿/스토리지 해당 없음.
+# Alloy가 라벨셀렉터 없이 observability 전체 ServiceMonitor를 잡으면 그대로 발견. 라벨필터 쓰면 monitor.additionalLabels 추가.
+replicas: 1
+autosharding: { enabled: false }     # 단일 replica Deployment(StatefulSet 아님)
+resources:                           # 경량 발행기. request 부여로 evict 우선순위 방어
+  requests: { cpu: 50m, memory: 64Mi }
+  limits:   { cpu: 200m, memory: 128Mi }
+prometheus:
+  monitor:
+    enabled: true

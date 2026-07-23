@@ -1,0 +1,40 @@
+# charts/data/cgv-redis — bitnami redis 래퍼.
+# dev = Sentinel HA(master1 + replica2 + Sentinel3, auth on). 클라이언트 sentinel-aware 완료(docs/코드-반영사항 #3/#5):
+#   queue NewFailoverClient(REDIS_SENTINEL_ADDRS) · booking redis-sentinel 프로파일 · booking redis password 필드.
+#   → master 승격이 앱까지 반영(failover 유효). 접속 = sentinel 서비스 redis.data.svc:26379
+#     (values-queue/booking의 REDIS_SENTINEL_ADDRS/NODES와 일치).
+# ⚠️ bitnami sentinel 모드의 실제 파드 수·서비스명·포트는 helm template 렌더로 확인(빌드 검증).
+redis:
+  fullnameOverride: redis            # 서비스 redis(-headless)·sentinel 포트 26379
+  architecture: replication          # master1 + replica2 (각 노드 sentinel 사이드카 = Sentinel3)
+  # 이미지 핀: bitnami 버전 태그가 docker.io에서 제거됨(latest+sha만 잔존)
+  #   → latest의 amd64 digest 고정(digest가 tag보다 우선 적용됨). 실제 버전은 배포 후 기동 로그로 확인.
+  image:
+    digest: "sha256:3928e7a80f9ddb1caeb3998652ecd040be9d4adf6ca4c6372aa75c8500a9ea7e"
+  auth:
+    enabled: true                    # dev HA: auth on. redis-secret(SealedSecret) 사용.
+    existingSecret: redis-secret     # 키 redis-password (시크릿-계약)
+    sentinel: true                   # sentinel도 인증 → 클라 SentinelPassword 필요(코드 반영됨)
+  master:
+    persistence:
+      enabled: false                 # 큐 상태=운영성. durable 기록은 MySQL.
+  replica:
+    replicaCount: 3                  # sentinel 모드 = 총 노드 수(master 포함). 3노드 → Sentinel3. 렌더로 확인.
+    persistence:
+      enabled: false
+  sentinel:
+    enabled: true
+    masterSet: cgvmaster             # 클라 REDIS_MASTER_NAME과 일치
+    quorum: 2                        # sentinel 3 중 2 합의(split-brain 방지)
+    image:
+      digest: "sha256:1e4137c8ccce977d71d1b0c267498b8b7fd061f0170f161f987707c6fc0d676a"
+  metrics:
+    enabled: true                    # redis_exporter + ServiceMonitor
+    serviceMonitor:
+      enabled: true
+    image:
+      digest: "sha256:48f1ad6a35117bc95ef3e7720a64864c17b8349d6671add5528763078c32c027"
+
+# redis-secret 배달: 차트 내에서 생성하지 않고, 중앙 workloads/manifests/secrets/에서
+#   sealed-secrets App(wave -2)이 배달. mysql-secret과 동일 모델(docs/시크릿-계약.md).
+# 이미지 :latest 핀 해소: main·sentinel·metrics 3종 digest를 위 image.*.digest에 고정(docker.io bitnami 버전태그 제거 대응).

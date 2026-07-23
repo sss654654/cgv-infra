@@ -1,0 +1,23 @@
+# metallb-pool — IPAddressPool·L2Advertisement CR(자체 매니페스트). metallb 차트(wave -4)가 CRD를 깐 뒤(wave -3) apply.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb-pool
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"    # metallb 차트(-4) 뒤 = IPAddressPool CRD 존재 후
+spec:
+  project: infra
+  source:
+    repoURL: https://github.com/sss654654/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/metallb
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metallb-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true  # CRD가 dry-run 시점에 아직 미등록일 수 있음

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "cgv-app values",
+  "description": "resources.limits.memory만 필수로 강제 — 없으면 JVM 힙 크기 계산의 분모가 잘못돼 OOMKill 위험. 나머지 키는 제약 없음(additionalProperties 기본 허용).",
+  "type": "object",
+  "required": ["resources"],
+  "properties": {
+    "resources": {
+      "type": "object",
+      "required": ["limits"],
+      "properties": {
+        "limits": {
+          "type": "object",
+          "required": ["memory"],
+          "properties": {
+            "memory": { "type": ["string", "integer"] }
+          }
+        }
+      }
+    }
+  }
+}

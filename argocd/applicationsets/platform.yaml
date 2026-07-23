@@ -1,0 +1,46 @@
+# 플랫폼 ApplicationSet — metallb·traefik를 GitOps로 관리.
+# metallb·traefik은 부트스트랩 순환에도 CRD 의존에도 해당하지 않아 GitOps로 관리한다.
+#   특히 traefik은 OTel 튜닝을 수동 helm upgrade(순단 위험) 없이 반영할 수 있다.
+# cert-manager는 제외 — 현재 소비자 없음. 존치/제거가 미결이라 Phase2까지 bootstrap에서 손으로 관리.
+# 부트스트랩 순서: metallb(wave -4, LB) → metallb-pool(wave -3, CR은 CRD 뒤) → traefik(wave -2, LB 의존).
+#   argocd 자체는 install.sh가 손 설치 후 kubectl로 root-app apply(ingress 불요) → 이 폭포가 metallb/traefik를 뒤이어 세움.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - { name: metallb, repoURL: https://metallb.github.io/metallb, chart: metallb, version: "0.16.1", namespace: metallb-system, wave: "-4" }
+          - { name: traefik, repoURL: https://traefik.github.io/charts,  chart: traefik, version: "41.0.2", namespace: traefik,        wave: "-2" }
+  template:
+    metadata:
+      name: '{{.name}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{.wave}}'
+    spec:
+      project: infra
+      sources:
+        - repoURL: '{{.repoURL}}'          # 업스트림 차트(직접 참조 + 버전 핀)
+          chart: '{{.chart}}'
+          targetRevision: '{{.version}}'
+          helm:
+            valueFiles:
+              - $values/workloads/charts/platform/{{.name}}/values.yaml
+        - repoURL: https://github.com/sss654654/cgv-infra.git   # 값 제공용 git 소스
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true          # metallb-system·traefik ns 자동 생성
+          - ServerSideApply=true          # 차트 CRD(metallb IPAddressPool 등) 대비

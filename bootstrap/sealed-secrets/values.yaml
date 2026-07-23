@@ -1,0 +1,4 @@
+# sealed-secrets 컨트롤러 자원 (set-once) — evict 방지 최소 request.
+resources:
+  requests: { cpu: 50m, memory: 32Mi }
+  limits:   { cpu: 100m, memory: 64Mi }

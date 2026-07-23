@@ -1,0 +1,17 @@
+# frontend dev 환경값. 정적 서버라 가벼움.
+image:
+  tag: dev
+
+# replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling).
+
+resources:
+  requests: { cpu: 50m, memory: 32Mi }
+  limits:   { cpu: 200m, memory: 64Mi }
+
+autoscaling:               # 정적 서빙이라 스케일 필요 적음(min1/max2). PDB는 maxUnavailable:1로 호환(identity)
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 70
+
+# ingress.host 미지정 → dev는 path-only 라우팅(LB IP 접근). prd는 envs/prd에서 host 도메인 지정.

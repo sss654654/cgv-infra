@@ -1,0 +1,65 @@
+# grafana-community/loki 18.5.0 (OSS Loki 3.7.3) — Monolithic(단일바이너리) + MinIO S3.
+# 리포 변경: OSS loki 차트가 grafana/helm-charts → grafana-community/helm-charts로 포크됨.
+#   grafana/loki 7.x는 GEL(엔터프라이즈)로 전환. → obs-appset이 grafana-community를 가리킴.
+# 크레덴셜: values에 평문 없음. loki-s3-credentials(SealedSecret) 필요, 키명 정확히 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+# helm template 검증 완료(StatefulSet 1 + gateway 1, memcached/canary 없음).
+# 영속: monolithic이라 복제 없음 → 크래시 시 최근 로그를 지킬 수단이 WAL뿐 = 영속 필수(loki-wal 5G, k3s-2).
+deploymentMode: Monolithic
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  limits_config:
+    retention_period: 168h            # 로그 보존 7일. miniodata 무한증가 차단
+  compactor:
+    retention_enabled: true           # retention 적용 주체 — 없으면 위 기간이 장식
+    delete_request_store: s3          # Loki 3.x retention 필수 스토어 [렌더·기동 로그로 검증 — 전수분석 uncertainty]
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: s3
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  storage:
+    type: s3
+    bucketNames:
+      chunks: loki
+      ruler: loki
+    s3:
+      endpoint: minio.observability.svc.cluster.local:9000
+      insecure: true
+      s3ForcePathStyle: true
+      # accessKeyId/secretAccessKey 생략 → AWS SDK 기본 체인이 env(AWS_ACCESS_KEY_ID/SECRET)에서 읽음
+singleBinary:
+  replicas: 1
+  nodeSelector:
+    cgv.io/data: obs                # loki-wal 디스크가 있는 k3s-2에 핀(PV nodeAffinity와 이중 안전)
+  extraEnvFrom:
+    - secretRef:
+        name: loki-s3-credentials
+  persistence:
+    enabled: true
+    storageClass: local-lokiwal     # 정적 PV — loki-wal(5G) 통마운트(디스크1=FS1=PV1, per-FS 관측)
+    size: 4Gi                       # PV 4Gi와 짝(FS 실크기 기준, 오버서브 금지)
+  resources:                        # 시작값 — request 부여로 evict 우선순위 방어 + limit 상한
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+gateway:
+  enabled: true
+  replicas: 1
+  resources:                        # loki gateway(mimir gateway와 동일)
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+# Monolithic이라도 SSD 타겟 기본 3 → validate.yaml이 0으로 안 내리면 거부(필수).
+read: { replicas: 0 }
+write: { replicas: 0 }
+backend: { replicas: 0 }
+# 홈랩: 무거운 옵션 끔.
+chunksCache: { enabled: false }
+resultsCache: { enabled: false }
+lokiCanary: { enabled: false }
+test: { enabled: false }
+minio: { enabled: false }

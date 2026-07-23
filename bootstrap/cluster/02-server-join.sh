@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# k3s-2 / k3s-3 (조인 서버, 3-server etcd HA). 노드배치-cgv.md §1b.
+# k3s-2 / k3s-3 (조인 서버, 3-server etcd HA).
 # 사용: ./02-server-join.sh <k3s-1_IP> <TOKEN> <obs|obj>
 #   k3s-2 → obs (LGTM 노드) / k3s-3 → obj (MinIO 노드)
 set -euo pipefail

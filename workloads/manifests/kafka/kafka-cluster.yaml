@@ -1,6 +1,6 @@
 # KafkaCluster CR — Strimzi 오퍼레이터(install.sh로 먼저 설치)가 이걸 보고 실제 브로커를 만든다(operator 패턴).
 # 클러스터명 "cgv" → bootstrap 서비스 = cgv-kafka-bootstrap.data.svc:9092 (queue/booking env와 일치).
-# ★조사 확정(Strimzi 1.1.0): API = kafka.strimzi.io/v1 (v1beta2 제거됨). KRaft+NodePool이 유일 모드라
+# Strimzi 1.1.0: API = kafka.strimzi.io/v1 (v1beta2 제거됨). KRaft+NodePool이 유일 모드라
 #   strimzi.io/kraft·node-pools annotation 불필요(0.48에서 제거). Kafka 4.3.0 = operator 1.1.0 default.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
@@ -17,7 +17,7 @@ spec:
   storage:
     type: persistent-claim           # 단일 볼륨. 확장 여지 원하면 jbod 권장(조사 노트)
     size: 10Gi
-    class: local-path                # kafkadata LV
+    class: local-kafkadata           # 정적 PV(bootstrap/storage/) — kafkadata 디스크 통마운트, 노드당 1개
     deleteClaim: false
   template:
     pod:
@@ -38,6 +38,12 @@ spec:
   kafka:
     version: 4.3.0
     metadataVersion: 4.3-IV0
+    resources:                       # JVM: 메모리가 핵심(request 0이면 노드 압박 시 1순위 evict → RF3 HA 붕괴)
+      requests: { cpu: 250m, memory: 768Mi }
+      limits: { cpu: "1", memory: 1536Mi }
+    jvmOptions:                      # 힙 상한 = limit의 60%(약 900MB). 나머지 40% = 비힙(다이렉트버퍼·메타스페이스).
+      "-XX":                         # [dry-run 검증 필요 — Strimzi 1.1.0 스키마의 정확한 키 형태]
+        MaxRAMPercentage: "60"
     listeners:
       - name: plain
         port: 9092

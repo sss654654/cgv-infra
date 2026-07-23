@@ -1,5 +1,6 @@
-# 앱 ApplicationSet — workloads/apps/* 를 순회해 queue/booking/frontend Application 자동 생성(§3-4).
-# 각 App = workloads/charts/cgv-app(틀) + workloads/apps/<name>/values.yaml(정체성) + workloads/envs/dev/values-<name>.yaml(환경).
+# 앱 ApplicationSet — workloads/charts/apps/* 를 순회해 queue/booking/frontend Application 자동 생성.
+# 각 App = charts/apps/cgv-app(공통 틀) + charts/apps/<name>/values.yaml(정체성) + environments/dev/values-<name>.yaml(환경).
+# directory generator가 charts/apps/*를 순회하되 공통 틀 cgv-app은 exclude.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -10,10 +11,12 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
     - git:
-        repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+        repoURL: https://github.com/sss654654/cgv-infra.git
         revision: main
         directories:
-          - path: workloads/values/apps/*
+          - path: workloads/charts/apps/*
+          - path: workloads/charts/apps/cgv-app     # 공통 틀은 App 아님 → 제외
+            exclude: true
   template:
     metadata:
       name: '{{.path.basename}}'          # queue / booking / frontend
@@ -22,14 +25,15 @@ spec:
     spec:
       project: apps
       source:
-        repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+        repoURL: https://github.com/sss654654/cgv-infra.git
         targetRevision: main
-        path: workloads/charts/cgv-app     # 공통 틀
+        path: workloads/charts/apps/cgv-app     # 공통 틀
         helm:
           valueFiles:
-            - values.yaml                                              # 차트 기본값
-            - '../../values/apps/{{.path.basename}}/values.yaml'       # 정체성(env 무관)
-            - '../../values/envs/dev/values-{{.path.basename}}.yaml'   # 환경값
+            # 상대경로 기준 = source.path(charts/apps/cgv-app)
+            - values.yaml                                                # 차트 기본값
+            - '../{{.path.basename}}/values.yaml'                        # 정체성(env 무관) — charts/apps/<name>/
+            - '../../../environments/dev/values-{{.path.basename}}.yaml' # 환경값 — workloads/environments/dev/
       destination:
         server: https://kubernetes.default.svc
         namespace: app

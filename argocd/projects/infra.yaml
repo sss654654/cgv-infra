@@ -1,25 +1,31 @@
-# AppProject infra — 플랫폼 워크로드(redis · kafka CR · 관측) 울타리.
-# data·observability 네임스페이스, cluster-scoped 허용.
+# AppProject infra — 플랫폼 워크로드(redis · kafka CR · 관측 · metallb · traefik) 울타리.
+# data·observability·metallb-system·traefik 네임스페이스, cluster-scoped 허용.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: infra
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "-2"
+    argocd.argoproj.io/sync-wave: "-5"    # metallb App(wave -4)보다 프로젝트가 먼저 존재해야 함
 spec:
-  description: CGV 플랫폼 워크로드 (redis · kafka CR · 관측)
+  description: CGV 플랫폼 워크로드 (redis · kafka CR · 관측 · metallb · traefik)
   sourceRepos:
-    - https://gitlab.cgv.local/cgv/cgv-infra.git
+    - https://github.com/sss654654/cgv-infra.git
     - https://grafana-community.github.io/helm-charts   # 관측 업스트림 차트(멀티소스) 허용
     - https://grafana.github.io/helm-charts
     - https://charts.min.io/
     - https://prometheus-community.github.io/helm-charts
+    - https://metallb.github.io/metallb                 # 플랫폼(GitOps 이동)
+    - https://traefik.github.io/charts
   destinations:
     - server: https://kubernetes.default.svc
       namespace: data
     - server: https://kubernetes.default.svc
       namespace: observability
+    - server: https://kubernetes.default.svc
+      namespace: metallb-system
+    - server: https://kubernetes.default.svc
+      namespace: traefik
   clusterResourceWhitelist:
     - group: "*"
       kind: "*"

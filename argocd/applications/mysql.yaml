@@ -1,0 +1,29 @@
+# mysql — 손 나열 개별 Application. workloads/charts/data/cgv-mysql(래퍼, 벤더링) 배포.
+# 채널: install.sh 손 설치에서 GitOps로 이동. prune=false(DB 리소스 자동삭제 금지), 데이터 안전은 Retain PV가 커버.
+# mysql-secret은 sealed-secrets App(wave -2)이 선배달 → 이 App(wave -1)이 그 뒤 sync.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mysql
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"    # 앱보다 먼저(booking이 MySQL에 의존)
+spec:
+  project: infra
+  source:
+    repoURL: https://github.com/sss654654/cgv-infra.git
+    targetRevision: main
+    path: workloads/charts/data/cgv-mysql
+    helm:
+      valueFiles:
+        - values.yaml
+        - ../../../environments/dev/values-mysql.yaml   # data/cgv-mysql 기준 → workloads/environments/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: false                        # DB — 선언 제거가 리소스 삭제로 이어지지 않게
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

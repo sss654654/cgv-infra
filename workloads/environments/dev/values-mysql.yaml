@@ -1,0 +1,6 @@
+# mysql dev 환경값 — 서브차트(bitnami)로 전달. 리소스 = 측정 시작값.
+mysql:
+  primary:
+    resources:                        # commit CPU 병목(부하 때 1코어 burst). C++라 JVM 힙 짝 불필요
+      requests: { cpu: 250m, memory: 512Mi }
+      limits:   { cpu: "1", memory: 768Mi }

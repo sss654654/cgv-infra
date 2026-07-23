@@ -1,0 +1,44 @@
+# grafana/grafana 10.5.15 (Grafana 12.3.1) — 내부 접근(ClusterIP), 데이터소스 프로비저닝.
+# admin 크레덴셜: grafana-admin(SealedSecret) 필요, 키 admin-user / admin-password.
+# 데이터소스 URL은 각 차트 릴리스명=컴포넌트명 가정 — 배포 후 실제 서비스명 확인(특히 mimir 게이트웨이명).
+replicas: 1
+resources:                           # 대시보드(쿼리 시 CPU 사용). request 부여로 evict 우선순위 방어
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: 500m, memory: 512Mi }
+deploymentStrategy:
+  type: Recreate
+admin:
+  existingSecret: grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
+service:
+  enabled: true
+  type: ClusterIP
+  port: 80
+ingress:
+  enabled: false
+persistence:
+  enabled: false                     # 의도적 비영속 — 대시보드·데이터소스 전부 코드로 관리해 sqlite에 보존할 상태가 없음.
+                                     #   재시작하면 코드에서 재프로비저닝. (UI에서 손으로 만든 대시보드는 날아간다 — as-code 강제 장치.)
+                                     #   대시보드 ConfigMap sidecar는 현재 미활성(차트 기본 false) — 7부 대시보드 배선 때 sidecar.dashboards.enabled=true로 켠다.
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Mimir
+        uid: mimir
+        type: prometheus
+        access: proxy
+        url: http://mimir-gateway.observability.svc.cluster.local/prometheus
+        isDefault: true
+        jsonData: { httpMethod: POST }
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki-gateway.observability.svc.cluster.local
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.observability.svc.cluster.local:3200

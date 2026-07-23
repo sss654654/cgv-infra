@@ -1,7 +1,0 @@
-# prometheus-community/prometheus-node-exporter 4.56.1 (node_exporter 1.12.1) — 노드 OS 메트릭(DaemonSet).
-# node_filesystem_* 로 용도별 LV 마운트포인트 관측. ServiceMonitor → Alloy가 각 노드 IP:9100 직접 스크레이프 → Mimir.
-# ★hostNetwork/hostPID/hostPath 필수 → restricted·baseline PSA 위반, privileged만 가능.
-#   → observability 네임스페이스 enforce=privileged로 처리함(bootstrap/namespaces). values로는 못 고침.
-prometheus:
-  monitor:
-    enabled: true

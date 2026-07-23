@@ -1,0 +1,9 @@
+# MetalLB 자원 (set-once) — 차트 기본 resources:{}는 evict 1순위라 최소 request 부여. 튜닝 대상 아님.
+controller:
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits:   { cpu: 100m, memory: 64Mi }
+speaker:
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits:   { cpu: 100m, memory: 64Mi }

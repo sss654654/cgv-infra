@@ -1,6 +1,8 @@
-# KafkaTopic CR — 토픽 소유권을 GitOps로(§검증②). auto-create 대신 명시 선언.
+# KafkaTopic CR — 토픽 소유권을 GitOps로 관리. auto-create 대신 명시 선언.
 # admissions: queue→booking(입장 발행) / bookings-completed: booking→queue(완료 → ZREM).
-# partition 1 = 순서 보장(단일 컨슈머). RF 3 = 브로커 하나 죽어도 유지.
+# partitions 4 = HPA max 4와 짝 — 동시 소비 파드 ≤ 파티션 수(파티션 1이면 HPA 켜도 병렬 소비 0).
+#   전역 순서는 포기 — 키 파티셔닝 전제(같은 키는 같은 파티션 = 파티션 내 순서만 보장).
+#   파티션은 늘리기만 가능(줄이기 불가)라 넉넉히 4. RF 3 = 브로커 하나 죽어도 유지.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
@@ -9,7 +11,7 @@ metadata:
   labels:
     strimzi.io/cluster: cgv
 spec:
-  partitions: 1
+  partitions: 4
   replicas: 3
 ---
 apiVersion: kafka.strimzi.io/v1
@@ -20,5 +22,5 @@ metadata:
   labels:
     strimzi.io/cluster: cgv
 spec:
-  partitions: 1
+  partitions: 4
   replicas: 3

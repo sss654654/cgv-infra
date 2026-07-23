@@ -1,0 +1,187 @@
+# 정적 PV 10개 — PV는 아무것도 만들지 않는다. 노드에 이미 마운트된 경로를 가리키는 기록일 뿐.
+# 선행(손작업, 노드마다): 호스트 local-lvm에서 LV 잘라 VM에 attach → mkfs.ext4 → /mnt/disks/<용도> mount → fstab UUID 등록.
+#   전부 통마운트(디스크1=FS1=PV1) — 서브디렉터리 mkdir 없음. per-FS로 node_filesystem_* 관측이 갈린다.
+# k8s는 path 실존을 검증하지 않는다 — 경로가 틀려도 PV는 생성되고, 파드 뜰 때 kubelet이 가서야 실패한다.
+# persistentVolumeReclaimPolicy: Retain 명시 — 정적 PV 기본값도 Retain이지만 기본값에 기대지 않는다.
+# nodeAffinity = local PV 필수. 이 데이터는 그 노드 디스크에만 있다는 사실을 스케줄러에 알리는 유일한 수단.
+# capacity는 강제가 아니라 라벨 — 실제 상한은 파일시스템 크기. PV ≤ FS 실크기(오버서브 금지).
+# 로컬 영속 PV 구성: 원본(truth)은 MinIO(miniodata),
+#   로컬 영속은 ingester WAL(노드당 1, RF3·anti-affinity와 짝)·loki/tempo WAL(복제 없는 mono의 유일한 방어)뿐.
+#   store-gateway·compactor는 emptyDir(MinIO에서 재생성) — PV 없음.
+# local-ingesterwal SC엔 PV 3개(노드당 1) — 어느 PVC가 어느 PV에 붙을지는 WaitForFirstConsumer가
+#   "파드가 앉은 노드"의 PV로 결정(anti-affinity가 노드당 1을 강제하므로 모호성 없음).
+
+# ── k3s-1: mysqldata 20G (통마운트) ──────────────────────────────
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-mysqldata
+spec:
+  capacity: { storage: 20Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-mysqldata
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/mysqldata }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-1] }
+---
+# ── kafkadata 30G × 3노드 (통마운트, 브로커 1노드 1개) ───────────
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-kafkadata-k3s-1
+spec:
+  capacity: { storage: 30Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-kafkadata
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/kafkadata }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-1] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-kafkadata-k3s-2
+spec:
+  capacity: { storage: 30Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-kafkadata
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/kafkadata }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-2] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-kafkadata-k3s-3
+spec:
+  capacity: { storage: 30Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-kafkadata
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/kafkadata }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-3] }
+---
+# ── ingester-wal 5G × 3노드 (통마운트) — Mimir ingester WAL, RF3·anti-affinity(노드당 1)와 짝 ──
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-ingesterwal-k3s-1
+spec:
+  capacity: { storage: 4Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-ingesterwal
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/ingesterwal }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-1] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-ingesterwal-k3s-2
+spec:
+  capacity: { storage: 4Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-ingesterwal
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/ingesterwal }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-2] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-ingesterwal-k3s-3
+spec:
+  capacity: { storage: 4Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-ingesterwal
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/ingesterwal }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-3] }
+---
+# ── k3s-2: loki-wal 5G · tempo-wal 5G (통마운트) — 복제 없는 monolithic의 크래시 방어 ──
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-lokiwal
+spec:
+  capacity: { storage: 4Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-lokiwal
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/lokiwal }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-2] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-tempowal
+spec:
+  capacity: { storage: 4Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-tempowal
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/tempowal }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-2] }
+---
+# ── k3s-3: miniodata 100G (통마운트) — LGTM truth(S3). 유일하게 차오르는 디스크 = 관측 1순위 ──
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-miniodata
+spec:
+  capacity: { storage: 100Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-miniodata
+  volumeMode: Filesystem
+  local: { path: /mnt/disks/miniodata }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [k3s-3] }

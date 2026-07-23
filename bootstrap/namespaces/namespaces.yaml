@@ -1,4 +1,4 @@
-# 워크로드 네임스페이스 + PodSecurity 라벨(§3 배포규약). argocd는 helm --create-namespace로 별도.
+# 워크로드 네임스페이스 + PodSecurity 라벨. argocd는 helm --create-namespace로 별도.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -20,7 +20,7 @@ kind: Namespace
 metadata:
   name: observability
   labels:
-    # ⚠️ node-exporter/alloy(DaemonSet, 호스트 접근)가 restricted에 안 맞음(§검증②).
+    # ⚠️ node-exporter/alloy(DaemonSet, 호스트 접근)가 restricted PSA에 맞지 않음.
     # 임시 privileged — 이상적으론 node-exporter를 별도 privileged ns로 격리하고 나머지는 restricted 유지.
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: latest

@@ -1,0 +1,29 @@
+# queue dev 환경값 — replica·리소스·연결·데모 파라미터.
+# 리소스는 실측 전 추정(노드설계 기준). 부하테스트 후 확정.
+
+image:
+  tag: dev
+
+# replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling). HPA on이면 차트가 replicas 필드 생략.
+
+resources:
+  requests: { cpu: 250m, memory: 64Mi }
+  limits:   { cpu: 500m, memory: 128Mi }  # 메모리 request/limit 64/128(burst 허용, QoS Burstable). CPU request 250m = HPA 기준
+
+autoscaling:                              # HPA 켬. max 4 = Kafka 파티션 4와 짝(그 이상은 소비 병렬성 증가 없음)
+  enabled: true
+  minReplicas: 2                          # 단일장애 대비 상시 2
+  maxReplicas: 4                          # 차트 기본 6과 다름 — 명시 필수
+  targetCPUUtilizationPercentage: 70      # 실사용 175m(250m×70%) 넘으면 스케일
+
+# 연결 대상 서비스명은 미들웨어 차트 배포 후 확정(placeholder). MAX_SESSIONS/SESSION_TIMEOUT=데모값.
+env:
+  PORT: "8090"
+  # Redis Sentinel HA — master 승격 시 재조회(코드 NewFailoverClient). REDIS_PASSWORD는 queue-secrets(envFrom, apps/queue).
+  REDIS_MASTER_NAME: cgvmaster
+  REDIS_SENTINEL_ADDRS: redis.data.svc.cluster.local:26379
+  KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
+  MAX_SESSIONS: "2"
+  SESSION_TIMEOUT: "60"
+  METRICS_PORT: "9091"
+  OTLP_GRPC_ENDPOINT: alloy.observability.svc.cluster.local:4317

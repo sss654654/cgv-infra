@@ -1,0 +1,18 @@
+# MetalLB 주소 풀 — Traefik LoadBalancer가 여기서 IP를 받음.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: cgv-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.0.240-192.168.0.250     # Phase1 LAN 대역. <TODO> Phase2(10.0.0.x) 재조정.
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: cgv-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - cgv-pool

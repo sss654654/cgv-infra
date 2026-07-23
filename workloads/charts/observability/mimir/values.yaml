@@ -1,0 +1,79 @@
+# grafana/mimir-distributed 6.1.0 (Mimir 3.1.2) — monolithic 모드 없음.
+# 마이크로서비스 구성. ingester 3개(replication factor 3, 노드당 1개) 분산. dev는 stg와 동일 스택에 스펙만 낮춤.
+# classic 아키텍처(Kafka ingest-storage off) + 외부 MinIO(=truth). 로컬 영속 PV는 ingester WAL뿐.
+# 크레덴셜: mimir-minio-credentials(SealedSecret) 필요, 키명 MIMIR_S3_ACCESS_KEY_ID / MIMIR_S3_SECRET_ACCESS_KEY.
+# 버킷 "mimir"를 MinIO에 사전 생성 필요(자동생성 안 함). 게이트웨이 서비스명은 helm template 렌더로 확정(mimir-gateway).
+# memcached 4종(chunks/index/metadata/results)은 차트 기본값이 off — 명시 오버라이드 불필요.
+minio: { enabled: false }
+kafka: { enabled: false }
+rollout_operator: { enabled: false }
+mimir:
+  structuredConfig:
+    ingest_storage:
+      enabled: false
+      kafka: { address: null, topic: null, auto_create_topic_default_partitions: null }
+    distributor: { remote_timeout: null }
+    ingester:
+      push_grpc_method_enabled: null
+      ring: { replication_factor: 3 }        # ingester 3개(노드당 1)에 복제 — 쓰기 과반 2 성공 시 OK(etcd 쿼럼 3과 같은 논리)
+    limits:
+      compactor_blocks_retention_period: 15d # 메트릭 보존 15일 — compactor가 적용·삭제(miniodata 무한증가 차단)
+    common:
+      storage:
+        backend: s3
+        s3:
+          endpoint: minio.observability.svc.cluster.local:9000
+          bucket_name: mimir
+          access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
+          secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
+          insecure: true
+    blocks_storage: { storage_prefix: blocks }     # 한 버킷을 prefix로 분할(충돌 방지)
+    ruler_storage: { storage_prefix: ruler }
+global:
+  extraEnvFrom:
+    - secretRef:
+        name: mimir-minio-credentials
+# 스토리지: 원본은 MinIO. 로컬 영속 PV는 ingester WAL(노드당 4Gi, local-ingesterwal)뿐.
+#   store_gateway(MinIO 블록 캐시)·compactor(병합 스크래치)는 재생성 가능 → emptyDir(PV 없음, 플로터).
+#   size 명시 필수: 차트 기본값이 PV capacity보다 크면 영구 Pending. PV 4Gi와 짝.
+# 자원 = 시작값(전부 Go — JVM 힙 설정 불필요, limit만. 관측은 메모리 위주, CPU는 쿼리 시에만).
+distributor:
+  replicas: 1
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+ingester:
+  replicas: 3                                  # RF3와 짝 — 노드당 1(아래 anti-affinity)
+  zoneAwareReplication: { enabled: false }     # ingester수=RF(3=3)면 anti-affinity로 충분 — zone-aware는 ingester>RF일 때 물건
+  persistentVolume: { storageClass: local-ingesterwal, size: 4Gi }
+  affinity:                                    # 노드당 1 강제 — 셋이 한 노드에 몰리면 RF3가 장식(노드 죽을 때 3벌 동시 소실)
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels: { app.kubernetes.io/component: ingester }
+          topologyKey: kubernetes.io/hostname
+  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: 1000m, memory: 1Gi } }  # 최근 시리즈를 메모리에 적재 — 메모리 사용이 가장 큼
+querier:
+  replicas: 1
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+query_frontend:
+  replicas: 1
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+query_scheduler:
+  replicas: 1                                  # read path 대기열 — stg 패리티로 유지
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+store_gateway:
+  replicas: 1
+  zoneAwareReplication: { enabled: false }
+  persistentVolume: { enabled: false }         # emptyDir — MinIO 블록 캐시, 크래시=재다운로드(무손실). [렌더 확인: emptyDir sizeLimit 지원 여부]
+  resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { cpu: 500m, memory: 1Gi } }
+compactor:
+  replicas: 1
+  persistentVolume: { enabled: false }         # emptyDir — 병합 스크래치(산출물은 MinIO로). dedup·병합·retention 적용 주체라 컴포넌트는 필수
+  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: 1000m, memory: 1Gi } }  # 블록 병합 CPU 스파이크
+ruler:
+  replicas: 1                                  # recording rule 자리 — rule은 이후 실측 후 채움
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+alertmanager: { enabled: false }               # 끔 — 알림은 Grafana Alerting으로 통합. PV도 소멸
+overrides_exporter: { enabled: false }         # 끔 — 단일테넌트라 테넌트별 한도 노출 무의미
+gateway:
+  replicas: 1
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }  # gateway 자원 명시

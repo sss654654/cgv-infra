@@ -1,6 +1,6 @@
-# 관측 ApplicationSet — 컴포넌트마다 다른 업스트림 차트를 생성(§3-2 "appset이 이종 차트도 생성").
+# 관측 ApplicationSet — 컴포넌트마다 다른 업스트림 차트를 생성한다.
 # list generator(차트 좌표 inline) + multi-source(업스트림 차트 + git의 values).
-# 버전은 조사(2026-07)로 확정·helm 검증됨. ★loki는 grafana-community 리포(포크됨).
+# 버전은 helm으로 검증해 고정. loki는 grafana-community 리포(포크됨).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -33,8 +33,8 @@ spec:
           targetRevision: '{{.version}}'
           helm:
             valueFiles:
-              - $values/workloads/values/observability/{{.name}}/values.yaml
-        - repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git   # 값 제공용 git 소스
+              - $values/workloads/charts/observability/{{.name}}/values.yaml
+        - repoURL: https://github.com/sss654654/cgv-infra.git   # 값 제공용 git 소스
           targetRevision: main
           ref: values
       destination:
@@ -45,4 +45,4 @@ spec:
           prune: true
           selfHeal: true
         syncOptions:
-          - ServerSideApply=true          # 관측 큰 CRD 대비(§7)
+          - ServerSideApply=true          # 관측 컴포넌트의 큰 CRD 적용 대비

@@ -1,0 +1,50 @@
+# StorageClass 6종 — 정적 PV 전용(용도별 디스크 = 파일시스템 = PV 1:1).
+# provisioner 없음(no-provisioner) = "만들 주체가 없다"는 선언 → 코어가 이미 등록된 PV 중에서만 짝을 찾는다.
+# SC를 용도(디스크)별로 나누는 이유: 바인딩은 이름 지목이 아니라 조건(SC·용량·접근모드) 매칭이라,
+#   SC가 하나면 kafka PVC가 mysqldata PV에 붙는 식의 교차 바인딩이 가능해진다. SC 분리가 그 차단선.
+# WaitForFirstConsumer: 파드가 노드에 배정된 뒤에 바인딩 — local PV는 노드에 박혀 있어 필수.
+# reclaimPolicy는 여기 안 적는다 — SC의 reclaimPolicy는 동적 생성 PV에만 적용. 정적 PV는
+#   각 PV의 persistentVolumeReclaimPolicy가 지배한다(pvs.yaml에서 전부 Retain 명시).
+# 로컬 영속 SC 구성: 원본(truth)은 MinIO, 로컬 영속은
+#   "un-flushed 쓰기 + 복제 없음"인 것만: ingester WAL(RF3지만 차트 기본·복구속도로 PV 채택)·loki/tempo WAL.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-mysqldata
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-kafkadata
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-ingesterwal
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-lokiwal
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-tempowal
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-miniodata
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer

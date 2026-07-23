@@ -1,0 +1,7 @@
+# Strimzi 오퍼레이터 자원 (set-once) — Java지만 operator는 부하를 받지 않아 힙이 작음 → MaxRAMPercentage 불필요, limit만.
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: 500m, memory: 384Mi }
+# watchNamespaces를 values 파일로 전달(install.sh에서 --set 사용 안 함).
+watchNamespaces:
+  - data

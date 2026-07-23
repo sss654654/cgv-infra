@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# k3s-1 (첫 서버) — embedded etcd cluster-init. 노드배치-cgv.md §1b.
+# k3s-1 (첫 서버) — embedded etcd cluster-init.
 # 노드 라벨은 설치 시 박음(사후 X — stateful nodeSelector 핀이 배포 전에 있어야 함).
 set -euo pipefail
 

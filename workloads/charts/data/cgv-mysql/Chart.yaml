@@ -1,0 +1,11 @@
+apiVersion: v2
+name: cgv-mysql
+description: bitnami mysql 래퍼(벤더링) — booking 예매 원장 DB
+type: application
+version: 0.1.0
+appVersion: "9.4.0"
+dependencies:
+  - name: mysql
+    version: 14.0.3
+    repository: https://charts.bitnami.com/bitnami
+# Chart.lock 없음 — charts/mysql-14.0.3.tgz 실물이 재현성 담보. helm 사용 가능 환경에서 `helm dependency build`로 lock 생성 예정.

@@ -1,0 +1,41 @@
+# grafana/tempo 1.24.4 (Tempo 2.9.0) — Single Binary(monolithic) + MinIO S3.
+# 차트 deprecated(grafana-community로 이관 예정) — monolithic은 이 차트가 유일. 이관 후 소스 전환 검토.
+# HTTP API 포트 = 3200 (3100 아님 — 3100은 Loki). OTLP 수신 4317(gRPC)/4318(HTTP).
+# 크레덴셜: tempo-s3-credentials(SealedSecret) 필요, 키명 S3_ACCESS_KEY / S3_SECRET_KEY (expand-env로 확장).
+# 버킷 "tempo"를 MinIO에 사전 생성 필요. jaeger receiver는 차트 버그로 끄지 못함(4317/4318만 사용, 나머지 무해).
+# 영속: monolithic이라 복제 없음 → WAL 영속 필수(tempo-wal 5G, k3s-2). retention 24h = 차트 기본값 유지.
+replicas: 1
+tempo:
+  reportingEnabled: false
+  extraArgs:
+    "config.expand-env": "true"
+  extraEnvFrom:
+    - secretRef:
+        name: tempo-s3-credentials
+  resources:                          # 시작값. [렌더 확인: 업스트림에 resources 2곳(tempo.resources/top-level) — 적용처 검증]
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo
+        endpoint: minio.observability.svc.cluster.local:9000
+        access_key: ${S3_ACCESS_KEY}
+        secret_key: ${S3_SECRET_KEY}
+        insecure: true
+        forcepathstyle: true
+      wal:
+        path: /var/tempo/wal
+  receivers:
+    otlp:
+      protocols:
+        grpc: { endpoint: "0.0.0.0:4317" }
+        http: { endpoint: "0.0.0.0:4318" }
+nodeSelector:
+  cgv.io/data: obs                  # tempo-wal 디스크가 있는 k3s-2에 핀(PV nodeAffinity와 이중 안전)
+persistence:
+  enabled: true
+  storageClassName: local-tempowal  # 정적 PV — tempo-wal(5G) 통마운트(디스크1=FS1=PV1, per-FS 관측)
+  accessModes: [ReadWriteOnce]
+  size: 4Gi                         # PV 4Gi와 짝(오버서브 금지)

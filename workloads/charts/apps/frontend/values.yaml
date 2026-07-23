@@ -1,0 +1,74 @@
+# frontend (nginx) 인스턴스 정체성 — 정적 SPA 서빙. 클러스터 라우팅은 Ingress로 이관.
+# 근거 = cgv-onprem/frontend (nginx.conf 게이트웨이 → k3s는 Traefik Ingress). 이미지=nginx-unprivileged(8080, uid 101).
+
+image:
+  repository: registry.cgv.local/frontend
+
+containerPort: 8080        # nginx-unprivileged 기본 리슨
+
+service:
+  port: 8080
+
+# nginx-unprivileged uid 101. readOnlyRootFilesystem + 쓰기 경로 emptyDir(/tmp pid·temp, /var/cache/nginx).
+securityContext:
+  runAsUser: 101
+  runAsGroup: 101
+
+volumes:
+  - name: tmp
+    emptyDir: {}
+  - name: cache
+    emptyDir: {}
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+  - name: cache
+    mountPath: /var/cache/nginx
+
+# 정적 서버 — GET / 은 index.html(200).
+livenessProbe:
+  httpGet: { path: /, port: http }
+  initialDelaySeconds: 5
+  periodSeconds: 15
+readinessProbe:
+  httpGet: { path: /, port: http }
+  initialDelaySeconds: 3
+  periodSeconds: 10
+
+# nginx는 자체 메트릭 없음 → nginx-exporter 사이드카로 노출. 활성은 관측 배선 단계에서 —
+# 선행 조건: cgv-onprem frontend nginx.conf에 stub_status location 추가(앱 레포 변경) + monitor 배선.
+# 그때 아래 주석 해제 + metrics 배선:
+# extraContainers:
+#   - name: nginx-exporter
+#     image: nginx/nginx-prometheus-exporter:1.4.2   # 7부에 태그 재확인
+#     args: ["--nginx.scrape-uri=http://127.0.0.1:8080/stub_status"]
+#     ports: [{ name: nginx-metrics, containerPort: 9113 }]
+#     resources:
+#       requests: { cpu: 50m, memory: 32Mi }
+#       limits:   { cpu: 100m, memory: 64Mi }
+metrics:
+  enabled: false
+
+# Ingress 게이트웨이 — nginx.conf 라우팅을 Traefik으로 이관. host는 env가 지정.
+# longest-prefix 매칭: /api/admission → queue, /api → booking, / → frontend(정적).
+ingress:
+  enabled: true
+  className: traefik
+  paths:
+    - { path: /api/admission, pathType: Prefix, service: queue,    port: 8090 }
+    - { path: /api,           pathType: Prefix, service: booking,  port: 8091 }
+    - { path: /,              pathType: Prefix, service: frontend, port: 8080 }
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: frontend
+podDisruptionBudget:
+  enabled: true
+  minAvailable: null       # 차트 기본 minAvailable:1을 null로 지움(맵 딥머지 함정 — 안 지우면 maxUnavailable와 동시 렌더로 invalid)
+  maxUnavailable: 1        # HPA min 1과 호환 — minAvailable:1이면 replica 1일 때 드레인이 영구 블록됨
+
+partOf: cgv

@@ -10,7 +10,7 @@ metadata:
 spec:
   project: infra
   source:
-    repoURL: https://gitlab.cgv.local/cgv/cgv-infra.git
+    repoURL: https://github.com/sss654654/cgv-infra.git
     targetRevision: main
     path: workloads/manifests/kafka
     directory:
@@ -23,4 +23,4 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-      - SkipDryRunOnMissingResource=true   # Strimzi CRD 존재 전제, 안전 보조(§7)
+      - SkipDryRunOnMissingResource=true   # Strimzi CRD가 아직 없을 수 있어 dry-run 건너뜀(안전 보조)

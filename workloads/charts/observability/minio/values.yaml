@@ -1,0 +1,43 @@
+# minio/minio 5.4.0 — standalone 단일노드 오브젝트스토어 = Loki/Mimir/Tempo의 S3 백엔드(= LGTM truth).
+# 기본 메모리 request 16Gi(홈랩에서 스케줄 불가) → 512Mi/1Gi로 조정(limit 추가로 상한 부여).
+# 루트 크레덴셜: minio-root-secret(SealedSecret) 필요, 키 rootUser / rootPassword (rootPassword 8자 이상).
+# lgtm 전용 유저(IAM 격리): minio-lgtm-user(SealedSecret, 키 password) 필요 — 루트 크레덴셜을 앱에 배포하지 않음.
+#   loki/mimir/tempo S3 크레덴셜 SealedSecret 3개는 클러스터 후 lgtm-user 키로 발급(kubeseal — 시크릿-계약.md).
+#   negative test(타 버킷·admin API 거부)는 배포 후 mc로 확인(7부).
+# fullnameOverride=minio → 서비스 minio.observability.svc:9000 (릴리스명 무관 고정).
+fullnameOverride: minio
+mode: standalone
+nodeSelector:
+  cgv.io/data: obj                 # miniodata LV(100GB)가 있는 k3s-3에 핀(PV nodeAffinity와 이중 안전)
+existingSecret: minio-root-secret
+persistence:
+  enabled: true
+  storageClass: local-miniodata      # 정적 PV(bootstrap/storage/) — miniodata 디스크 통마운트(k3s-3)
+  accessMode: ReadWriteOnce
+  size: 100Gi                        # 디스크 실크기와 일치(전용 통마운트 — LGTM truth라 제일 크다. 유일하게 차오름 = 관측 1순위)
+resources:
+  requests: { cpu: 100m, memory: 512Mi }
+  limits: { cpu: 500m, memory: 1Gi }
+# 백엔드 버킷 3개 사전 생성(post-install hook Job, mc mb). 실수요는 3개(Pyroscope 도입 시 4번째).
+buckets:
+  - { name: loki,  policy: none, purge: false }
+  - { name: mimir, policy: none, purge: false }
+  - { name: tempo, policy: none, purge: false }
+# IAM 격리: lgtm 전용 정책·유저 — 3버킷 한정 CRUD, admin 불가. [렌더 확인: statements 스키마]
+policies:
+  - name: lgtm-rw
+    statements:
+      - effect: Allow
+        resources:
+          - "arn:aws:s3:::loki"
+          - "arn:aws:s3:::loki/*"
+          - "arn:aws:s3:::mimir"
+          - "arn:aws:s3:::mimir/*"
+          - "arn:aws:s3:::tempo"
+          - "arn:aws:s3:::tempo/*"
+        actions: ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+users:                               # 기본 console 유저는 목록에 없음 = 비활성 유지
+  - accessKey: lgtm-user
+    existingSecret: minio-lgtm-user
+    existingSecretKey: password
+    policy: lgtm-rw

@@ -1,0 +1,17 @@
+# Traefik — Ingress 컨트롤러(k3s 번들은 disable, 자체 설치). MetalLB LB로 노출. GitOps로 관리.
+deployment:
+  replicas: 2                         # 진입점 HA(단일 장애 시 ingress 유지)
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1                     # drain 시 최소 1 파드 유지
+resources:                            # set-once — evict 방지 최소 request
+  requests: { cpu: 100m, memory: 64Mi }
+  limits:   { cpu: 500m, memory: 128Mi }
+service:
+  type: LoadBalancer
+ingressClass:
+  enabled: true
+  isDefaultClass: true               # ingressClassName: traefik 를 기본으로
+providers:
+  kubernetesIngress:
+    enabled: true

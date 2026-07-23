@@ -1,0 +1,34 @@
+# booking dev 환경값. 리소스=실측 전 추정(노드설계 기준, JVM).
+# 마이그레이션: booking에 Flyway/Liquibase 없음(pom 확인) → dev는 단일 replica + DDL update로
+#    스키마 부트스트랩(로컬 compose와 동일). 멀티 replica/prd는 마이그레이션 도구 도입 후
+#    migration.enabled=true + DDL_AUTO=none. (= booking 코드 과제, 차트 토글은 준비됨.)
+
+image:
+  tag: dev
+
+replicaCount: 1                   # DDL update 스키마 레이스 회피(단일). 마이그레이션 도구 생기면 증설.
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits:   { cpu: "1000m", memory: 1Gi }   # limit이 힙 크기의 분모(MaxRAMPercentage=75 → 힙 약 768Mi).
+                                            # 측정 오염 방지용 초기 여유(DB풀·처리량 측정 전 OOM 방지) — 처리량 확정 후 768Mi로 조일 수 있으면 조임.
+                                            # booking HPA는 켜지 않음: 대수는 처리량 실측 후 역산, DDL 레이스로 단일 replica 전제
+
+# 비밀번호(MYSQL_PASSWORD)는 여기 없음 → booking-secrets(SealedSecret)에서 envFrom. 서비스명은 미들웨어 배포 후 확정.
+env:
+  PORT: "8091"
+  # Redis Sentinel HA — redis-sentinel 프로파일 활성. REDIS_PASSWORD는 booking-secrets(envFrom, apps/booking).
+  SPRING_PROFILES_ACTIVE: redis-sentinel
+  REDIS_MASTER_NAME: cgvmaster
+  REDIS_SENTINEL_NODES: redis.data.svc.cluster.local:26379
+  MYSQL_HOST: mysql.data.svc.cluster.local
+  MYSQL_PORT: "3306"
+  MYSQL_DB: cgv
+  MYSQL_USER: root                # prd는 전용 유저 권장
+  KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
+  DDL_AUTO: update                # dev 단일: Hibernate 스키마 생성. (prd=none + 마이그레이션 Job)
+  SEED_ON_START: "true"           # dev 단일: DataSeeder 데모 시드. (prd=false)
+  VIRTUAL_THREADS: "true"
+  DB_POOL_SIZE: "10"              # 실측 후 튜닝
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75 -Djava.net.preferIPv4Stack=true"
+  OTLP_HTTP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318/v1/traces
