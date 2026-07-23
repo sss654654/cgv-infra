@@ -7,6 +7,9 @@ disable:
   - traefik                      # Ingress=자체 Traefik 차트가 대신
   - local-storage                # 스토리지=정적 PV(bootstrap/storage/)가 대신. local-path를 남겨두면
                                  # storageClassName 빠뜨린 PVC가 기본 SC로 부트디스크에 조용히 쓴다 → 아예 제거
+# etcd 메트릭 엔드포인트(:2381)를 연다. 기본은 닫혀 있어, 켜지 않으면
+# 3-server embedded etcd의 쿼럼 지표(etcd_server_has_leader 등)를 스크레이프할 수 없다.
+etcd-expose-metrics: true
 # API 서버 인증서 SAN — Phase1(스켈레톤 192.168.0.x) + Phase2(OPNsense 10.0.0.x) 둘 다 미리.
 # (Phase2 재형성 시 인증서 안 깨지게. 라이브 IP 변경 대신 재구축이 단순·안전.)
 tls-san:
