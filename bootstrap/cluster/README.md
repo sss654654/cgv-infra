@@ -12,12 +12,15 @@
    - k3s-2: kafkadata 30G · ingesterwal 5G · lokiwal 5G · tempowal 5G
    - k3s-3: kafkadata 30G · ingesterwal 5G · miniodata 100G
 2. **OS prep**: 정적 IP(Phase1 192.168.0.201-203), SSH키, unattended-upgrades.
-   **데이터 디스크를 `/mnt/disks/<용도>`에 마운트** — 각 디스크를 `mkfs.ext4` 후 fstab UUID로 마운트(통마운트, 서브디렉터리 mkdir 없음). local-path는 config.yaml에서 disable — PVC는 정적 PV(`bootstrap/storage/`, install.sh [3/12]이 apply)에 바인딩된다.
-3. 각 노드에 `k3s/config.yaml` 복사 — 스크립트가 함.
-4. **k3s-1**: `./k3s/01-server-init.sh` → 출력된 명령으로 토큰 확인.
-5. **k3s-2**: `./k3s/02-server-join.sh <k3s-1_IP> <TOKEN> obs`
-   **k3s-3**: `./k3s/02-server-join.sh <k3s-1_IP> <TOKEN> obj`
-6. `kubectl get nodes` → 3 NotReady(정상). → **cgv-infra/bootstrap/install.sh** 로 넘어감.
+   **데이터 디스크를 `/mnt/disks/<용도>`에 마운트** — 각 디스크를 `mkfs.ext4` 후 fstab UUID로 마운트(통마운트, 서브디렉터리 mkdir 없음). local-path는 config.yaml에서 disable — PVC는 정적 PV(`bootstrap/storage/`, install.sh [3/10]이 apply)에 바인딩된다.
+3. 세 노드에 `bootstrap/cluster/`의 세 파일(config.yaml·01·02)을 같은 디렉터리로 복사 — 스크립트가 옆의 config.yaml을 `/etc/rancher/k3s/`로 옮긴다.
+4. **k3s-1**: `./01-server-init.sh` → 출력된 명령으로 토큰 확인.
+5. **한 대씩 순차로** (동시에 조인하면 etcd 쿼럼이 흔들린다). 토큰은 인자가 아니라 실행 중 입력한다.
+   **k3s-2**: `./02-server-join.sh <k3s-1_IP> obs` → `kubectl get nodes`로 2대 확인 후
+   **k3s-3**: `./02-server-join.sh <k3s-1_IP> obj`
+6. `kubectl get nodes -L cgv.io/data` → 3 NotReady(정상) + 라벨 db·obs·obj 확인.
+   라벨은 Node 생성 시 한 번만 박히므로 틀렸으면 `kubectl label node <노드> cgv.io/data=<값> --overwrite`.
+   → **cgv-infra/bootstrap/install.sh** 로 넘어감.
 
 ## Phase1 → Phase2
 Phase1 = vmbr0 직결(192.168.0.x, 스켈레톤). 검증 후 폐기 → vmbr1+OPNsense(10.0.0.x)로 재형성.

@@ -1,5 +1,13 @@
 # k3s 공통 config — 3노드 동일 (/etc/rancher/k3s/config.yaml).
 # 첫 서버에만 주면 2·3번 노드가 기본 Flannel+servicelb+traefik으로 떠 네트워킹 충돌 → 반드시 3노드 동일.
+# kubeconfig(/etc/rancher/k3s/k3s.yaml)를 일반 사용자도 읽게 한다. 기본 0600(root 전용)이면
+# sudo 없이 kubectl/helm을 쓰는 bootstrap/install.sh가 첫 단계에서 permission denied로 죽는다.
+# 0644 = 이 노드에 로그인 가능한 사용자에게 cluster-admin 자격이 열린다는 뜻. dev 단독 노드라 수용.
+write-kubeconfig-mode: "0644"
+# Secret을 etcd에 암호화해 저장한다(기본 off = 평문). SealedSecret은 git 구간만 보호하고,
+# 컨트롤러가 푼 Secret은 etcd에 그대로 앉는다. 이 클러스터는 외장 SSD 한 장 위에 있어
+# 디스크·스냅샷 반출이 곧 크레덴셜 유출이다. 설치 후 켜려면 3서버 순차 rotate/reencrypt가 필요.
+secrets-encryption: true
 flannel-backend: none            # CNI=Calico가 대신 (설치는 cgv-infra/install.sh)
 disable-network-policy: true     # NetworkPolicy도 Calico가
 disable:
