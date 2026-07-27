@@ -5,6 +5,21 @@
 # helm template 검증 완료(StatefulSet 1 + gateway 1, memcached/canary 없음).
 # 영속: monolithic이라 복제 없음 → 크래시 시 최근 로그를 지킬 수단이 WAL뿐 = 영속 필수(loki-wal 5G, k3s-2).
 deploymentMode: Monolithic
+# RBAC 축소. 차트 기본은 sidecar.rules.enabled=true + rbac.namespaced=false 조합이라
+# loki ServiceAccount에 전 네임스페이스 configmaps/secrets get·watch·list ClusterRole이 붙는다
+# (= data ns의 mysql-secret·redis-secret, app ns의 booking-secrets/queue-secrets까지 읽힌다).
+# 이 클러스터는 Loki 룰(alert/recording)을 쓰지 않아 룰 사이드카가 읽을 대상이 0건이다.
+#   sidecar.rules.enabled=false → 사이드카 컨테이너 제거
+#   rbac.namespaced=true        → ClusterRole/ClusterRoleBinding 생성 자체를 막음
+#                                 (사이드카가 꺼져 있어 대체 Role도 안 만들어짐)
+# 룰을 쓰게 되면 sidecar.rules.enabled=true + rbac.namespaced=true 로 되돌린다 —
+# 그러면 권한이 observability ns 안의 Role로만 생긴다.
+# [렌더 확인: ClusterRole/ClusterRoleBinding 0건, StatefulSet 컨테이너 loki 1개(loki-sc-rules 제거)]
+sidecar:
+  rules:
+    enabled: false
+rbac:
+  namespaced: true
 loki:
   auth_enabled: false
   commonConfig:
@@ -63,3 +78,9 @@ resultsCache: { enabled: false }
 lokiCanary: { enabled: false }
 test: { enabled: false }
 minio: { enabled: false }
+
+# self-metric: Loki 자신의 상태(수집량·S3 쓰기 실패·compactor retention 동작)를 발행한다.
+# 없으면 대시보드가 비었을 때 "수집이 막힌 건지 실제로 조용한 건지"를 가릴 수단이 없다.
+monitoring:
+  serviceMonitor:
+    enabled: true

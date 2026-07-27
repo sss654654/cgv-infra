@@ -6,7 +6,50 @@
 # 트레이스 블록은 선택 — 앱이 Tempo로 직접 전송하면 otelcol 블록+extraPorts 삭제.
 controller:
   type: daemonset
-rbac: { create: true }
+# RBAC — 차트 기본 rules를 그대로 두면 alloy SA에 전 네임스페이스 configmaps/secrets get·list·watch가 붙는다
+# (= data ns의 mysql-secret·redis-secret, app ns의 booking-secrets/queue-secrets까지 읽힌다).
+# 차트가 그 규칙에 붙여둔 용도는 remote.kubernetes.* 컴포넌트인데, 아래 configMap.content에 그 컴포넌트가 없다.
+# 그래서 기본 rules에서 configmaps/secrets 한 줄만 뺀 목록을 명시한다. 나머지 줄은 차트 기본과 동일.
+# alloy는 노드·전 네임스페이스 파드를 발견해야 하므로 rbac.namespaces(Role 한정)로는 못 좁힌다 → ClusterRole 유지.
+# 되살려야 하는 조건: ServiceMonitor/PodMonitor가 basicAuth·bearerTokenSecret·tlsConfig로 Secret을 참조하면
+#   alloy가 그 Secret을 직접 Get 해서 스크레이프 설정을 만든다. 권한이 없으면 그 대상만 스크레이프에서 빠지고
+#   alloy 로그에 Get 실패가 남는다(파드는 계속 뜬다). 현재 대상은 전부 무인증 http.
+rbac:
+  create: true
+  rules:
+    - apiGroups: ["", "discovery.k8s.io", "networking.k8s.io"]
+      resources: ["endpoints", "endpointslices", "ingresses", "pods", "services"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["pods", "pods/log", "namespaces"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["monitoring.grafana.com"]
+      resources: ["podlogs"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["monitoring.coreos.com"]
+      resources: ["prometheusrules"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["monitoring.coreos.com"]
+      resources: ["alertmanagerconfigs"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["monitoring.coreos.com"]
+      resources: ["podmonitors", "servicemonitors", "probes", "scrapeconfigs"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: [""]
+      resources: ["events"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apps", "extensions"]
+      resources: ["replicasets"]
+      verbs: ["get", "list", "watch"]
+    # kubelet·cAdvisor 직접 스크레이프용. kubelet은 노드 프로세스라 Service가 없어
+    # ServiceMonitor로 가리킬 수 없다 → role=node 발견 + /metrics·/metrics/cadvisor를 직접 긁는다.
+    #   nodes                : discovery.kubernetes role=node 가 노드 목록을 읽는다
+    #   nodes/metrics·proxy  : kubelet 엔드포인트에 접근한다
+    - apiGroups: [""]
+      resources: ["nodes", "nodes/metrics", "nodes/proxy"]
+      verbs: ["get", "list", "watch"]
+    - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+      verbs: ["get"]
 serviceAccount: { create: true }
 crds: { create: false }
 alloy:
@@ -23,19 +66,48 @@ alloy:
     content: |-
       // LOGS: 파드 stdout -> Loki
       discovery.kubernetes "pods" { role = "pod" }
+      // 한 블록 안의 속성은 줄을 나눠 적는다 — Alloy 문법은 속성 뒤에 줄바꿈을 요구해서
+      // rule { source_labels = [...] target_label = "..." } 처럼 한 줄에 둘을 쓰면 파싱이 실패하고
+      // Alloy가 기동하지 못한다(설정 오류라 파드가 CrashLoop).
       discovery.relabel "pod_logs" {
         targets = discovery.kubernetes.pods.targets
-        rule { source_labels = ["__meta_kubernetes_namespace"]           target_label = "namespace" }
-        rule { source_labels = ["__meta_kubernetes_pod_name"]            target_label = "pod" }
-        rule { source_labels = ["__meta_kubernetes_pod_container_name"]  target_label = "container" }
-        rule { source_labels = ["__meta_kubernetes_pod_node_name"]       target_label = "node" }
-        rule { source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"] target_label = "app" }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
       }
       loki.source.kubernetes "pods" {
         targets    = discovery.relabel.pod_logs.output
         forward_to = [loki.write.default.receiver]
         clustering { enabled = true }
       }
+      // LOGS: 쿠버네티스 이벤트 -> Loki (job="k8s-events")
+      // 파드가 왜 죽었는지(OOMKilling·probe 실패·BackOff·스케줄 실패)는 컨테이너 stdout이 아니라
+      // 이벤트에 남는다. 이벤트는 etcd에서 약 1시간 뒤 사라지므로 Loki에 적재해야 사후 추적이 된다.
+      // clustering: 이벤트는 노드가 아니라 클러스터 단위 스트림이라 DaemonSet 3파드가 각자 읽으면
+      //   같은 이벤트가 3벌 적재된다 — 샤딩으로 한 파드만 담당하게 한다.
+      loki.source.kubernetes_events "cluster" {
+        job_name   = "k8s-events"
+        forward_to = [loki.write.default.receiver]
+        clustering { enabled = true }
+      }
+
       loki.write "default" {
         endpoint { url = "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/push" }
       }
@@ -47,6 +119,97 @@ alloy:
       }
       prometheus.operator.podmonitors "scrape" {
         forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
+
+      // METRICS: kubelet + cAdvisor 직접 스크레이프
+      // 이 둘은 노드 프로세스라 Service가 없어 ServiceMonitor 경로로는 원리적으로 못 잡는다.
+      //   kubelet /metrics          -> up{job="kubelet"} = 노드 생존을 etcd 안 거치고 보는 신호.
+      //     KSM 기반 노드 상태는 apiserver·etcd를 통과하므로 쿼럼이 깨지면 값이 갱신을 멈춘 채
+      //     마지막 상태로 굳는다("죽었는데 green"). 직접 스크레이프는 대상이 죽으면 up=0으로 정직하다.
+      //   kubelet /metrics/cadvisor -> container_cpu_usage_seconds_total·container_memory_working_set_bytes
+      //     = 컨테이너 실사용. 부하 실측으로 배포 스펙을 역산하려면 이 값이 있어야 한다.
+      //     kube-state-metrics는 선언값(requests/limits)만 발행하고 실사용은 모른다.
+      discovery.kubernetes "nodes" { role = "node" }
+
+      // 노드 발견 결과를 kubelet 주소(:10250)로 바꾼다. apiserver 프록시(/api/v1/nodes/<n>/proxy)를
+      // 경유하지 않고 노드에 직접 붙는다 — 경유하면 apiserver가 죽을 때 노드 생존까지 같이 안 보인다.
+      discovery.relabel "kubelet" {
+        targets = discovery.kubernetes.nodes.targets
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_address_InternalIP"]
+          replacement   = "$1:10250"
+          target_label  = "__address__"
+        }
+      }
+
+      prometheus.scrape "kubelet" {
+        targets      = discovery.relabel.kubelet.output
+        job_name     = "kubelet"
+        metrics_path = "/metrics"
+        scheme       = "https"
+        // kubelet은 서비스어카운트 토큰으로 인증한다. 인증서는 노드마다 자체 서명이라
+        // 이름 검증을 끄지 않으면 x509 오류로 전부 실패한다(사설망 노드 직접 접속).
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets      = discovery.relabel.kubelet.output
+        job_name     = "cadvisor"
+        metrics_path = "/metrics/cadvisor"
+        scheme       = "https"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
+
+      // METRICS: apiserver 직접 스크레이프
+      // 기본 kubernetes Service를 안 쓰는 이유: 그 Service는 살아 있는 apiserver만 엔드포인트로
+      // 유지해서, 노드가 죽으면 대상 자체가 목록에서 사라진다 — up=0이 아니라 아예 없어져
+      // "죽었다"를 표현하지 못한다. 노드 주소를 직접 지목하면 대상이 남아 up=0으로 나온다.
+      // ServiceMonitor 대신 여기 둔 이유는 토큰 파일 지정 필드가 CRD 버전에 따라 다뤄지지 않아서다.
+      discovery.relabel "apiserver" {
+        targets = discovery.kubernetes.nodes.targets
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_address_InternalIP"]
+          replacement   = "$1:6443"
+          target_label  = "__address__"
+        }
+      }
+
+      prometheus.scrape "apiserver" {
+        targets      = discovery.relabel.apiserver.output
+        job_name     = "k3s-apiserver"
+        metrics_path = "/metrics"
+        scheme       = "https"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
+
+      // METRICS: MinIO 버킷 사용량. minio 차트는 클러스터 메트릭을 ServiceMonitor가 아니라
+      // Probe CRD로 내는데 이 설정은 Probe를 소비하지 않는다 → 서비스를 직접 지목한다.
+      // miniodata(100G)가 유일하게 계속 차오르는 디스크라 사용량이 용량 계획의 근거가 된다.
+      prometheus.scrape "minio" {
+        targets = [{
+          __address__ = "minio.observability.svc.cluster.local:9000",
+          job         = "minio",
+        }]
+        metrics_path = "/minio/v2/metrics/cluster"
+        forward_to   = [prometheus.remote_write.mimir.receiver]
         clustering { enabled = true }
       }
       prometheus.remote_write "mimir" {
@@ -65,3 +228,8 @@ alloy:
           tls { insecure = true }
         }
       }
+
+# self-metric: Alloy 자신의 상태(remote_write 성공·실패·큐 길이, 각 컴포넌트 건강).
+# 이게 없으면 "메트릭이 안 보인다"의 원인이 수집인지 저장인지 못 가린다 — 배선 디버깅의 전제다.
+serviceMonitor:
+  enabled: true

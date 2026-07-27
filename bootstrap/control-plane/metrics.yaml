@@ -1,0 +1,68 @@
+# control-plane 메트릭 수집 경로 — etcd·apiserver.
+#
+# 왜 수동 Service+Endpoints인가:
+#   etcd와 apiserver는 k3s server 프로세스 안에서 도는 호스트 프로세스다. 쿠버네티스 Service가
+#   가리키는 파드가 없으므로 셀렉터로는 대상을 찾을 수 없다 → 셀렉터 없는 Service를 만들고
+#   Endpoints를 손으로 채워 노드 주소를 직접 지목한다. ServiceMonitor는 그 Service를 본다.
+#
+# 왜 기본 kubernetes Service를 안 쓰나:
+#   default/kubernetes Service는 apiserver가 살아 있는 노드만 엔드포인트로 유지한다. 노드가 죽으면
+#   그 엔드포인트가 목록에서 빠져 스크레이프 대상 자체가 사라진다 — up 지표가 0이 되는 게 아니라
+#   아예 없어져서 "죽었다"를 표현하지 못한다. 고정 Endpoints면 대상이 남아 up=0으로 정직하게 나온다.
+#
+# 노드 IP를 그대로 쓴다. 3노드 주소가 고정값(192.168.0.201-203)이고 노드 수가 바뀌면 클러스터
+# 재형성이 필요한 규모라, 설치 시점에 IP를 주입하는 절차보다 선언이 단순하고 검증도 쉽다.
+# 노드를 늘리거나 IP 대역을 바꾸면 이 파일을 같이 고친다.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k3s-etcd
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: k3s-etcd
+spec:
+  clusterIP: None          # 셀렉터 없는 headless — Endpoints를 아래에서 직접 채운다
+  ports:
+    - name: metrics
+      port: 2381           # config.yaml의 etcd-expose-metrics: true 가 여는 포트(평문 http)
+      targetPort: 2381
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: k3s-etcd           # Service와 이름이 같아야 연결된다
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: k3s-etcd
+subsets:
+  - addresses:
+      - { ip: 192.168.0.201, nodeName: k3s-1 }
+      - { ip: 192.168.0.202, nodeName: k3s-2 }
+      - { ip: 192.168.0.203, nodeName: k3s-3 }
+    ports:
+      - { name: metrics, port: 2381 }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: k3s-etcd
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: k3s-etcd
+  endpoints:
+    - port: metrics
+      interval: 15s
+      # etcd_server_has_leader·etcd_server_leader_changes_seen_total 이 쿼럼 관측의 재료다.
+      # 3-member에서 leader가 없으면(쿼럼 붕괴) 이 값이 0이 된다.
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_endpoint_node_name]
+          targetLabel: node
+
+# apiserver는 여기에 없다. /metrics가 인증을 요구하는데, ServiceMonitor에서 토큰 파일을 지정하는
+# 필드(bearerTokenFile)는 임의 파일 읽기 통로라 prometheus-operator가 걷어내는 방향이라
+# CRD 버전에 따라 무시되거나 거부될 수 있다. 그래서 apiserver 스크레이프는 Alloy 설정에 직접 둔다
+# (workloads/charts/observability/alloy/values.yaml의 prometheus.scrape "apiserver").
+# etcd는 :2381이 평문·무인증이라 인증 지정이 필요 없어 ServiceMonitor로 둘 수 있다.

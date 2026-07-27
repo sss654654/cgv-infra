@@ -42,3 +42,7 @@ datasources:
         type: tempo
         access: proxy
         url: http://tempo.observability.svc.cluster.local:3200
+
+# self-metric: Grafana 자신의 상태(데이터소스 응답·로그인·대시보드 렌더).
+serviceMonitor:
+  enabled: true

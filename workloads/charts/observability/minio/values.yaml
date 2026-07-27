@@ -7,6 +7,21 @@
 # fullnameOverride=minio → 서비스 minio.observability.svc:9000 (릴리스명 무관 고정).
 fullnameOverride: minio
 mode: standalone
+# 차트 기본 배포전략은 RollingUpdate(maxSurge 100% / maxUnavailable 0)라 새 파드가 먼저 뜬 뒤 구 파드가 죽는다.
+# 이 배포는 replicas 1 + nodeSelector로 k3s-3 고정 + ReadWriteOnce local PV라,
+#   그 방식이면 두 파드가 같은 노드에서 같은 /export(.minio.sys 포함)를 동시에 연다
+#   → LGTM 3종의 원본 저장소가 두 프로세스에 의해 동시에 쓰인다.
+# Recreate = 구 파드를 먼저 끝내고 새 파드를 띄운다. 단일 파드 + RWO에서는 이게 유일하게 맞는 전략이다.
+#   대가: 재배포마다 S3가 끊기는 창이 생긴다. 그 창은 Loki/Mimir/Tempo의 S3 쓰기 재시도와
+#   로컬 WAL(ingesterwal·lokiwal·tempowal)이 흡수한다.
+deploymentUpdate:
+  type: Recreate
+# 프로브: minio 5.4.0 차트는 컨테이너 프로브를 values로 노출하지 않는다
+#   (values.yaml·templates/deployment.yaml에 liveness/readiness/startup 키 0건 — 실물 확인).
+#   그래서 파드는 프로세스가 뜨는 즉시 Ready로 간주되고, MinIO가 아직 디스크를 열고 있는 동안에도
+#   Service 엔드포인트에 들어간다 → 그 사이 LGTM의 S3 요청은 connection refused를 받는다.
+# 지금은 위 재시도·WAL로 흡수하고, 확인은 /minio/health/live·/minio/health/ready를 관측 쪽에서 본다.
+# prd 경로: MinIO Operator(Tenant CR)로 가면 프로브와 다중 노드가 기본으로 붙는다.
 nodeSelector:
   cgv.io/data: obj                 # miniodata LV(100GB)가 있는 k3s-3에 핀(PV nodeAffinity와 이중 안전)
 existingSecret: minio-root-secret
@@ -41,3 +56,12 @@ users:                               # 기본 console 유저는 목록에 없음
     existingSecret: minio-lgtm-user
     existingSecretKey: password
     policy: lgtm-rw
+
+# self-metric은 이 차트의 ServiceMonitor로 켜지 않는다.
+#   minio 5.4.0의 servicemonitor 템플릿은 (a) node 메트릭용 ServiceMonitor를 includeNode=true일 때만
+#   만들고 그 selector가 서비스에 monitoring="true" 라벨을 요구하며, (b) 클러스터 메트릭은
+#   ServiceMonitor가 아니라 Probe CRD로 낸다. Alloy 설정은 servicemonitors·podmonitors만 소비하므로
+#   Probe는 아무도 읽지 않는다.
+# 그래서 버킷 사용량(/minio/v2/metrics/cluster)은 Alloy가 이 서비스를 직접 스크레이프한다
+#   (alloy/values.yaml의 prometheus.scrape "minio"). 인증 없이 열려 있는 엔드포인트다.
+# miniodata(100G)는 이 클러스터에서 유일하게 계속 차오르는 디스크라 사용량 관측이 용량 계획의 근거다.

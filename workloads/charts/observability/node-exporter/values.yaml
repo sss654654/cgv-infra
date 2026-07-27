@@ -1,7 +1,9 @@
 # prometheus-community/prometheus-node-exporter 4.56.1 (node_exporter 1.12.1) — 노드 OS 메트릭(DaemonSet).
 # node_filesystem_* 로 용도별 LV 마운트포인트 관측. ServiceMonitor → Alloy가 각 노드 IP:9100 직접 스크레이프 → Mimir.
-# hostNetwork/hostPID/hostPath 필수 → restricted·baseline PSA 위반, privileged만 가능.
-#   → observability 네임스페이스 enforce=privileged로 처리함(bootstrap/namespaces). values로는 못 고침.
+# hostNetwork/hostPID/hostPath(/,/proc,/sys) 필수 → restricted·baseline PSA 위반, privileged만 가능. values로는 못 고침.
+#   → 이 차트만 observability-host 네임스페이스(enforce=privileged)에 배포한다(bootstrap/namespaces + obs ApplicationSet).
+#     observability 본체는 baseline으로 두기 위한 분리다 — MinIO 루트 크레덴셜·Grafana 관리자 자격이 거기 있다.
+#     ServiceMonitor는 Alloy가 네임스페이스 제한 없이 발견하므로 스크레이프 경로는 그대로.
 resources:                           # 경량 발행기(DaemonSet ×3). request 부여로 evict 우선순위 방어
   requests: { cpu: 50m, memory: 64Mi }
   limits:   { cpu: 200m, memory: 128Mi }

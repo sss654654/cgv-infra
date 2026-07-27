@@ -4,6 +4,10 @@
 # 크레덴셜: mimir-minio-credentials(SealedSecret) 필요, 키명 MIMIR_S3_ACCESS_KEY_ID / MIMIR_S3_SECRET_ACCESS_KEY.
 # 버킷 "mimir"를 MinIO에 사전 생성 필요(자동생성 안 함). 게이트웨이 서비스명은 helm template 렌더로 확정(mimir-gateway).
 # memcached 4종(chunks/index/metadata/results)은 차트 기본값이 off — 명시 오버라이드 불필요.
+# 이 values로 실제 뜨는 파드는 11개다(helm template 실측):
+#   distributor 1 · ingester 3 · querier 1 · query_frontend 1 · query_scheduler 1 ·
+#   store_gateway 1 · compactor 1 · ruler 1 · gateway 1.
+#   alertmanager·overrides_exporter·rollout_operator·minio·kafka는 꺼서 0. 노드 RAM 검산은 이 11개 기준.
 minio: { enabled: false }
 kafka: { enabled: false }
 rollout_operator: { enabled: false }
@@ -36,6 +40,13 @@ global:
 # 스토리지: 원본은 MinIO. 로컬 영속 PV는 ingester WAL(노드당 4Gi, local-ingesterwal)뿐.
 #   store_gateway(MinIO 블록 캐시)·compactor(병합 스크래치)는 재생성 가능 → emptyDir(PV 없음, 플로터).
 #   size 명시 필수: 차트 기본값이 PV capacity보다 크면 영구 Pending. PV 4Gi와 짝.
+# emptyDir 상한: 두 컴포넌트의 emptyDir는 노드 부트디스크(40G, etcd·containerd와 동거)에 잡힌다.
+#   무제한이면 compactor 병합 스파이크가 부트디스크를 잠식해 DiskPressure → etcd fsync 지연·파드 퇴거로 간다.
+#   각각 5Gi로 제한 — 부트디스크 40G에서 루트FS·containerd 이미지를 뺀 여유 안에 두 컴포넌트가
+#   같은 노드에 앉는 최악(합 10Gi)까지 들어가는 값.
+#   store_gateway는 차트가 emptyDir 스펙을 그대로 통과시켜 sizeLimit을 쓸 수 있다.
+#   compactor는 차트 6.1.0이 emptyDir:{}를 고정 렌더해 sizeLimit을 못 넣는다
+#     → 같은 효과를 ephemeral-storage limit으로 낸다(kubelet이 emptyDir 사용량을 합산해 퇴거시킨다).
 # 자원 = 시작값(전부 Go — JVM 힙 설정 불필요, limit만. 관측은 메모리 위주, CPU는 쿼리 시에만).
 distributor:
   replicas: 1
@@ -63,12 +74,18 @@ query_scheduler:
 store_gateway:
   replicas: 1
   zoneAwareReplication: { enabled: false }
-  persistentVolume: { enabled: false }         # emptyDir — MinIO 블록 캐시, 크래시=재다운로드(무손실). [렌더 확인: emptyDir sizeLimit 지원 여부]
+  persistentVolume:                            # emptyDir — MinIO 블록 캐시, 크래시=재다운로드(무손실)
+    enabled: false
+    emptyDir: { sizeLimit: 5Gi }               # 차트가 이 맵을 emptyDir 스펙으로 그대로 렌더
   resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { cpu: 500m, memory: 1Gi } }
 compactor:
   replicas: 1
   persistentVolume: { enabled: false }         # emptyDir — 병합 스크래치(산출물은 MinIO로). dedup·병합·retention 적용 주체라 컴포넌트는 필수
-  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: 1000m, memory: 1Gi } }  # 블록 병합 CPU 스파이크
+  # ephemeral-storage: 차트가 compactor emptyDir에 sizeLimit을 못 넣어(emptyDir:{} 고정) 대신 쓴다.
+  #   limit 초과 시 kubelet이 파드를 퇴거 → 병합은 다음 주기에 다시 돈다(산출물 truth는 MinIO라 무손실).
+  resources:
+    requests: { cpu: 250m, memory: 512Mi, ephemeral-storage: 1Gi }
+    limits:   { cpu: 1000m, memory: 1Gi, ephemeral-storage: 5Gi }   # 블록 병합 CPU·디스크 스파이크
 ruler:
   replicas: 1                                  # recording rule 자리 — rule은 이후 실측 후 채움
   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
@@ -77,3 +94,12 @@ overrides_exporter: { enabled: false }         # 끔 — 단일테넌트라 테�
 gateway:
   replicas: 1
   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }  # gateway 자원 명시
+
+# self-metric: Mimir 각 컴포넌트(ingester·distributor·compactor…)의 상태를 발행한다.
+# ingester OOM·S3 쓰기 실패·compactor 지연을 이걸로 본다. dashboards는 끈다 — 대시보드는
+# 우리가 만든 것을 sidecar로 넣는다(업스트림 대시보드는 이 규모에 안 맞는다).
+metaMonitoring:
+  dashboards:
+    enabled: false
+  serviceMonitor:
+    enabled: true

@@ -39,3 +39,7 @@ persistence:
   storageClassName: local-tempowal  # 정적 PV — tempo-wal(5G) 통마운트(디스크1=FS1=PV1, per-FS 관측)
   accessModes: [ReadWriteOnce]
   size: 4Gi                         # PV 4Gi와 짝(오버서브 금지)
+
+# self-metric: Tempo 자신의 수집·S3 쓰기 상태.
+serviceMonitor:
+  enabled: true
