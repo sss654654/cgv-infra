@@ -6,9 +6,22 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# kubeconfig를 명시적으로 지정한다. kubectl은 k3s 래퍼라 이 파일을 알아서 찾지만,
-# helm은 --kubeconfig / $KUBECONFIG / ~/.kube/config 만 보므로 지정하지 않으면 클러스터를 못 찾는다.
-export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
+# kubeconfig 결정. helm은 --kubeconfig / $KUBECONFIG / ~/.kube/config 만 보고
+# k3s 기본 경로(/etc/rancher/k3s/k3s.yaml)는 스스로 찾지 않는다. 그래서 여기서 정해 넘긴다.
+#
+# 실행 위치를 노드로 한정하지 않는다 — kubectl·helm이 있고 클러스터에 닿으면 어디서든 된다.
+#   노드에서: /etc/rancher/k3s/k3s.yaml (k3s가 만든 것. config.yaml의 write-kubeconfig-mode 0644로 읽힌다)
+#   그 밖에서: ~/.kube/config (노드에서 복사해 server 주소를 노드 IP로 바꾼 것)
+# 이미 $KUBECONFIG가 있으면 그대로 존중한다.
+if [ -z "${KUBECONFIG:-}" ]; then
+  if   [ -r /etc/rancher/k3s/k3s.yaml ]; then export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  elif [ -r "$HOME/.kube/config" ];      then export KUBECONFIG="$HOME/.kube/config"
+  else
+    echo "kubeconfig를 찾을 수 없다. /etc/rancher/k3s/k3s.yaml 도 ~/.kube/config 도 없다." >&2
+    echo "  노드에서 실행하거나, 노드의 kubeconfig를 복사해 KUBECONFIG로 지정해라." >&2
+    exit 1
+  fi
+fi
 
 # 선행 조건 검사 — 없는 채로 [1]부터 돌면 중간에 죽어서 부분 적용 상태가 남는다.
 command -v kubectl >/dev/null || { echo "kubectl 없음. k3s가 설치된 노드에서 실행해야 한다." >&2; exit 1; }

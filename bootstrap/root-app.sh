@@ -7,7 +7,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
+# kubeconfig 결정 — install.sh와 같은 규칙. 실행 위치를 노드로 한정하지 않는다.
+#   노드에서: /etc/rancher/k3s/k3s.yaml · 그 밖에서: ~/.kube/config
+if [ -z "${KUBECONFIG:-}" ]; then
+  if   [ -r /etc/rancher/k3s/k3s.yaml ]; then export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  elif [ -r "$HOME/.kube/config" ];      then export KUBECONFIG="$HOME/.kube/config"
+  else echo "kubeconfig를 찾을 수 없다(/etc/rancher/k3s/k3s.yaml · ~/.kube/config)." >&2; exit 1; fi
+fi
 
 command -v kubectl >/dev/null || { echo "kubectl 없음." >&2; exit 1; }
 kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {

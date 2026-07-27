@@ -74,7 +74,28 @@
 kubectl 있나 · helm 있나 · kubeconfig 읽히나 · 클러스터가 응답하나
 ```
 
-중간에 죽어 **부분만 적용된 상태**가 남는 것을 막기 위해서다. 특히 `helm`은 `kubectl`과 달리 k3s의 kubeconfig(`/etc/rancher/k3s/k3s.yaml`)를 스스로 찾지 않는다 — `--kubeconfig` 플래그, `$KUBECONFIG`, `~/.kube/config` 셋만 본다. 그래서 스크립트가 `KUBECONFIG`를 명시적으로 export한다.
+중간에 죽어 **부분만 적용된 상태**가 남는 것을 막기 위해서다.
+
+### 어디서 실행하나 — 노드가 아니어도 된다
+
+`install.sh`가 하는 일은 결국 `kubectl apply`와 `helm upgrade`이고, 둘 다 **API 서버(노드의 6443)에 HTTPS 요청을 보내는 것**이다. 노드 안에서 실행해도 자기 자신의 6443으로 붙으므로 결과가 같다. 필요한 것은 셋뿐이다.
+
+| 필요 | 이유 |
+|---|---|
+| `kubectl` · `helm` | 요청을 보낼 도구 |
+| kubeconfig | 어디로 보낼지(주소) + 누구인지(클라이언트 인증서) |
+| `bootstrap/` 트리 전체 | 스크립트가 하위 폴더를 상대경로로 읽는다 |
+
+`helm`은 `kubectl`과 달리 k3s의 kubeconfig를 스스로 찾지 않는다 — `--kubeconfig` 플래그, `$KUBECONFIG`, `~/.kube/config` 셋만 본다. 그래서 스크립트가 시작할 때 직접 정한다.
+
+```
+$KUBECONFIG 가 이미 있으면        → 그대로 존중
+없고 /etc/rancher/k3s/k3s.yaml    → 노드에서 실행 중인 경우
+없고 ~/.kube/config               → 클러스터 밖에서 실행 중인 경우
+둘 다 없으면                      → 중단
+```
+
+클러스터 밖에서 돌리면 실행 자리가 노드 장애와 분리된다는 이점이 있다. 노드에서 돌리면 그 노드가 죽을 때 실행 지점도 함께 사라진다.
 
 ### 재실행
 
