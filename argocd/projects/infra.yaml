@@ -1,5 +1,5 @@
 # AppProject infra — 플랫폼 워크로드(redis · kafka CR · 관측 · metallb · traefik) 울타리.
-# data·observability·metallb-system·traefik 네임스페이스, cluster-scoped 허용.
+# data·observability·observability-host·metallb-system·traefik 네임스페이스, cluster-scoped 허용.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -22,6 +22,8 @@ spec:
       namespace: data
     - server: https://kubernetes.default.svc
       namespace: observability
+    - server: https://kubernetes.default.svc
+      namespace: observability-host      # node-exporter 전용(privileged PSA). 없으면 그 App만 destination 거부
     - server: https://kubernetes.default.svc
       namespace: metallb-system
     - server: https://kubernetes.default.svc

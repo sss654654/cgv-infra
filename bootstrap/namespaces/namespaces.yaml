@@ -1,4 +1,19 @@
-# 워크로드 네임스페이스 + PodSecurity 라벨. argocd는 helm --create-namespace로 별도.
+# 워크로드 네임스페이스 + PodSecurity 라벨.
+#
+# 프로파일은 그 ns에 실제로 뜨는 파드 스펙을 helm template로 렌더해 판정했다. 판정 결과:
+#   restricted 통과 : app · data · argocd(argo-cd 10.1.4 8워크로드 전부) · cert-manager(v1.21.0 3디플로이+startupapicheck Job)
+#   baseline 까지만 : observability — tempo·alloy·minio·grafana test Pod·mimir smoke-test Job이
+#                     seccompProfile / capabilities.drop=ALL / allowPrivilegeEscalation=false 를 안 채운다.
+#                     호스트 네임스페이스·hostPath·privileged는 하나도 안 쓰므로 baseline은 통과한다.
+#   privileged 필요 : observability-host — node-exporter가 hostNetwork·hostPID·hostPath(/,/proc,/sys)를 쓴다.
+#
+# 여기 없는 ns와 그 이유:
+#   metallb-system·traefik — argocd/applicationsets/platform.yaml 의 managedNamespaceMetadata가 라벨을 건다
+#                            (그 ns를 만드는 주체가 Argo라서 여기서 만들면 소유자가 둘이 된다).
+#   kube-system            — k3s가 소유한다(coredns·metrics-server·helm-controller). 이들이 restricted를 안 채우고
+#                            k3s 업그레이드가 스펙을 되돌리므로 집행을 걸면 클러스터 기동이 막힌다. 집행 없음.
+#   calico-system·tigera-operator — tigera-operator가 만들고 소유한다. calico-node는 privileged가 필수라
+#                            라벨을 걸어도 privileged 외 선택지가 없다. 집행 없음.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -20,7 +35,47 @@ kind: Namespace
 metadata:
   name: observability
   labels:
-    # ⚠️ node-exporter/alloy(DaemonSet, 호스트 접근)가 restricted PSA에 맞지 않음.
-    # 임시 privileged — 이상적으론 node-exporter를 별도 privileged ns로 격리하고 나머지는 restricted 유지.
+    # baseline = 호스트 네임스페이스·hostPath·privileged 컨테이너 차단.
+    # MinIO(루트 크레덴셜 + LGTM 데이터 원본)와 Grafana(관리자 자격)가 이 ns에 있어서,
+    # 차트 값이나 이미지가 변조돼도 hostPath:/ 마운트로 노드 루트에 닿는 경로를 막는 것이 목적이다.
+    # restricted를 못 거는 건 tempo·alloy·minio가 컨테이너 securityContext를 안 채워서다(위 헤더).
+    # warn/audit=restricted로 그 격차를 배포 때마다 드러낸다 — 차단은 안 하고 경고·감사로그만 남는다.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability-host
+  labels:
+    # 호스트 자원을 직접 읽어야 하는 수집기만 격리한다. 현재 node-exporter 하나
+    # (hostNetwork·hostPID + hostPath /,/proc,/sys → baseline·restricted 둘 다 통과 불가).
+    # 이 ns를 따로 두는 이유는 privileged 완화 범위를 파드 1종으로 묶기 위해서다.
+    # ServiceMonitor는 Alloy가 네임스페이스 제한 없이 발견하므로 스크레이프 경로는 그대로다.
     pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  # argocd ns는 helm --create-namespace로도 만들어지지만, 그러면 라벨이 안 붙는다.
+  # install.sh가 이 파일을 argocd 설치보다 먼저 적용하므로 라벨이 붙은 ns가 먼저 존재한다.
+  # argocd-application-controller가 사실상 cluster-admin이라, 이 ns에 privileged·hostPath 파드가
+  # 뜨는 경로(차트 값 변조·repo-server 침해)를 admission에서 막아야 app/data의 restricted가 의미를 갖는다.
+  name: argocd
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  # cert-manager도 helm --create-namespace 대신 여기서 라벨과 함께 먼저 만든다.
+  name: cert-manager
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest

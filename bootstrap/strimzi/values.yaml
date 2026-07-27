@@ -5,3 +5,25 @@ resources:
 # watchNamespaces를 values 파일로 전달(install.sh에서 --set 사용 안 함).
 watchNamespaces:
   - data
+
+# data 네임스페이스는 PodSecurity enforce=restricted다(bootstrap/namespaces/namespaces.yaml).
+# 차트 기본값은 podSecurityContext·securityContext가 빈 맵({})이라 오퍼레이터 파드가 admission에서 거부된다
+# (allowPrivilegeEscalation != false · unrestricted capabilities · runAsNonRoot != true · seccompProfile 미설정).
+# 거부되면 Deployment는 생기고 파드만 0개라, helm --wait이 타임아웃날 때까지 원인이 안 보인다.
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+# 오퍼레이터가 만드는 Kafka 브로커·EntityOperator 파드도 같은 검사를 받는다.
+# Strimzi 기본 Pod Security Provider는 baseline이라 그 파드들이 restricted 기준을 못 채운다.
+# restricted provider로 올리면 오퍼레이터가 생성하는 파드에 위 네 필드를 자동으로 넣는다.
+extraEnvs:
+  - name: STRIMZI_POD_SECURITY_PROVIDER_CLASS
+    value: restricted
