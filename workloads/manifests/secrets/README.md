@@ -1,14 +1,23 @@
 # SealedSecret 봉인 (배포 전 필수)
 
-sealed-secrets 컨트롤러 up(install.sh [7]) 후, `docs/시크릿-계약.md` 표대로 각 Secret을 kubeseal로 봉인해
+sealed-secrets 컨트롤러 up(install.sh [5/10]) 후, `docs/시크릿-계약.md` 표대로 각 Secret을 kubeseal로 봉인해
 이 폴더에 `<name>.yaml`로 저장. `argocd/applications/sealed-secrets.yaml`이 sync-wave -2로 배달(앱보다 먼저).
 
 예 (mysql-secret):
 ```
 kubectl create secret generic mysql-secret -n data \
-  --from-literal=mysql-root-password='<PW>' --dry-run=client -o yaml \
-  | kubeseal --format yaml > mysql-secret.yaml
+  --from-literal=mysql-root-password='<PW>' --from-literal=mysql-password='<같은 PW>' \
+  --dry-run=client -o yaml \
+  | kubeseal --format yaml \
+      --controller-name sealed-secrets --controller-namespace kube-system \
+  > mysql-secret.yaml
 ```
+**`--controller-name`·`--controller-namespace`를 반드시 붙인다.** kubeseal 기본 기대값은 `kube-system/sealed-secrets-controller`인데,
+이 저장소는 helm 릴리스명 `sealed-secrets`로 설치하므로 서비스명이 `sealed-secrets`다. 안 붙이면 공개키를 못 받아 봉인이 실패한다.
+
+**봉인은 `-n <대상 네임스페이스>`가 정확해야 한다.** kubeseal 기본 스코프는 strict(이름+네임스페이스 결속)라,
+네임스페이스가 틀리면 CR은 정상 apply되고 ArgoCD도 Synced로 보이는데 컨트롤러가 복호화에 실패해 Secret이 생기지 않는다.
+app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/시크릿-계약.md`)와 대조하며 만든다.
 **booking-secrets의 MYSQL_PASSWORD = mysql-secret의 mysql-root-password** (같은 값이어야 booking이 붙음).
 
 필요 목록(dev HA, 10종): `mysql-secret`·`redis-secret`(data) · `booking-secrets`·`queue-secrets`(app) · `minio-root-secret`·`minio-lgtm-user`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
