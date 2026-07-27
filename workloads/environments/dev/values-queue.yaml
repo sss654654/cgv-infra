@@ -7,8 +7,13 @@ image:
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling). HPA on이면 차트가 replicas 필드 생략.
 
 resources:
+  # 메모리는 request = limit. 앱배포설계-queue-go §1-D 결정:
+  #   ① Go 상주 메모리가 고정적이라 버스트할 이유가 없다(여유 칸 = 예약 낭비)
+  #   ② 초과의 결말이 OOMKill이라 상한이 하나여야 명확하다
+  #   ③ 예약=최대라 노드 bin-pack 계산이 정확해지고, 퇴거 랭킹(request 초과분 기준)에서 항상 안전한 쪽에 선다
+  # CPU만 버스트한다(request 250m = HPA 스케일 기준, limit 500m).
   requests: { cpu: 250m, memory: 64Mi }
-  limits:   { cpu: 500m, memory: 128Mi }  # 메모리 request/limit 64/128(burst 허용, QoS Burstable). CPU request 250m = HPA 기준
+  limits:   { cpu: 500m, memory: 64Mi }
 
 autoscaling:                              # HPA 켬. max 4 = Kafka 파티션 4와 짝(그 이상은 소비 병렬성 증가 없음)
   enabled: true

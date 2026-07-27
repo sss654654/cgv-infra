@@ -1,8 +1,26 @@
 # KafkaTopic CR — 토픽 소유권을 GitOps로 관리. auto-create 대신 명시 선언.
-# admissions: queue→booking(입장 발행) / bookings-completed: booking→queue(완료 → ZREM).
-# partitions 4 = HPA max 4와 짝 — 동시 소비 파드 ≤ 파티션 수(파티션 1이면 HPA 켜도 병렬 소비 0).
-#   전역 순서는 포기 — 키 파티셔닝 전제(같은 키는 같은 파티션 = 파티션 내 순서만 보장).
+# 선언하지 않으면 앱이 처음 붙을 때 브로커가 기본값(파티션 1)으로 만들고, 파티션은 줄일 수 없어
+# 그 값이 굳는다 → 소비 병렬성이 1로 고정된다.
+#
+# 토픽 넷:
+#   admissions          queue→booking  입장 승인
+#   admissions-revoked  queue→booking  입장 회수(세션 만료·이탈·자리반환)
+#   bookings-completed  booking→queue  예매 확정 → 자리 반환
+#   admissions.DLT      booking 내부   admissions 소비 재시도 소진분 격리
+#
+# partitions 4 = 앱 HPA 상한과 짝 — 한 그룹의 동시 소비 파드는 파티션 수를 넘지 못한다.
+#   전역 순서는 포기하고 키 단위 순서만 지킨다. 발행 키는 requestId라, 같은 사용자의
+#   입장·회수가 같은 파티션에서 순서대로 처리된다(키가 없으면 회수가 입장을 앞질러
+#   이미 지운 인증이 되살아난다).
 #   파티션은 늘리기만 가능(줄이기 불가)라 넉넉히 4. RF 3 = 브로커 하나 죽어도 유지.
+# 보존: kafkadata 30G 산정이 "3일치"를 전제로 한 값이라 토픽에 명시한다(설정이 없으면 브로커 기본 7일).
+#   retention.ms 259200000 = 3일.
+#   segment.ms 86400000(24h) — 세그먼트는 닫힌 뒤에야 삭제 대상이 된다. 기본 roll 주기가 7일이라
+#     그대로 두면 3일 보존이 실제로는 최대 10일까지 늘어난다.
+#   retention.bytes 2GiB/파티션 — 시간 기준이 못 막는 유입 급증에 대한 상한.
+#     RF3 · 브로커 3이라 브로커 한 대가 네 토픽의 파티션을 전부 들고 있는 최악을 가정한다.
+#     admissions·revoked·completed 각 4파티션 + DLT 1파티션 = 13파티션 × 2GiB = 26GiB.
+#     kafkadata ext4 실측 가용 약 27.8GiB(디스크 명목 30G) 아래.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
@@ -13,6 +31,10 @@ metadata:
 spec:
   partitions: 4
   replicas: 3
+  config:
+    retention.ms: 259200000          # 3일
+    segment.ms: 86400000             # 24h
+    retention.bytes: 2147483648      # 2GiB/파티션
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
@@ -24,3 +46,45 @@ metadata:
 spec:
   partitions: 4
   replicas: 3
+  config:
+    retention.ms: 259200000          # 3일
+    segment.ms: 86400000             # 24h
+    retention.bytes: 2147483648      # 2GiB/파티션
+---
+# 입장 회수 — 세션 만료·이탈·자리반환으로 queue가 자리를 거둘 때 발행한다.
+# booking은 이걸 받아 입장 인증을 지운다. 이 토픽이 없으면 자리를 잃은 사용자의 인증이
+# TTL 만료까지 남아 정원 밖에서 예매 API를 통과한다.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: admissions-revoked
+  namespace: data
+  labels:
+    strimzi.io/cluster: cgv
+spec:
+  partitions: 4
+  replicas: 3
+  config:
+    retention.ms: 259200000          # 3일
+    segment.ms: 86400000             # 24h
+    retention.bytes: 2147483648      # 2GiB/파티션
+---
+# admissions 소비 실패 격리(dead letter). booking의 리스너가 재시도를 소진하면 원본 메시지를
+# 여기로 옮기고 오프셋을 커밋한다 — 한 건의 실패가 파티션 전체를 멈추지 않게 하되, 메시지는 남긴다.
+# 파티션 1: 소비자가 없고 사후 조사용이라 병렬성이 필요 없다.
+# 보존 7일: 원본(3일)보다 길어야 한다. 밤사이 쌓인 실패를 다음 날 확인할 수 있어야 하고,
+#   원본과 같으면 조사 시점에 이미 지워져 있을 수 있다.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: admissions.DLT
+  namespace: data
+  labels:
+    strimzi.io/cluster: cgv
+spec:
+  partitions: 1
+  replicas: 3
+  config:
+    retention.ms: 604800000          # 7일
+    segment.ms: 86400000             # 24h
+    retention.bytes: 2147483648      # 2GiB

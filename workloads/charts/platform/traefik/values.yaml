@@ -4,6 +4,21 @@ deployment:
 podDisruptionBudget:
   enabled: true
   minAvailable: 1                     # drain 시 최소 1 파드 유지
+# 배치: 두 파드를 서로 다른 노드에 강제한다.
+#   두 파드가 한 노드에 앉으면 그 노드가 죽을 때 MetalLB LB IP는 살아 있는데 백엔드가 0이 되어
+#   frontend·queue·booking Ingress가 전부 502가 된다. PDB(위 minAvailable 1)는 자발적 드레인만
+#   막고 노드 장애는 못 막으므로, 이건 배치로만 막을 수 있다.
+#   차트 기본은 배치 강제가 없어(스케줄러 재량) 재기동·드레인 순서에 따라 실제로 몰릴 수 있다.
+# required로 두는 근거: 노드 3대에 파드 2개라 여유가 한 대 있다. 노드 하나가 빠져도 남은 두 대 중
+#   빈 곳으로 재배치되므로 Pending이 생기지 않는다(파드 수 < 노드 수라 성립하는 조건이다).
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - topologyKey: kubernetes.io/hostname
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: traefik
+            app.kubernetes.io/instance: traefik-traefik
 resources:                            # set-once — evict 방지 최소 request
   requests: { cpu: 100m, memory: 64Mi }
   limits:   { cpu: 500m, memory: 128Mi }

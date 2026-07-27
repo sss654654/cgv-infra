@@ -21,6 +21,10 @@ env:
   SPRING_PROFILES_ACTIVE: redis-sentinel
   REDIS_MASTER_NAME: cgvmaster
   REDIS_SENTINEL_NODES: redis.data.svc.cluster.local:26379
+  # 입장 인증 만료. queue가 회수 이벤트를 놓쳤을 때의 최후 방어라 queue의 SESSION_TIMEOUT보다 길어야 한다.
+  # 짧으면 정상 세션이 중간에 인증을 잃고 좌석선택이 403이 된다.
+  # values-queue.yaml의 SESSION_TIMEOUT(60)을 바꾸면 이 값도 같이 올린다.
+  ADMITTED_TTL: "180"
   MYSQL_HOST: mysql.data.svc.cluster.local
   MYSQL_PORT: "3306"
   MYSQL_DB: cgv

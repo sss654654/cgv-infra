@@ -25,9 +25,17 @@ spec:
         podAntiAffinity:             # 브로커 3개를 서로 다른 노드에 (co-location 방지)
           requiredDuringSchedulingIgnoredDuringExecution:
             - topologyKey: kubernetes.io/hostname
+              # 셀렉터는 브로커 파드만 잡아야 한다.
+              # Strimzi가 노드풀 파드에 다는 라벨: strimzi.io/cluster=<클러스터>,
+              #   strimzi.io/name=<클러스터>-kafka, strimzi.io/pool-name=<풀>, strimzi.io/component-type=kafka.
+              # entityOperator 파드는 strimzi.io/cluster는 같지만 strimzi.io/name=<클러스터>-entity-operator다.
+              # strimzi.io/cluster 하나만 쓰면 EO도 걸린다 → 브로커가 재스케줄될 때 그 브로커의
+              #   local PV가 있는 노드에 EO가 앉아 있으면 hard 규칙에 막혀 영구 Pending(RF3 → 2 고착,
+              #   min.insync.replicas=2라 브로커 하나 더 흔들리면 쓰기 거부).
               labelSelector:
                 matchLabels:
                   strimzi.io/cluster: cgv
+                  strimzi.io/name: cgv-kafka
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: Kafka
@@ -55,6 +63,30 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
+      # 보존 3일 — kafkadata 30G 산정의 근거값. 여기 값은 클러스터 기본이라
+      #   KafkaTopic CR에 config가 없는 토픽(앱 auto-create 포함)에 적용된다.
+      # 세그먼트가 닫혀야 삭제 대상이 되므로 roll 주기도 같이 줄인다
+      #   (기본 log.roll.ms=7일이면 3일 보존이 실제로는 최대 10일까지 늘어난다).
+      log.retention.hours: 72
+      log.roll.ms: 86400000          # 24h
   entityOperator:
-    topicOperator: {}                # KafkaTopic CR을 실제 토픽으로
-    userOperator: {}
+    # topic/user operator는 각각 별도 JVM 컨테이너다. resources를 비우면 BestEffort가 되어
+    #   노드 메모리 압박 시 가장 먼저 퇴거되고, 그러면 KafkaTopic CR 반영이 조용히 멈춘다.
+    # 또 limit이 없으면 JVM이 컨테이너가 아닌 노드 메모리(8GB)를 기준으로 힙 상한을 잡는다.
+    # 메모리 request=limit → 메모리 초과분으로 인한 퇴거 대상에서 빠진다(CPU는 스로틀링만 되므로 limit>request).
+    # 256Mi 내역: 힙 128Mi(-Xmx) + 비힙 약 128Mi(메타스페이스·코드캐시·스레드스택·GC 구조체).
+    #   토픽 2개·유저 0개 규모라 힙 128Mi로 충분하고, 두 컨테이너 합 512Mi를 노드 예산에 반영해야 한다.
+    topicOperator:                   # KafkaTopic CR을 실제 토픽으로
+      resources:
+        requests: { cpu: 50m, memory: 256Mi }
+        limits:   { cpu: 250m, memory: 256Mi }
+      jvmOptions:
+        -Xms: 64m
+        -Xmx: 128m
+    userOperator:
+      resources:
+        requests: { cpu: 50m, memory: 256Mi }
+        limits:   { cpu: 250m, memory: 256Mi }
+      jvmOptions:
+        -Xms: 64m
+        -Xmx: 128m

@@ -11,10 +11,25 @@ spec:
   backoffLimit: 3
   template:
     metadata:
-      labels: {{- include "app.selectorLabels" . | nindent 8 }}
+      # Deployment와 같은 selectorLabels(name + instance)를 그대로 달면
+      #   Service·PDB·PodMonitor·ServiceMonitor가 이 Job 파드를 자기 대상으로 잡는다.
+      #   Job 컨테이너는 앱 포트를 듣지 않는데 readinessProbe가 없어 kubelet 기준 Ready라
+      #   Service 엔드포인트에 들어가고, 그리로 간 요청은 connection refused가 된다.
+      #   모니터도 같은 파드를 스크레이프해 target down을 만든다.
+      # name을 -migration으로 갈라 그 셀렉터들에 안 걸리게 한다.
+      #   Job이 자기 파드를 찾는 건 컨트롤러가 붙이는 batch.kubernetes.io/controller-uid로 하므로
+      #   여기 라벨을 바꿔도 Job 동작에는 영향이 없다.
+      labels:
+        app.kubernetes.io/name: {{ include "app.fullname" . }}-migration
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: migration
+        {{- with .Values.partOf }}
+        app.kubernetes.io/part-of: {{ . }}
+        {{- end }}
     spec:
       restartPolicy: Never
       serviceAccountName: {{ include "app.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
       securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: migration
@@ -34,4 +49,11 @@ spec:
           {{- with .Values.envFrom }}
           envFrom: {{- toYaml . | nindent 12 }}
           {{- end }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.volumeMounts }}
+          volumeMounts: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.volumes }}
+      volumes: {{- toYaml . | nindent 8 }}
+      {{- end }}
 {{- end }}

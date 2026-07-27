@@ -33,6 +33,12 @@ serviceAccount:
   create: true
   name: ""
 
+# queue·booking·frontend 셋 다 쿠버네티스 API를 호출하지 않는다.
+# 기본값(true)이면 파드마다 /var/run/secrets/kubernetes.io/serviceaccount/token 이 마운트돼,
+# 컨테이너가 뚫렸을 때 그 토큰으로 API 서버에 인증할 수 있는 발판이 생긴다.
+# 쓰지 않는 자격증명은 얹지 않는다.
+automountServiceAccountToken: false
+
 # PodSecurity restricted 충족.
 podSecurityContext:
   runAsNonRoot: true

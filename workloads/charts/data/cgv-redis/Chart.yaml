@@ -1,6 +1,6 @@
 apiVersion: v2
 name: cgv-redis
-description: CGV Redis 래퍼 — bitnami redis(Sentinel HA)를 dependency로 품고 SealedSecret 글루를 얹음.
+description: CGV Redis 래퍼 — bitnami redis(Sentinel HA)를 dependency로 품는다. 비밀번호는 중앙 workloads/manifests/secrets/의 SealedSecret(redis-secret)이 배달한다.
 type: application
 version: 0.1.0
 appVersion: "7.4"

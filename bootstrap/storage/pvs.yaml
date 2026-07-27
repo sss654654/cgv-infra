@@ -4,7 +4,17 @@
 # k8s는 path 실존을 검증하지 않는다 — 경로가 틀려도 PV는 생성되고, 파드 뜰 때 kubelet이 가서야 실패한다.
 # persistentVolumeReclaimPolicy: Retain 명시 — 정적 PV 기본값도 Retain이지만 기본값에 기대지 않는다.
 # nodeAffinity = local PV 필수. 이 데이터는 그 노드 디스크에만 있다는 사실을 스케줄러에 알리는 유일한 수단.
-# capacity는 강제가 아니라 라벨 — 실제 상한은 파일시스템 크기. PV ≤ FS 실크기(오버서브 금지).
+# capacity는 강제가 아니라 라벨 — 아무것도 예약하지 않고, 스케줄러가 PVC와 PV를 짝지을 때만 쓰인다.
+#   실제 상한은 파일시스템 크기이고, 넘으면 PV가 아니라 앱이 ENOSPC를 받는다.
+# 아래 값 중 WAL 5장(ingesterwal×3·lokiwal·tempowal)만 4Gi로 FS 실크기 아래에 잡혀 있다.
+#   mysqldata·kafkadata·miniodata는 원시 디스크 명목치(20/30/100Gi)를 그대로 적은 것이라
+#   ext4 메타데이터·예약블록만큼 표기가 실제보다 크다. 2026-07-27 노드 실측(df):
+#     mysqldata   PV 20Gi  ↔ FS 19.5GiB  / 가용 18.5GiB
+#     kafkadata   PV 30Gi  ↔ FS 29.4GiB  / 가용 27.8GiB  (3노드 동일)
+#     ingesterwal PV 4Gi   ↔ FS 4.8GiB   / 가용 4.6GiB   (lokiwal·tempowal 동일)
+#     miniodata   PV 100Gi ↔ FS 97.9GiB  / 가용 92.9GiB
+#   특히 minio는 persistence.size 100Gi로 요청하는데 실제로는 약 92.9GiB에서 찬다.
+# 그래서 용량 알람·잔여량 판단의 기준은 PV capacity가 아니라 node_filesystem_* 실측이다.
 # 로컬 영속 PV 구성: 원본(truth)은 MinIO(miniodata),
 #   로컬 영속은 ingester WAL(노드당 1, RF3·anti-affinity와 짝)·loki/tempo WAL(복제 없는 mono의 유일한 방어)뿐.
 #   store-gateway·compactor는 emptyDir(MinIO에서 재생성) — PV 없음.
