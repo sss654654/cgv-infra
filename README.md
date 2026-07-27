@@ -180,7 +180,9 @@ cgv-infra/
 > *리소스 생성 순서*(약 2초 간격)뿐이고, ApplicationSet이 만드는 App(metallb·traefik·MinIO·LGTM·앱)은
 > 그 sync에 속하지 않아 wave 값이 실효가 없다. 실제 동작은 **전 App이 거의 동시에 생성되어 병렬 sync**이고,
 > 의존이 안 뜬 사이의 crashloop는 selfHeal로 수렴한다(초기 red는 정상).
-> "관측 먼저 → 확인 → 앱"이라는 게이트는 현 구조에서 **성립하지 않는다** — 별도 장치가 필요하다(미결).
+> 그래서 "관측 먼저 → 확인 → 앱"을 sync-wave로 강제할 수는 없다. 다만 앱 3종은 `registry.cgv.local`이
+> 실재하지 않아 이미지를 못 받는다 — 이미지 공급 경로가 생기기 전까지는 관측·미들웨어만 수렴하고
+> 앱은 `ImagePullBackOff`로 남는다. 앱 투입 시점은 그 경로를 만드는 시점이 결정한다.
 
 ---
 
@@ -280,13 +282,12 @@ kubelet·cAdvisor·apiserver는 노드 프로세스라 대상을 가리킬 Servi
 | 6 | `bootstrap/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ⬜ 미착수 |
 | 7 | `kubectl -n argocd get applications -w` 로 sync 확인 | ⬜ 미착수 |
 
-`install.sh`는 `KUBECONFIG`를 환경변수로 받고 없으면 k3s 기본 경로(`/etc/rancher/k3s/k3s.yaml`)를 쓴다. 실행 전에 `kubectl`·`helm`·kubeconfig 접근·클러스터 응답을 검사하고 하나라도 없으면 시작하지 않는다 — 중간에 죽어 부분 적용 상태가 남는 것을 막는다.
+**실행 위치는 노드로 한정되지 않는다.** `kubectl`·`helm`이 있고 클러스터에 닿으면 어디서든 된다 — 두 도구는 API 서버로 HTTPS 요청을 보낼 뿐이다. kubeconfig는 `$KUBECONFIG` → k3s 기본 경로(`/etc/rancher/k3s/k3s.yaml`) → `~/.kube/config` 순으로 찾고, 셋 다 없으면 무엇이 필요한지 알리고 멈춘다. 시작 전에 `kubectl`·`helm`·kubeconfig 접근·클러스터 응답을 검사해, 중간에 죽어 부분 적용 상태가 남는 것을 막는다.
 
-> **파일은 `git clone`으로 노드에 가져간다.** Windows 작업트리는 `core.autocrlf`로 CRLF를 갖고 있어, 거기서 scp로 직접 복사하면 셸이 `$'do\r'` 같은 문법 오류로 죽는다. `.gitattributes`가 저장소 안 내용을 LF로 고정하므로 clone/pull로 받으면 그 문제가 없다.
+**4번(install.sh)과 5번(봉인) 사이에 손이 한 번 더 들어가는 것이 설계다.** `kubeseal`은 sealed-secrets 컨트롤러(install.sh 5단계)가 떠야 공개키를 얻으므로, 봉인은 install.sh가 끝난 뒤에만 가능하다. 그래서 GitOps 인계를 `root-app.sh`로 분리했고, 그 스크립트가 봉인본 개수를 세어 부족하면 인계를 막는다.
+
+> **파일은 `git clone`으로 가져간다.** Windows 작업트리는 `core.autocrlf`로 CRLF를 가질 수 있고, 그 트리에서 scp로 직접 복사하면 셸이 `$'do\r'` 같은 문법 오류로 죽는다. `.gitattributes`가 저장소 안 내용을 LF로 고정하므로 clone/pull로 받으면 그 문제가 없다.
 > `install.sh`는 `bootstrap/` 트리 전체(calico·namespaces·storage·control-plane·각 values·root-app.yaml)를 상대경로로 읽는다 — 스크립트 한 파일만 옮기면 안 된다.
-
-> ⚠️ 4번과 5번의 순서가 그대로는 성립하지 않는다 — kubeseal은 sealed-secrets 컨트롤러(install.sh 중반)가 떠야 공개키를 얻는다.
-> "install.sh를 컨트롤러까지 → 봉인 → 나머지"로 쪼개는 절차가 필요하다(미결).
 
 ---
 
