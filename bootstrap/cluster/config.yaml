@@ -1,14 +1,16 @@
 # k3s 공통 config — 3노드 동일 (/etc/rancher/k3s/config.yaml).
 # 첫 서버에만 주면 2·3번 노드가 기본 Flannel+servicelb+traefik으로 떠 네트워킹 충돌 → 반드시 3노드 동일.
 # kubeconfig(/etc/rancher/k3s/k3s.yaml)를 일반 사용자도 읽게 한다. 기본 0600(root 전용)이면
-# sudo 없이 kubectl/helm을 쓰는 bootstrap/install.sh가 첫 단계에서 permission denied로 죽는다.
+# 이 노드에서 sudo 없이 kubectl을 쓸 때 permission denied가 난다.
+# helm은 이 경로를 스스로 찾지 않는다(--kubeconfig / $KUBECONFIG / ~/.kube/config 만 본다) —
+# 그래서 bootstrap/install.sh가 KUBECONFIG를 이 파일로 export한다. 0644는 그때 읽히게 하는 전제다.
 # 0644 = 이 노드에 로그인 가능한 사용자에게 cluster-admin 자격이 열린다는 뜻. dev 단독 노드라 수용.
 write-kubeconfig-mode: "0644"
 # Secret을 etcd에 암호화해 저장한다(기본 off = 평문). SealedSecret은 git 구간만 보호하고,
 # 컨트롤러가 푼 Secret은 etcd에 그대로 앉는다. 이 클러스터는 외장 SSD 한 장 위에 있어
 # 디스크·스냅샷 반출이 곧 크레덴셜 유출이다. 설치 후 켜려면 3서버 순차 rotate/reencrypt가 필요.
 secrets-encryption: true
-flannel-backend: none            # CNI=Calico가 대신 (설치는 cgv-infra/install.sh)
+flannel-backend: none            # CNI=Calico가 대신 (설치는 bootstrap/install.sh 첫 단계)
 disable-network-policy: true     # NetworkPolicy도 Calico가
 disable:
   - servicelb                    # LB=MetalLB가 대신
@@ -27,3 +29,40 @@ tls-san:
   - 10.0.0.11
   - 10.0.0.12
   - 10.0.0.13
+
+# ── kubelet 자원 예약 ────────────────────────────────────────────
+# ⚠️ 이 블록은 이미 설치된 노드에는 자동 반영되지 않는다. 세 노드에 이 파일을
+#    /etc/rancher/k3s/config.yaml로 다시 복사하고 `sudo systemctl restart k3s`를
+#    한 대씩 순차로 해야 적용된다(동시에 재시작하면 etcd 쿼럼이 끊긴다).
+#
+# 왜 필요한가: k3s는 apiserver·etcd·scheduler·controller-manager를 파드가 아니라
+# k3s server(systemd) 프로세스 안에서 돌린다. kubelet은 파드가 아닌 사용량을 allocatable에서
+# 빼지 않으므로, 예약이 없으면 8GB 노드의 allocatable이 약 7.6Gi로 잡히고 그 전량이 파드 몫이 된다.
+# 같은 이유로 PriorityClass로는 control-plane을 보호할 수 없다 — 파드가 아니라서 evict 대상이 아니다.
+#
+# 실측(k3s-1, 2026-07-27, CNI 적용 전·파드 0개):
+#   MemTotal 7941Mi
+#   k3s.service cgroup(k3s server + containerd + kubelet) 645Mi, 그중 k3s-server RSS 528Mi
+#   OS 나머지(systemd·journald·sshd·unattended-upgrades 등) 약 198Mi
+#   k3s.service CPU 10초 평균 약 30m / 부트디스크 40G 중 7.3G 사용, /var/lib/rancher 252M
+#
+# kube-reserved memory 1Gi   = 실측 645Mi(파드 0개) + 파드 수십 개가 붙었을 때 늘어나는
+#                              apiserver watch 캐시·kubelet PLEG·etcd 인덱스 몫.
+# system-reserved memory 512Mi = 실측 198Mi + journald 회전·unattended-upgrades 버스트 몫.
+# CPU 예약 700m(system 200m + kube 500m) = 파드 request 합이 4코어를 다 채워
+#                              etcd 하트비트·apiserver 응답이 밀리는 걸 막는 몫. allocatable 3300m.
+# ephemeral-storage 예약 6Gi = 40G 부트디스크에 etcd db·containerd 이미지·컨테이너 로그가 같이 산다.
+#                              (파드가 ephemeral-storage를 request하지 않으면 스케줄링에만 영향.
+#                               실제 디스크 방어는 아래 nodefs/imagefs eviction 신호가 한다.)
+#
+# 결과 allocatable memory = 7941 - 1024(kube) - 512(system) - 300(eviction 임계) ≈ 6105Mi(5.96Gi).
+# 노드당 파드 request 합이 이 값을 넘으면 그 노드에 더 못 앉는다(Pending).
+kubelet-arg:
+  - "system-reserved=cpu=200m,memory=512Mi,ephemeral-storage=2Gi"
+  - "kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=4Gi"
+  # eviction-hard는 기본값에 더해지는 게 아니라 기본 맵을 통째로 교체한다.
+  # 디스크 신호를 같이 적지 않으면 nodefs/imagefs/inodes 기본 임계가 사라져 DiskPressure evict가 안 걸린다.
+  # → 기본 3종(nodefs 10% · imagefs 15% · inodesFree 5%)을 그대로 다시 적고 memory만 올린다.
+  # memory.available 기본 100Mi는 kubelet 관측 주기(10초) 안에 JVM 할당 버스트가 넘어서
+  # evict보다 커널 OOM이 먼저 온다. 300Mi(약 7941Mi의 3.8%)로 올려 evict가 먼저 걸리게 한다.
+  - "eviction-hard=memory.available<300Mi,nodefs.available<10%,imagefs.available<15%,nodefs.inodesFree<5%"

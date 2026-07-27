@@ -14,9 +14,11 @@ LABEL="${2:?라벨 필요: obs 또는 obj}"
 # 7부에서 MySQL·Loki·Tempo·MinIO가 Pending으로만 뜬다. 값을 여기서 걸러낸다.
 case "$LABEL" in obs|obj) ;; *) echo "라벨은 obs 또는 obj (입력: $LABEL)" >&2; exit 1;; esac
 [ "$(hostname)" != "k3s-1" ] || { echo "02는 조인 노드(k3s-2·k3s-3) 전용" >&2; exit 1; }
-[ -f config.yaml ] || { echo "config.yaml이 스크립트와 같은 디렉터리에 없다" >&2; exit 1; }
 
+# config.yaml은 상대경로로 읽으므로 검사보다 cd가 먼저 와야 한다.
+# 순서가 반대면 호출자의 현재 디렉터리에서 찾게 돼, 파일이 스크립트 옆에 있어도 가짜 실패가 난다.
 cd "$(dirname "$0")"
+[ -f config.yaml ] || { echo "config.yaml이 스크립트와 같은 디렉터리에 없다" >&2; exit 1; }
 
 # 첫 서버가 실제로 응답하는지 먼저 본다(내려간 상태로 조인하면 원인 모를 실패가 난다).
 curl -sk --connect-timeout 5 "https://${SERVER_IP}:6443/livez" >/dev/null \

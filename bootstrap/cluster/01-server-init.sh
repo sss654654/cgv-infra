@@ -12,7 +12,12 @@ cd "$(dirname "$0")"
 # 이 스크립트는 새 etcd 클러스터를 만든다. 다른 노드에서 돌면 독립 클러스터가 하나 더 서고
 # 복구는 uninstall 뿐이라, 대상 노드와 기존 설치 여부를 먼저 확인한다.
 [ "$(hostname)" = "k3s-1" ] || { echo "01은 k3s-1 전용. 현재 호스트: $(hostname)" >&2; exit 1; }
-[ -d /var/lib/rancher/k3s/server/db/etcd ] && { echo "이미 etcd 데이터가 있다 — 재실행 중단" >&2; exit 1; }
+
+# 설치 흔적 검사 두 단. /var/lib/rancher/k3s/server는 0700 root라 일반 사용자가 test -d 하면
+# 권한 오류가 "없음"으로 떨어져 가드가 통과해 버린다 → etcd 경로는 sudo로 본다.
+# k3s.service 유닛 파일은 0644라 sudo 없이 보이므로, sudo가 막힌 경우에도 걸리도록 먼저 검사한다.
+[ -f /etc/systemd/system/k3s.service ] && { echo "k3s가 이미 설치돼 있다(k3s.service 존재) — 재실행 중단" >&2; exit 1; }
+sudo test -d /var/lib/rancher/k3s/server/db/etcd && { echo "이미 etcd 데이터가 있다 — 재실행 중단" >&2; exit 1; }
 [ -f config.yaml ] || { echo "config.yaml이 스크립트와 같은 디렉터리에 없다" >&2; exit 1; }
 
 sudo mkdir -p /etc/rancher/k3s
