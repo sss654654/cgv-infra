@@ -1,8 +1,27 @@
-# argocd helm 값 (최소). 내부 접근·Traefik 뒤라 insecure. 단일 운영자라 dex/SSO 미사용.
+# argocd helm 값 (최소). 내부 접근·Traefik 뒤라 insecure.
 configs:
   params:
     server.insecure: true
-# set-once 리소스 — 4파드 합 request 약 500Mi / limit 약 1Gi. evict 방지 목적, 튜닝 대상 아님.
+
+# 차트 기본값은 dex·notifications도 함께 띄운다(끄기 전 렌더 = Deployment 6 + StatefulSet 1).
+# dex = SSO(OIDC) 브로커. 로그인은 로컬 admin 하나만 쓰고 configs.cm에 OIDC 설정이 없어 파드가 놀고만 있다.
+# notifications = 알림 컨트롤러. 저장소에 트리거·템플릿·구독 설정이 하나도 없다.
+# 8GB 노드라 안 쓰는 파드를 끈다. SSO나 알림을 붙일 때 다시 켠다.
+dex:
+  enabled: false
+notifications:
+  enabled: false
+
+# applicationSet은 켜둔 채로 둔다 — argocd/applicationsets/ 3개(apps·observability·platform)를 이게 처리한다.
+# 차트 기본 resources가 빈 맵이라 그대로 두면 BestEffort로 떠서 메모리 압박 때 가장 먼저 evict된다.
+# 이게 죽으면 AppSet이 만드는 Application이 갱신되지 않는데 기존 App은 살아 있어 증상이 잘 안 보인다.
+applicationSet:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { cpu: 100m, memory: 128Mi }
+
+# set-once 리소스 — 파드 5개(controller·server·repoServer·redis·applicationSet)
+# 합 request 약 564Mi / limit 약 1.1Gi. evict 방지 목적, 튜닝 대상 아님.
 controller:
   resources:
     requests: { cpu: 50m, memory: 200Mi }

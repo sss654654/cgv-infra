@@ -9,6 +9,17 @@ metadata:
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  # root-app이 argocd/ 전체를 prune:true로 관리한다 → 이 파일을 지우거나 경로를 바꾸는 커밋 하나로
+  #   이 ApplicationSet이 prune된다. ApplicationSet 기본 동작은 cascade라, 그때 queue·booking·frontend
+  #   Application이 워크로드째 사라진다.
+  # 반면 root 직속 Application(applications/*.yaml)은 finalizer가 없어 prune돼도 리소스는 남고
+  #   관리만 이탈한다 — 같은 root prune인데 두 경로의 삭제 반경이 정반대였다.
+  # preserveResourcesOnDeletion: true 로 두 경로를 "관리만 이탈, 리소스는 존치"로 맞춘다.
+  #   대가: ApplicationSet을 지운 뒤 남는 Application·워크로드는 손으로 정리해야 한다.
+  # 대안이던 root-app prune:false는 argocd/ 아래 무엇을 지워도 자동 정리가 사라져 제어면 전체가
+  #   수동이 된다. 자동 정리는 남기고 워크로드 삭제만 막는 쪽을 택했다.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
   generators:
     - git:
         repoURL: https://github.com/sss654654/cgv-infra.git
