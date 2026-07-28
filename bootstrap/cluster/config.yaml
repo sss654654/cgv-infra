@@ -60,9 +60,10 @@ tls-san:
 kubelet-arg:
   - "system-reserved=cpu=200m,memory=512Mi,ephemeral-storage=2Gi"
   - "kube-reserved=cpu=500m,memory=1Gi,ephemeral-storage=4Gi"
-  # eviction-hard는 기본값에 더해지는 게 아니라 기본 맵을 통째로 교체한다.
-  # 디스크 신호를 같이 적지 않으면 nodefs/imagefs/inodes 기본 임계가 사라져 DiskPressure evict가 안 걸린다.
-  # → 기본 3종(nodefs 10% · imagefs 15% · inodesFree 5%)을 그대로 다시 적고 memory만 올린다.
-  # memory.available 기본 100Mi는 kubelet 관측 주기(10초) 안에 JVM 할당 버스트가 넘어서
-  # evict보다 커널 OOM이 먼저 온다. 300Mi(약 7941Mi의 3.8%)로 올려 evict가 먼저 걸리게 한다.
+  # eviction-hard는 기본값에 더해지는 게 아니라 목록을 통째로 교체한다.
+  # k3s 기본(configz 실측)은 nodefs 5%·imagefs 5% 둘뿐 — 메모리·inode 신호가 아예 없다.
+  # 즉 기본 상태에서는 메모리가 말라도 kubelet이 개입하지 않고 곧장 커널 OOM으로 간다.
+  # 아래 값은 메모리 300Mi·inodesFree 5%를 신설하고 디스크 두 신호를 10%·15%로 올린 것.
+  # 300Mi 근거: kubelet이 여유를 확인하는 주기가 10초라, 선이 낮으면 JVM 같은 큰 할당이
+  # 그 사이를 뚫고 지나가 kubelet보다 커널이 먼저 온다. 약 7941Mi의 3.8%.
   - "eviction-hard=memory.available<300Mi,nodefs.available<10%,imagefs.available<15%,nodefs.inodesFree<5%"
