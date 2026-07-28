@@ -11,8 +11,10 @@ mysql:
     digest: "sha256:504dbf46c911e124f168d364d2b4abff3ee799968b8c8f35445e6a0a57eda44e"
   auth:
     database: cgv
-    username: root
-    existingSecret: mysql-secret      # SealedSecret(시크릿-계약): 키 mysql-root-password
+    # username은 적지 않는다. auth.username은 "추가로 만들 일반 유저"라 root를 넣으면
+    # 컨테이너 기동 검증이 "root user is already created"로 거부한다(실행에서 확인).
+    # booking은 기본 root 계정으로 접속한다(dev 판단) — 비번은 mysql-root-password.
+    existingSecret: mysql-secret      # SealedSecret(시크릿-계약): mysql-root-password·mysql-password 두 키
                                       # booking-secrets의 MYSQL_PASSWORD와 같은 값이어야 booking이 붙음
   primary:
     persistence:
