@@ -14,6 +14,12 @@ spec:
   roles:
     - controller
     - broker                         # combined(dual-role) — 소규모
+  # 브로커 resources는 v1 API에서 노드풀 소관이다. Kafka.spec.kafka.resources는 스키마에
+  # 없어 서버가 거부한다("field not declared in schema" — SSA dry-run으로 확인).
+  # JVM: 메모리가 핵심(request 0이면 노드 압박 시 1순위 evict → RF3 HA 붕괴).
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "1", memory: 1536Mi }
   storage:
     type: persistent-claim           # 단일 볼륨. 확장 여지 원하면 jbod 권장(조사 노트)
     size: 10Gi
@@ -46,11 +52,9 @@ spec:
   kafka:
     version: 4.3.0
     metadataVersion: 4.3-IV0
-    resources:                       # JVM: 메모리가 핵심(request 0이면 노드 압박 시 1순위 evict → RF3 HA 붕괴)
-      requests: { cpu: 250m, memory: 768Mi }
-      limits: { cpu: "1", memory: 1536Mi }
+    # resources는 여기 못 적는다 — v1 스키마에 없다. 노드풀(cgv-pool) 쪽에 있다.
     jvmOptions:                      # 힙 상한 = limit의 60%(약 900MB). 나머지 40% = 비힙(다이렉트버퍼·메타스페이스).
-      "-XX":                         # [dry-run 검증 필요 — Strimzi 1.1.0 스키마의 정확한 키 형태]
+      "-XX":
         MaxRAMPercentage: "60"
     listeners:
       - name: plain
