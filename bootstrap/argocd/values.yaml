@@ -20,8 +20,7 @@ applicationSet:
     requests: { cpu: 25m, memory: 64Mi }
     limits:   { cpu: 100m, memory: 128Mi }
 
-# set-once 리소스 — 파드 5개(controller·server·repoServer·redis·applicationSet)
-# 합 request 약 564Mi / limit 약 1.1Gi. evict 방지 목적, 튜닝 대상 아님.
+# 리소스 — 파드 5개(controller·server·repoServer·redis·applicationSet). evict 방지 목적.
 controller:
   resources:
     requests: { cpu: 50m, memory: 200Mi }
@@ -30,10 +29,13 @@ server:
   resources:
     requests: { cpu: 25m, memory: 100Mi }
     limits:   { cpu: 100m, memory: 192Mi }
+# repoServer는 git을 읽어 매니페스트를 렌더하는 담당. root-app 인계 직후 App 19개의 차트를
+# 동시에 렌더하는데(mimir-distributed 포함), limit 256Mi로는 OOMKilled 루프에 빠져
+# sync 전체가 정체된다(2026-07-28 실측 — exit 137 반복). 렌더 동시성의 최대 부하 기준으로 상향.
 repoServer:
   resources:
-    requests: { cpu: 25m, memory: 150Mi }
-    limits:   { cpu: 100m, memory: 256Mi }
+    requests: { cpu: 50m, memory: 256Mi }
+    limits:   { cpu: 500m, memory: 1Gi }
 redis:
   resources:
     requests: { cpu: 10m, memory: 50Mi }
