@@ -74,14 +74,17 @@ spec:
 # 파티션 1: 소비자가 없고 사후 조사용이라 병렬성이 필요 없다.
 # 보존 7일: 원본(3일)보다 길어야 한다. 밤사이 쌓인 실패를 다음 날 확인할 수 있어야 하고,
 #   원본과 같으면 조사 시점에 이미 지워져 있을 수 있다.
+# metadata.name은 k8s 객체 이름이라 대문자 불가(RFC 1123) — 실제 카프카 토픽명은
+# spec.topicName으로 준다. 앱이 쓰는 이름은 topicName 쪽이다(spring-kafka 기본 DLT 접미사 .DLT).
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
 metadata:
-  name: admissions.DLT
+  name: admissions-dlt
   namespace: data
   labels:
     strimzi.io/cluster: cgv
 spec:
+  topicName: admissions.DLT
   partitions: 1
   replicas: 3
   config:
