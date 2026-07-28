@@ -17,6 +17,9 @@ mysql:
     existingSecret: mysql-secret      # SealedSecret(시크릿-계약): mysql-root-password·mysql-password 두 키
                                       # booking-secrets의 MYSQL_PASSWORD와 같은 값이어야 booking이 붙음
   primary:
+    # 차트 기본값이 빈 문자열("")로 렌더되는데 서버는 기본값 OrderedReady로 채워 저장한다.
+    # git(빈 값)과 live(OrderedReady)가 영원히 달라 App이 OutOfSync로 남으므로 명시한다.
+    podManagementPolicy: OrderedReady
     persistence:
       enabled: true
       storageClass: local-mysqldata   # 정적 PV(bootstrap/storage/) — mysqldata 디스크 통마운트(k3s-1)
