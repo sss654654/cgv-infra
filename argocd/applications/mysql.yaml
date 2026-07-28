@@ -25,5 +25,7 @@ spec:
     automated:
       prune: false                        # DB — 선언 제거가 리소스 삭제로 이어지지 않게
       selfHeal: true
-    syncOptions:
-      - ServerSideApply=true
+    # ServerSideApply는 쓰지 않는다. 이 차트는 null·빈 배열 필드(affinity/podAffinity: null,
+    # supplementalGroups: [] 등)를 렌더에 남기는데, 서버는 그런 필드를 저장하지 않아
+    # SSA 비교에서는 영구 OutOfSync가 된다. 일반 apply 비교는 null과 부재를 같게 정규화한다.
+    # (SSA를 넣었던 근거였던 last-applied 애노테이션 크기 제한은 이 매니페스트 크기에선 도달하지 않는다.)
