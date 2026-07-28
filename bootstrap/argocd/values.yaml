@@ -21,10 +21,12 @@ applicationSet:
     limits:   { cpu: 100m, memory: 128Mi }
 
 # 리소스 — 파드 5개(controller·server·repoServer·redis·applicationSet). evict 방지 목적.
+# controller는 App 전체의 라이브 상태 캐시를 들고 비교·적용을 돈다. App 19개 기준
+# limit 448Mi는 OOMKilled 루프(exit 137, 2026-07-28 실측) — repoServer와 같은 병.
 controller:
   resources:
-    requests: { cpu: 50m, memory: 200Mi }
-    limits:   { cpu: 250m, memory: 448Mi }
+    requests: { cpu: 100m, memory: 384Mi }
+    limits:   { cpu: 500m, memory: 1Gi }
 server:
   resources:
     requests: { cpu: 25m, memory: 100Mi }
