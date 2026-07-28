@@ -1,8 +1,11 @@
-# MetalLB 자원 (set-once) — 차트 기본 resources:{}는 evict 1순위라 최소 request 부여. 튜닝 대상 아님.
+# MetalLB 자원. controller는 네임스페이스마다 IP 풀을 reconcile해서, 네임스페이스가 늘면
+# 메모리도 는다. 초기 64Mi는 install.sh 직후(ns 적음)엔 버텼지만 GitOps로 ns가 10여 개로
+# 늘자 OOMKilled로 반복 재시작했다(2026-07-28 실측, exit 137). request는 평소값 유지하고
+# limit만 버스트 여유로 올린다.
 controller:
   resources:
     requests: { cpu: 50m, memory: 32Mi }
-    limits:   { cpu: 100m, memory: 64Mi }
+    limits:   { cpu: 100m, memory: 128Mi }
 speaker:
   resources:
     requests: { cpu: 50m, memory: 32Mi }
