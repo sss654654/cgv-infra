@@ -64,7 +64,10 @@ ingester:
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: 1000m, memory: 1Gi } }  # 최근 시리즈를 메모리에 적재 — 메모리 사용이 가장 큼
 querier:
   replicas: 1
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+  # 256Mi로 잡았다가 OOMKilled 42회. query-frontend가 쿼리를 16조각으로 쪼개 동시에 보내므로
+  #   조각 하나의 피크가 그대로 곱해진다. 대시보드가 30초마다 상시 조회하는 구성이라 상수 부하가 된다.
+  #   공식 산정은 querier에 10 QPS당 1코어·1GB — 이 규모에선 512Mi가 하한.
+  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
 query_frontend:
   replicas: 1
   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }

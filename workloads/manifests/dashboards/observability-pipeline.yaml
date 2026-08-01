@@ -240,12 +240,12 @@ data:
 
         {
           "type": "bargauge",
-          "title": "job별 시리즈 점유",
-          "description": "무엇이 상한을 먹고 있는지. 같은 프로세스를 두 번 긁고 있으면 두 job이 나란히 크게 나온다.",
+          "title": "job별 생산 시리즈",
+          "description": "각 타깃이 한 번의 스크레이프에서 내놓는 샘플 수 = 그 job이 만드는 시리즈 수. 같은 프로세스를 두 번 긁고 있으면 두 job이 나란히 크게 나온다. 저장소의 시리즈를 직접 세지 않는 이유는 그 쿼리가 전 시리즈를 훑어 조회 컴포넌트를 OOM 시키기 때문이다.",
           "gridPos": { "h": 7, "w": 8, "x": 16, "y": 16 },
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "targets": [
-            { "refId": "A", "expr": "topk(10, count by (job) ({__name__=~\".+\", job=~\".+\"}))", "legendFormat": "{{job}}", "instant": true }
+            { "refId": "A", "expr": "topk(10, sum by (job) (scrape_samples_scraped))", "legendFormat": "{{job}}", "instant": true }
           ],
           "fieldConfig": {
             "defaults": { "unit": "short", "decimals": 0, "min": 0,
