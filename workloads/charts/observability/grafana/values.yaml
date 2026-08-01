@@ -20,7 +20,23 @@ ingress:
 persistence:
   enabled: false                     # 의도적 비영속 — 대시보드·데이터소스 전부 코드로 관리해 sqlite에 보존할 상태가 없음.
                                      #   재시작하면 코드에서 재프로비저닝. (UI에서 손으로 만든 대시보드는 날아간다 — as-code 강제 장치.)
-                                     #   대시보드 ConfigMap sidecar는 현재 미활성(차트 기본 false) — 7부 대시보드 배선 때 sidecar.dashboards.enabled=true로 켠다.
+# 대시보드 배달: grafana_dashboard 라벨이 붙은 ConfigMap을 sidecar가 파일로 떨어뜨리고 Grafana가 읽는다.
+#   대시보드 정본 = workloads/manifests/dashboards/ (argocd/applications/dashboards.yaml 이 배달).
+#   비영속과 짝이다 — 영속 저장소가 없으므로 이 경로가 유일한 대시보드 공급원이다.
+# searchNamespace를 릴리스 네임스페이스로 한정한다. ALL로 두면 클러스터 전역 ConfigMap을 감시하느라
+#   RBAC이 전 네임스페이스로 넓어진다(대시보드는 observability에만 둔다).
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    searchNamespace: observability
+    folderAnnotation: grafana_folder   # ConfigMap에 이 annotation을 달면 Grafana 폴더로 분류된다
+    provider:
+      foldersFromFilesStructure: true
+  resources:                           # sidecar는 감시만 하는 작은 컨테이너 — 명시해 두지 않으면 request 0으로 스케줄된다
+    requests: { cpu: 10m, memory: 32Mi }
+    limits:   { cpu: 100m, memory: 64Mi }
 datasources:
   datasources.yaml:
     apiVersion: 1

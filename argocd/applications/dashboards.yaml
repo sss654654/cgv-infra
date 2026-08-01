@@ -1,0 +1,27 @@
+# dashboards — Grafana 대시보드를 담은 ConfigMap 묶음.
+# 차트가 아니라 자체 매니페스트라 ApplicationSet(업스트림 차트 + values)이 아닌 root 직속 Application으로 둔다.
+#   metallb-pool·kafka와 같은 자리다.
+# CRD 의존이 없다(ConfigMap뿐) → SkipDryRunOnMissingResource·retry 불요.
+# observability 네임스페이스는 bootstrap/namespaces가 라벨과 함께 미리 만든다 → CreateNamespace 불요.
+# 이 ConfigMap이 Grafana에 반영되려면 grafana values.yaml의 sidecar.dashboards.enabled=true 가 켜져 있어야 한다.
+#   sidecar가 꺼져 있으면 ConfigMap은 생성되지만 대시보드는 안 뜬다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dashboards
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # 관측 스택(AppSet wave 0~1) 뒤. 순서가 어긋나도 ConfigMap은 그대로 남고 sidecar가 나중에 읽는다
+spec:
+  project: infra
+  source:
+    repoURL: https://github.com/sss654654/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/dashboards
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true       # 파일을 지우면 대시보드도 사라진다 — 정본이 git이라는 뜻
+      selfHeal: true    # UI에서 손댄 것은 다음 sync에 되돌아간다

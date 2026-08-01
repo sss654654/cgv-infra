@@ -1,0 +1,391 @@
+# 관측 파이프라인 계기판 — Grafana 대시보드(ConfigMap 배달).
+#
+# 배달 경로: 이 ConfigMap에 grafana_dashboard 라벨이 붙어 있으면 Grafana 차트의 dashboards sidecar가
+#   내용을 파일로 떨어뜨리고 Grafana가 그것을 읽는다. sidecar가 꺼져 있으면 아무 일도 일어나지 않는다
+#   → grafana values.yaml 의 sidecar.dashboards.enabled=true 가 짝이다.
+# Grafana는 persistence.enabled=false 라 UI에서 만든 대시보드는 재시작 시 사라진다. 대시보드는 이 파일이 정본이다.
+#
+# 무엇을 보는 대시보드인가: 관측 스택 자신. 수집기가 붙어 있는지, 저장소가 받고 있는지,
+#   거절이 나는지, 인제스터가 메모리를 얼마나 쓰는지. 인프라(노드·파드)를 보는 대시보드는 별도다.
+#   거절은 화면 어디에도 에러로 뜨지 않는다 — 이 대시보드의 "거절" 패널이 그것을 보는 유일한 창이다.
+#
+# $limit 변수: 시리즈 상한. Mimir 설정값(max_global_series_per_user)과 같은 값을 골라야 게이지·임계선이 맞는다.
+#   상한을 바꾸는 작업 전후를 비교할 때 이 변수를 150000/300000으로 바꿔 가며 본다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-observability-pipeline
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"        # sidecar가 이 라벨로 대시보드 ConfigMap을 찾는다
+data:
+  observability-pipeline.json: |
+    {
+      "uid": "obs-pipeline",
+      "title": "관측 파이프라인 — 계기판",
+      "description": "관측 스택 자신의 건강. 수집·저장·자원·생존.",
+      "tags": ["observability", "meta"],
+      "timezone": "browser",
+      "editable": true,
+      "schemaVersion": 39,
+      "refresh": "30s",
+      "time": { "from": "now-6h", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "limit",
+            "label": "시리즈 상한",
+            "type": "custom",
+            "query": "150000,300000",
+            "current": { "text": "300000", "value": "300000" },
+            "options": [
+              { "text": "150000", "value": "150000", "selected": false },
+              { "text": "300000", "value": "300000", "selected": true }
+            ]
+          }
+        ]
+      },
+      "panels": [
+        { "type": "row", "title": "한눈에 — 지금 괜찮은가", "collapsed": false, "panels": [],
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+
+        {
+          "type": "gauge",
+          "title": "시리즈 사용률 (상한 대비 %)",
+          "description": "인제스터가 든 시리즈를 상한으로 나눈 값. 100%에 붙어 있으면 새 시리즈가 거절되고 있다는 뜻이다.",
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "max(cortex_ingester_memory_series) / $limit * 100", "legendFormat": "사용률" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent", "min": 0, "max": 100, "decimals": 1,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 70 },
+                { "color": "orange", "value": 85 },
+                { "color": "red", "value": 95 }
+              ]}
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "showThresholdMarkers": true }
+        },
+
+        {
+          "type": "stat",
+          "title": "거절 (초당 샘플)",
+          "description": "상한을 넘겨 버려지는 양. 0이 아니면 지금 데이터가 새고 있다. 화면 어디에도 에러로 뜨지 않으므로 이 패널이 유일한 신호다.",
+          "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(cortex_discarded_samples_total[5m]))", "legendFormat": "거절" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short", "decimals": 0,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]}
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" },
+            "colorMode": "background", "graphMode": "area", "textMode": "auto"
+          }
+        },
+
+        {
+          "type": "stat",
+          "title": "붙어 있는 스크레이프 타깃",
+          "description": "Alloy가 실제로 응답을 받고 있는 대상 수. 아래 표에서 어느 것이 실패했는지 본다.",
+          "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "count(up == 1)", "legendFormat": "성공" },
+            { "refId": "B", "expr": "count(up == 0)", "legendFormat": "실패" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "decimals": 0,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "실패" },
+                "properties": [ { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                  { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } },
+                  { "id": "color", "value": { "mode": "thresholds" } } ] }
+            ]
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "colorMode": "value", "graphMode": "none" }
+        },
+
+        {
+          "type": "stat",
+          "title": "인제스터 메모리 (최대)",
+          "description": "세 인제스터 중 가장 많이 쓰는 값. 컨테이너 limit에 가까워지면 OOMKilled 위험.",
+          "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "max(process_resident_memory_bytes{job=\"observability/ingester\"})", "legendFormat": "최대 RSS" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes", "decimals": 0,
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 1610612736 },
+                { "color": "red", "value": 1932735283 }
+              ]}
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "colorMode": "value", "graphMode": "area" }
+        },
+
+        { "type": "row", "title": "담기나 — 저장소가 받고 있는가", "collapsed": false, "panels": [],
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 } },
+
+        {
+          "type": "timeseries",
+          "title": "인제스터가 든 시리즈 vs 상한",
+          "description": "상한선에 붙어 평평하면 포화. 상한을 올리거나 시리즈를 줄이면 선이 내려온다.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "cortex_ingester_memory_series", "legendFormat": "{{pod}}" },
+            { "refId": "B", "expr": "$limit", "legendFormat": "상한" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+            },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "상한" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "custom.fillOpacity", "value": 0 }
+                ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+                       "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+
+        {
+          "type": "timeseries",
+          "title": "거절량 — 사유별 (초당 샘플)",
+          "description": "per_user_series_limit 이 뜨면 상한 포화. sample-out-of-order 는 시각 문제. 세는 단위는 시리즈가 아니라 샘플이다.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "sum by (reason) (rate(cortex_discarded_samples_total[5m]))", "legendFormat": "{{reason}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "stacking": { "mode": "normal" }, "showPoints": "never" },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+                       "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+
+        { "type": "row", "title": "들어오나 — 무엇을 긁고 있는가", "collapsed": false, "panels": [],
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 } },
+
+        {
+          "type": "bargauge",
+          "title": "job별 타깃 수",
+          "description": "노드마다 도는 것은 3이어야 한다. 1이면 나머지 두 노드분이 저장소에 못 들어온 것이다.",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "count by (job) (up)", "legendFormat": "{{job}}", "instant": true }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "decimals": 0, "min": 0,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } },
+            "overrides": []
+          },
+          "options": { "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true,
+                       "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" } }
+        },
+
+        {
+          "type": "table",
+          "title": "응답하지 않는 타깃",
+          "description": "비어 있어야 정상. 값이 뜨면 그 job·instance 가 스크레이프에 실패하고 있다.",
+          "gridPos": { "h": 7, "w": 8, "x": 8, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "up == 0", "instant": true, "format": "table" }
+          ],
+          "fieldConfig": {
+            "defaults": { "custom": { "align": "auto" },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] } },
+            "overrides": []
+          },
+          "options": { "showHeader": true },
+          "transformations": [
+            { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "Value": true } } }
+          ]
+        },
+
+        {
+          "type": "bargauge",
+          "title": "job별 시리즈 점유",
+          "description": "무엇이 상한을 먹고 있는지. 같은 프로세스를 두 번 긁고 있으면 두 job이 나란히 크게 나온다.",
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "topk(10, count by (job) ({__name__=~\".+\", job=~\".+\"}))", "legendFormat": "{{job}}", "instant": true }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "decimals": 0, "min": 0,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "purple", "value": null } ] } },
+            "overrides": []
+          },
+          "options": { "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true,
+                       "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" } }
+        },
+
+        { "type": "row", "title": "버티나 — 자원과 생존", "collapsed": false, "panels": [],
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 } },
+
+        {
+          "type": "timeseries",
+          "title": "인제스터 메모리 vs 컨테이너 limit",
+          "description": "붉은 점선이 컨테이너 limit. 닿으면 OOMKilled 된다. 상한을 올린 뒤 이 선이 얼마나 오르는지가 다음 결정의 근거가 된다.",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "process_resident_memory_bytes{job=\"observability/ingester\"}", "legendFormat": "{{pod}}" },
+            { "refId": "B", "expr": "2147483648", "legendFormat": "limit 2Gi" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "bytes",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "limit 2Gi" },
+                "properties": [
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } },
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "custom.fillOpacity", "value": 0 }
+                ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+
+        {
+          "type": "timeseries",
+          "title": "인제스터별 시리즈 — 복제가 고른가",
+          "description": "복제계수 3에 인제스터도 3대라 세 선이 같은 값이어야 한다. 갈라지면 한 대가 뒤처지고 있다는 뜻이다.",
+          "gridPos": { "h": 7, "w": 8, "x": 8, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "cortex_ingester_memory_series", "legendFormat": "{{pod}}" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] },
+                       "tooltip": { "mode": "multi" } }
+        },
+
+        {
+          "type": "state-timeline",
+          "title": "타깃 생존 이력",
+          "description": "언제 무엇이 끊겼는지. 노드를 한 대씩 재시작하면 그 노드 타깃만 색이 바뀐다.",
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "up", "legendFormat": "{{job}} / {{instance}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short", "min": 0, "max": 1,
+              "custom": { "lineWidth": 0, "fillOpacity": 80 },
+              "mappings": [
+                { "type": "value", "options": { "0": { "text": "끊김", "color": "red", "index": 0 },
+                                                 "1": { "text": "정상", "color": "green", "index": 1 } } }
+              ],
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] }
+            },
+            "overrides": []
+          },
+          "options": { "showValue": "never", "mergeValues": true, "rowHeight": 0.9,
+                       "legend": { "displayMode": "hidden" }, "tooltip": { "mode": "single" } }
+        },
+
+        { "type": "row", "title": "나머지 둘 — 로그와 트레이스", "collapsed": false, "panels": [],
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 } },
+
+        {
+          "type": "stat",
+          "title": "Loki 인메모리 스트림",
+          "description": "로그의 라벨 조합 수. 로그 양이 늘어도 이 값은 잘 안 는다 — 본문은 압축 청크에 들어가기 때문이다.",
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [ { "refId": "A", "expr": "sum(loki_ingester_memory_streams)", "legendFormat": "스트림" } ],
+          "fieldConfig": { "defaults": { "unit": "short", "decimals": 0,
+            "thresholds": { "mode": "absolute", "steps": [
+              { "color": "green", "value": null }, { "color": "yellow", "value": 3500 }, { "color": "red", "value": 4500 } ] } },
+            "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "colorMode": "value", "graphMode": "area" }
+        },
+
+        {
+          "type": "stat",
+          "title": "Loki 거절 (초당)",
+          "description": "0이어야 정상.",
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [ { "refId": "A", "expr": "sum(rate(loki_discarded_samples_total[5m]))", "legendFormat": "거절" } ],
+          "fieldConfig": { "defaults": { "unit": "short", "decimals": 0,
+            "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } },
+            "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "colorMode": "background", "graphMode": "none" }
+        },
+
+        {
+          "type": "stat",
+          "title": "Tempo 스팬 유입 (초당)",
+          "description": "앱이 트레이스를 보내기 전에는 0이다. 0이 곧 고장은 아니다.",
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [ { "refId": "A", "expr": "sum(rate(tempo_distributor_spans_received_total[5m]))", "legendFormat": "스팬" } ],
+          "fieldConfig": { "defaults": { "unit": "short", "decimals": 1,
+            "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } },
+            "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "colorMode": "none", "graphMode": "area" }
+        },
+
+        {
+          "type": "stat",
+          "title": "관측 파드 재시작 (1시간)",
+          "description": "kube-state-metrics 가 도착해야 값이 나온다. 조회 컴포넌트가 반복해서 죽는 것을 여기서 잡는다.",
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "targets": [
+            { "refId": "A", "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"observability\"}[1h]))", "legendFormat": "재시작" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "decimals": 0,
+            "thresholds": { "mode": "absolute", "steps": [
+              { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] } },
+            "overrides": [] },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "colorMode": "value", "graphMode": "area" }
+        }
+      ]
+    }
