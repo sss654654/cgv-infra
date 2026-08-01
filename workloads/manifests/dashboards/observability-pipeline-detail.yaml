@@ -1,0 +1,179 @@
+# 관측 파이프라인 상세 대시보드 — 데이터가 흐르는 순서(긁는다→보낸다→담는다→내린다→꺼낸다→바닥)대로
+# 행을 배치한다. 행 하나씩 채워 넣으며 검증 중 — 현재 행1(긁는다)까지.
+# 쿼리는 저장소 전체를 훑지 않는 것만 쓴다(무거운 패널 쿼리가 30초마다 돌며 querier를 OOM시킨 전례).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-observability-pipeline-detail
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  observability-pipeline-detail.json: |
+    {
+      "uid": "obs-pipeline-detail",
+      "title": "관측 파이프라인 — 상세",
+      "editable": true,
+      "timezone": "browser",
+      "time": { "from": "now-3h", "to": "now" },
+      "refresh": "",
+      "schemaVersion": 39,
+      "templating": {
+        "list": [
+          {
+            "name": "limit",
+            "label": "시리즈 상한",
+            "type": "constant",
+            "query": "300000",
+            "current": { "text": "300000", "value": "300000" },
+            "hide": 2
+          }
+        ]
+      },
+      "panels": [
+        {
+          "type": "row", "title": "행1 — 긁는다 (Alloy → 타깃)", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": []
+        },
+        {
+          "type": "state-timeline",
+          "title": "job별 생존 이력",
+          "description": "min(up)이라 그 job의 타깃 중 하나라도 죽으면 줄이 빨개진다. booking·queue는 이미지 반입 전(9부)까지 뜨지 못하는 상태라 제외.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 10, "w": 10, "x": 0, "y": 1 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "min by (job) (up{job!~\"booking|app/.*\"})",
+              "legendFormat": "{{job}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "lineWidth": 0, "fillOpacity": 70 },
+              "mappings": [
+                { "type": "value", "options": { "1": { "text": "OK", "color": "green" }, "0": { "text": "DOWN", "color": "red" } } }
+              ]
+            },
+            "overrides": []
+          },
+          "options": {
+            "mergeValues": true,
+            "showValue": "never",
+            "rowHeight": 0.8,
+            "legend": { "showLegend": false },
+            "tooltip": { "mode": "single" }
+          }
+        },
+        {
+          "type": "table",
+          "title": "지금 죽은 타깃",
+          "description": "비어 있는 것이 정상. 값이 뜨면 그 이름이 곧 조치 대상이다. booking·queue 제외(9부에서 되살림).",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 10, "w": 6, "x": 10, "y": 1 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "up{job!~\"booking|app/.*\"} == 0",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": { "Time": true, "Value": true, "__name__": true, "container": true, "endpoint": true, "namespace": true, "service": true },
+                "renameByName": { "job": "job", "instance": "주소", "pod": "파드" }
+              }
+            }
+          ],
+          "options": { "showHeader": true },
+          "fieldConfig": { "defaults": {}, "overrides": [] }
+        },
+        {
+          "type": "stat",
+          "title": "Alloy 분담 — 동료 수",
+          "description": "셋 다 3이어야 한다. 2가 되면 타깃 분배가 재편되는 중이거나 분열 — 사본·구멍이 생기는 조건.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (pod) (cluster_node_peers)",
+              "legendFormat": "{{pod}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "green", "value": 3 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "value_and_name"
+          }
+        },
+        {
+          "type": "bargauge",
+          "title": "job별 상한 점유 (%)",
+          "description": "분모 = 시리즈 상한 300,000. 막대 합이 100%에 못 미치는 만큼이 여유다. 저장량이 아니라 수집기가 센 생산량 기준 — 저장소를 훑는 쿼리는 상시 패널에 쓰지 않는다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 5 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "topk(12, sum by (job) (scrape_samples_scraped)) / $limit * 100",
+              "instant": true,
+              "legendFormat": "{{job}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "decimals": 1,
+              "color": { "mode": "fixed", "fixedColor": "blue" },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "displayMode": "basic",
+            "showUnfilled": true
+          }
+        },
+        {
+          "type": "row", "title": "행2 — 보낸다 (Alloy → Mimir 전송)", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 11 }, "panels": []
+        },
+        {
+          "type": "row", "title": "행3 — 담는다 (distributor → 인제스터)", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 }, "panels": []
+        },
+        {
+          "type": "row", "title": "행4 — 내린다 (인제스터 → MinIO)", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 }, "panels": []
+        },
+        {
+          "type": "row", "title": "행5 — 꺼낸다 (Grafana → querier)", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }, "panels": []
+        },
+        {
+          "type": "row", "title": "행6 — 바닥 (MinIO · WAL 디스크)", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "panels": []
+        }
+      ]
+    }
