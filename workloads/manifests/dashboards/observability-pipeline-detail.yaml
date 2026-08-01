@@ -38,13 +38,13 @@ data:
         {
           "type": "state-timeline",
           "title": "job별 생존 이력",
-          "description": "min(up)이라 그 job의 타깃 중 하나라도 죽으면 줄이 빨개진다. booking·queue는 이미지 반입 전(9부)까지 뜨지 못하는 상태라 제외.",
+          "description": "min(up)이라 그 job의 타깃 중 하나라도 죽으면 줄이 빨개진다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 10, "w": 10, "x": 0, "y": 1 },
           "targets": [
             {
               "refId": "A",
-              "expr": "min by (job) (up{job!~\"booking|app/.*\"})",
+              "expr": "min by (job) (up)",
               "legendFormat": "{{job}}"
             }
           ],
@@ -68,13 +68,13 @@ data:
         {
           "type": "table",
           "title": "지금 죽은 타깃",
-          "description": "비어 있는 것이 정상. 값이 뜨면 그 이름이 곧 조치 대상이다. booking·queue 제외(9부에서 되살림).",
+          "description": "비어 있는 것이 정상. 값이 뜨면 그 이름이 곧 조치 대상이다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 10, "w": 6, "x": 10, "y": 1 },
           "targets": [
             {
               "refId": "A",
-              "expr": "up{job!~\"booking|app/.*\"} == 0",
+              "expr": "up == 0",
               "instant": true,
               "format": "table"
             }
