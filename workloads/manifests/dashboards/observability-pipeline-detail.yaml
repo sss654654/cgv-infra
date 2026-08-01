@@ -1,5 +1,5 @@
-# 관측 파이프라인 상세 대시보드 — 데이터가 흐르는 순서(긁는다→보낸다→담는다→내린다→꺼낸다→바닥)대로
-# 행을 배치한다. 행 하나씩 채워 넣으며 검증 중 — 현재 행1(긁는다)까지.
+# 관측 파이프라인 상세 대시보드 — 데이터가 흐르는 순서(수집→전송→쓰기→플러시→읽기, 공유 스토리지)대로
+# 행을 배치한다. 행 하나씩 채워 넣으며 검증 중 — 현재 행1(수집)까지.
 # 쿼리는 저장소 전체를 훑지 않는 것만 쓴다(무거운 패널 쿼리가 30초마다 돌며 querier를 OOM시킨 전례).
 apiVersion: v1
 kind: ConfigMap
@@ -32,7 +32,7 @@ data:
       },
       "panels": [
         {
-          "type": "row", "title": "행1 — 긁는다 (Alloy → 타깃)", "collapsed": false,
+          "type": "row", "title": "행1 — 수집 (scrape): Alloy → 타깃", "collapsed": false,
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": []
         },
         {
@@ -156,23 +156,23 @@ data:
           }
         },
         {
-          "type": "row", "title": "행2 — 보낸다 (Alloy → Mimir 전송)", "collapsed": false,
+          "type": "row", "title": "행2 — 전송 (remote_write): Alloy → Mimir", "collapsed": false,
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 11 }, "panels": []
         },
         {
-          "type": "row", "title": "행3 — 담는다 (distributor → 인제스터)", "collapsed": false,
+          "type": "row", "title": "행3 — 쓰기 경로: distributor · ingester", "collapsed": false,
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 }, "panels": []
         },
         {
-          "type": "row", "title": "행4 — 내린다 (인제스터 → MinIO)", "collapsed": false,
+          "type": "row", "title": "행4 — 플러시: ingester → MinIO (블록 · 컴팩터 · WAL)", "collapsed": false,
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 }, "panels": []
         },
         {
-          "type": "row", "title": "행5 — 꺼낸다 (Grafana → querier)", "collapsed": false,
+          "type": "row", "title": "행5 — 읽기 경로: query-frontend · querier · store-gateway", "collapsed": false,
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }, "panels": []
         },
         {
-          "type": "row", "title": "행6 — 바닥 (MinIO · WAL 디스크)", "collapsed": false,
+          "type": "row", "title": "행6 — 공유 스토리지: MinIO · WAL 디스크", "collapsed": false,
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "panels": []
         }
       ]
