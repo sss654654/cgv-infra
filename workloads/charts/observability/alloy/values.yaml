@@ -122,13 +122,27 @@ alloy:
         clustering { enabled = true }
       }
 
-      // METRICS: kubelet + cAdvisor 직접 스크레이프
-      // 이 둘은 노드 프로세스라 Service가 없어 ServiceMonitor 경로로는 원리적으로 못 잡는다.
-      //   kubelet /metrics          -> up{job="kubelet"} = 노드 생존을 etcd 안 거치고 보는 신호.
+      // METRICS: k3s server 프로세스 + cAdvisor 직접 스크레이프
+      // 노드 프로세스라 Service가 없어 ServiceMonitor 경로로는 원리적으로 못 잡는다 → 노드 주소를 직접 지목.
+      //
+      // ★ :6443(apiserver)을 따로 긁지 않는 이유 — k3s는 apiserver·etcd·scheduler·controller-manager·kubelet을
+      //   한 프로세스(k3s server)에서 돌린다. 그래서 메트릭 레지스트리도 하나이고, :6443/metrics 와
+      //   :10250/metrics 가 같은 내용을 낸다(실측: 같은 노드에서 줄 수 동일, 메트릭 이름 집합 완전 일치).
+      //   둘 다 긁으면 job 라벨만 다른 사본이 두 벌 저장돼 시리즈 상한을 두 배로 먹는다.
+      //   프로세스가 나뉜 배포판(kubeadm 등)에서는 포트마다 내용이 달라 둘 다 긁는 것이 정상이다 — k3s에서만 사본이 된다.
+      //   :6443 대신 :10250을 남긴 이유: apiserver 인증·flowcontrol 경로를 지나지 않아 apiserver가 밀릴 때도
+      //   응답하고, cAdvisor가 같은 포트의 다른 경로라 설정이 나란히 붙는다.
+      //
+      //   job_name = "k3s-server" — 이 레지스트리에는 apiserver·scheduler·controller-manager 지표가 전부 들어 있어
+      //   "kubelet"이라 부르면 내용을 가리지 못한다. 컴포넌트 구분은 job이 아니라 메트릭 이름이 한다
+      //   (apiserver_* · scheduler_* · workqueue_* · kubelet_*).
+      //
+      //   /metrics          -> up{job="k3s-server"} = 노드 생존을 etcd 안 거치고 보는 신호.
       //     KSM 기반 노드 상태는 apiserver·etcd를 통과하므로 쿼럼이 깨지면 값이 갱신을 멈춘 채
       //     마지막 상태로 굳는다("죽었는데 green"). 직접 스크레이프는 대상이 죽으면 up=0으로 정직하다.
-      //   kubelet /metrics/cadvisor -> container_cpu_usage_seconds_total·container_memory_working_set_bytes
+      //   /metrics/cadvisor -> container_cpu_usage_seconds_total·container_memory_working_set_bytes
       //     = 컨테이너 실사용. 부하 실측으로 배포 스펙을 역산하려면 이 값이 있어야 한다.
+      //     cAdvisor는 kubelet 안에 있지만 별도 레지스트리라 이 경로를 따로 긁어야 온다.
       //     kube-state-metrics는 선언값(requests/limits)만 발행하고 실사용은 모른다.
       discovery.kubernetes "nodes" { role = "node" }
 
@@ -149,7 +163,7 @@ alloy:
 
       prometheus.scrape "kubelet" {
         targets      = discovery.relabel.kubelet.output
-        job_name     = "kubelet"
+        job_name     = "k3s-server"          // 위 주석 참고 — 이 응답은 kubelet 것이 아니라 k3s server 프로세스 전체다
         metrics_path = "/metrics"
         scheme       = "https"
         // kubelet은 서비스어카운트 토큰으로 인증한다. 인증서는 노드마다 자체 서명이라
@@ -171,34 +185,9 @@ alloy:
         clustering { enabled = true }
       }
 
-      // METRICS: apiserver 직접 스크레이프
-      // 기본 kubernetes Service를 안 쓰는 이유: 그 Service는 살아 있는 apiserver만 엔드포인트로
-      // 유지해서, 노드가 죽으면 대상 자체가 목록에서 사라진다 — up=0이 아니라 아예 없어져
-      // "죽었다"를 표현하지 못한다. 노드 주소를 직접 지목하면 대상이 남아 up=0으로 나온다.
-      // ServiceMonitor 대신 여기 둔 이유는 토큰 파일 지정 필드가 CRD 버전에 따라 다뤄지지 않아서다.
-      discovery.relabel "apiserver" {
-        targets = discovery.kubernetes.nodes.targets
-        rule {
-          source_labels = ["__meta_kubernetes_node_name"]
-          target_label  = "node"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_node_address_InternalIP"]
-          replacement   = "$1:6443"
-          target_label  = "__address__"
-        }
-      }
-
-      prometheus.scrape "apiserver" {
-        targets      = discovery.relabel.apiserver.output
-        job_name     = "k3s-apiserver"
-        metrics_path = "/metrics"
-        scheme       = "https"
-        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        tls_config { insecure_skip_verify = true }
-        forward_to = [prometheus.remote_write.mimir.receiver]
-        clustering { enabled = true }
-      }
+      // (apiserver :6443 직접 스크레이프는 제거했다 — 위 "k3s server" 주석의 사본 문제.
+      //  되살려야 하는 조건: 컨트롤플레인이 프로세스로 나뉜 배포판으로 옮기면 :6443과 :10250이
+      //  서로 다른 내용을 내므로 그때는 둘 다 긁어야 한다.)
 
       // METRICS: MinIO 버킷 사용량. minio 차트는 클러스터 메트릭을 ServiceMonitor가 아니라
       // Probe CRD로 내는데 이 설정은 Probe를 소비하지 않는다 → 서비스를 직접 지목한다.

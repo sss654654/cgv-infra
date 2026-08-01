@@ -22,6 +22,13 @@ mimir:
       ring: { replication_factor: 3 }        # ingester 3개(노드당 1)에 복제 — 쓰기 과반 2 성공 시 OK(etcd 쿼럼 3과 같은 논리)
     limits:
       compactor_blocks_retention_period: 15d # 메트릭 보존 15일 — compactor가 적용·삭제(miniodata 무한증가 차단)
+      # 테넌트당(복제 전) 인메모리 시리즈 상한. Mimir 기본값 150000으로는 이 클러스터의 수집량을 못 받는다.
+      #   원천 실측: k3s server 3노드 약 12만~18만 + cAdvisor 약 1.7만 + KSM·node-exporter·LGTM 자기지표 약 3.2만.
+      #   apiserver 사본을 걷어낸 뒤 기준으로 약 22만이고, 가동 시간에 따라 더 는다(verb×resource×scope 조합이 쌓임).
+      # 30만인 근거: 22만에 여유 36%. 25만은 여유 13%뿐이라 앱 3종이 붙으면 곧 다시 찬다.
+      #   RF3에 ingester도 3대라 전역 상한이 곧 ingester 한 대가 지는 양이다 → 상한이 그대로 노드당 메모리가 된다.
+      #   실측 시리즈당 약 4.2KiB(150000일 때 RSS 약 618MiB) → 30만이면 약 1.2GiB. 아래 ingester limit 2Gi와 짝.
+      max_global_series_per_user: 300000
     common:
       storage:
         backend: s3
@@ -61,7 +68,14 @@ ingester:
         - labelSelector:
             matchLabels: { app.kubernetes.io/component: ingester }
           topologyKey: kubernetes.io/hostname
-  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: 1000m, memory: 1Gi } }  # 최근 시리즈를 메모리에 적재 — 메모리 사용이 가장 큼
+  # 최근 시리즈를 메모리에 적재 — 메모리 사용이 가장 큼. 상한 30만과 짝으로 잡은 값이다.
+  #   limit 2Gi   : 30만 × 실측 약 4.2KiB ≈ 1.2GiB. 1Gi로는 25만에서 이미 닿아 OOMKilled 된다.
+  #                 limit은 스케줄링에 쓰이지 않아 올려도 다른 파드를 밀어내지 않는다.
+  #   request 1Gi : 실사용이 request(512Mi)보다 크면 그 초과분 때문에 eviction 우선순위 앞쪽에 놓인다.
+  #                 상태(최근 구간 + WAL)를 들고 있는 컴포넌트라 그건 피한다.
+  #   ⚠️ kube-reserved를 2Gi로 올려 노드에 반영하면 노드당 할당 가능량이 1Gi 줄어든다.
+  #      앱 3종이 실제로 뜬 뒤 실사용을 다시 재서 request 전반을 함께 재조정한다.
+  resources: { requests: { cpu: 250m, memory: 1Gi }, limits: { cpu: 1000m, memory: 2Gi } }
 querier:
   replicas: 1
   # 256Mi로 잡았다가 OOMKilled 42회. query-frontend가 쿼리를 16조각으로 쪼개 동시에 보내므로
