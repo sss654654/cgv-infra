@@ -34,9 +34,12 @@ sidecar:
     folderAnnotation: grafana_folder   # ConfigMap에 이 annotation을 달면 Grafana 폴더로 분류된다
     provider:
       foldersFromFilesStructure: true
-  resources:                           # sidecar는 감시만 하는 작은 컨테이너 — 명시해 두지 않으면 request 0으로 스케줄된다
-    requests: { cpu: 10m, memory: 32Mi }
-    limits:   { cpu: 100m, memory: 64Mi }
+  # sidecar 자원. 명시해 두지 않으면 request 0으로 스케줄된다.
+  # 64Mi로 잡았다가 기동 직후 OOMKilled(exit 137) 반복 — 감시만 하는 컨테이너로 보이지만
+  #   쿠버네티스 watch 연결과 파이썬 런타임을 들고 있어 그보다 쓴다. 192Mi로 올린다.
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits:   { cpu: 100m, memory: 192Mi }
 datasources:
   datasources.yaml:
     apiVersion: 1
