@@ -1,11 +1,10 @@
-# 관측 파이프라인 대시보드 — "관측이 도는가" 하나만 묻는다 (클러스터 건강은 인프라 대시보드 몫).
-# 행 순서 = 데이터가 흐르는 순서이자 고장이 전파되는 순서:
-#   수집(안 긁으면 값 부재) → 전송(밀리면 지연, 넘치면 유실) → 쓰기(상한 차면 거절)
-#   → 플러시(막히면 WAL 디스크가 참) → 읽기(죽으면 화면이 감김, 쓰기와 독립) → 기록(사건의 원문)
-# 한눈에 행 = 알림 3종(데이터 유실 · 파드 재시작 · 저장 정체)과 같은 신호의 현재값.
+# 관측 파이프라인 대시보드 — Mimir 공식 관측 3축(쓰기·읽기·저장 여정)에 이 환경의 사건 신호를 더한 구성.
+#   행1 쓰기: 수집(up)·전송 실패는 Alloy 쪽 상류 신호, 나머지는 Mimir Writes 대시보드의 헤드라인.
+#   행2 읽기: Mimir Reads 대시보드의 최소형.
+#   행3 저장 여정·상태: 블록이 MinIO로 내려가는가 + 링·인제스터 메모리(공식 알림 축).
+# 패널 12개로 유지한다 — 아쉬운 신호가 생기면 그날 추가(이전 26패널 판은 git 히스토리에 있다).
 # 쿼리는 저장소 전체를 훑지 않는 것만 쓴다(무거운 패널 쿼리가 30초마다 돌며 querier를 OOM시킨 전례).
 # 시리즈 상한(300000)을 바꾸면: 생산 시리즈 bargauge의 max, 보유·활성 패널의 threshold 두 곳을 같이 고친다.
-# Tempo 레인은 앱 트래픽이 생기는 12부에서 단다(지금 유입 0 — 빈 패널 금지 원칙).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,135 +25,15 @@ data:
       "templating": { "list": [] },
       "panels": [
         {
-          "type": "text",
-          "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
-          "options": {
-            "mode": "markdown",
-            "content": "**흐름** 타깃 → 수집(Alloy) → 전송(remote_write) → 쓰기(distributor → ingester 메모리) → 플러시(2시간마다 블록 → MinIO) · 조회는 읽기(query-frontend → querier)가 메모리+MinIO를 합쳐 답한다\n\n**알림이 오면** 데이터 유실 → 쓰기·전송 행 · 파드 재시작 → 읽기·기록 행 · 저장 정체 → 플러시·스토리지 행. 위에서 아래로, 초록을 따라 내려가다 처음 만나는 빨강이 막힌 단계다"
-          }
-        },
-        {
-          "type": "row", "title": "한눈에 — 알림과 같은 신호의 현재값", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 3 }, "panels": []
-        },
-        {
-          "type": "stat",
-          "title": "Mimir 거절 (샘플/초)",
-          "description": "저장소가 받기를 거부하는 샘플. 0이 아니면 메트릭을 잃는 중 — 쓰기 행으로.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 4 },
-          "targets": [
-            { "refId": "A", "expr": "sum(rate(cortex_discarded_samples_total[5m]))", "legendFormat": "거절" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "decimals": 1,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.1 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
-        },
-        {
-          "type": "stat",
-          "title": "전송 실패 (샘플/초)",
-          "description": "Alloy가 보내다 버린 샘플. 0이 아니면 유실 중 — 전송 행으로. Mimir가 통째로 죽어도 여기서 뜬다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 4 },
-          "targets": [
-            { "refId": "A", "expr": "sum(rate(prometheus_remote_storage_samples_failed_total[5m]))", "legendFormat": "실패" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "decimals": 1,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.1 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
-        },
-        {
-          "type": "stat",
-          "title": "Loki 거절 (라인/초)",
-          "description": "로그 파이프의 유실 — 스트림 상한(기본 5,000)·rate limit에 밀린 라인. Mimir 시리즈 상한과 같은 구조의 가드레일이다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 4 },
-          "targets": [
-            { "refId": "A", "expr": "sum(rate(loki_discarded_samples_total[5m])) or vector(0)", "legendFormat": "거절" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "decimals": 1,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.1 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
-        },
-        {
-          "type": "stat",
-          "title": "관측 파드 재시작 (1시간)",
-          "description": "0이 아니면 뭔가 죽었다 — 읽기 행에서 누가, 기록 행에서 왜.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 4 },
-          "targets": [
-            { "refId": "A", "expr": "sum(increase(kube_pod_container_status_restarts_total{exported_namespace=\"observability\"}[1h]))", "legendFormat": "재시작" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "decimals": 0,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
-        },
-        {
-          "type": "stat",
-          "title": "PVC 사용률 최대",
-          "description": "관측 스택 디스크 중 가장 찬 것. 80% 넘으면 차오르는 중 — 플러시·스토리지 행으로.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 4, "w": 4, "x": 16, "y": 4 },
-          "targets": [
-            { "refId": "A", "expr": "max(kubelet_volume_stats_used_bytes{exported_namespace=\"observability\"} / kubelet_volume_stats_capacity_bytes{exported_namespace=\"observability\"})", "legendFormat": "최대" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "percentunit", "decimals": 1,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 0.9 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
-        },
-        {
-          "type": "stat",
-          "title": "전송 지연 최대",
-          "description": "수집과 전송 완료 사이의 시차. 커지면 지금 보는 모든 그래프가 과거 — 전송 행으로. 유실(전송 실패)의 전조다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 4, "w": 4, "x": 20, "y": 4 },
-          "targets": [
-            { "refId": "A", "expr": "max(prometheus_remote_storage_highest_timestamp_in_seconds - ignoring(remote_name, url) group_right prometheus_remote_storage_queue_highest_sent_timestamp_seconds)", "legendFormat": "지연" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s", "decimals": 0,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 120 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
-        },
-        {
-          "type": "row", "title": "수집 (scrape): Alloy → 타깃 — 안 긁으면 값이 조용히 사라진다", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 8 }, "panels": []
+          "type": "row", "title": "쓰기 — 받아지는가: 수집(Alloy) → distributor → ingester", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": []
         },
         {
           "type": "state-timeline",
           "title": "job별 생존 이력",
           "description": "min(up)이라 그 job의 타깃 중 하나라도 죽으면 줄이 빨개진다. up은 수집기가 스스로 만드는 값이라 대상이 죽어도 남는 유일한 신호. 어느 타깃인지는 Explore에서 up == 0.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+          "gridPos": { "h": 8, "w": 10, "x": 0, "y": 1 },
           "targets": [
             { "refId": "A", "expr": "min by (job) (up)", "legendFormat": "{{job}}" }
           ],
@@ -173,51 +52,23 @@ data:
           }
         },
         {
-          "type": "stat",
-          "title": "Alloy 분담 — 동료 수",
-          "description": "셋 다 3이어야 한다. 분배가 깨져 아무도 안 긁으면 up 시리즈 자체가 안 생겨 생존 패널에도 안 뜬다 — 이 숫자만이 그 구멍을 잡는다.",
+          "type": "timeseries",
+          "title": "거절 (샘플/초, 사유별)",
+          "description": "저장소가 받기를 거부한 샘플. 0이 정상. per_user_series_limit = 시리즈 상한 도달 — 늦게 온 시리즈부터 선착순으로 밀려난다. reason 라벨이 원인을 말한다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 4, "x": 12, "y": 9 },
+          "gridPos": { "h": 8, "w": 7, "x": 10, "y": 1 },
           "targets": [
-            { "refId": "A", "expr": "sum by (pod) (cluster_node_peers)", "legendFormat": "{{pod}}" }
+            { "refId": "A", "expr": "sum by (reason) (rate(cortex_discarded_samples_total[5m]))", "legendFormat": "{{reason}}" }
           ],
-          "fieldConfig": {
-            "defaults": {
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 3 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name" }
-        },
-        {
-          "type": "bargauge",
-          "title": "job별 생산 시리즈 — 막대 배경 전체 = 상한 300,000",
-          "description": "수집기가 센 생산량 기준(scrape_samples_scraped) — 저장소를 훑는 쿼리는 상시 패널에 쓰지 않는다. 여기서 만든 양이 아래 행들을 그대로 통과해 상한을 채운다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 9 },
-          "targets": [
-            { "refId": "A", "expr": "topk(12, sum by (job) (scrape_samples_scraped))", "instant": true, "legendFormat": "{{job}}" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "locale", "decimals": 0, "min": 0, "max": 300000,
-              "color": { "mode": "fixed", "fixedColor": "blue" },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true }
-        },
-        {
-          "type": "row", "title": "전송 (remote_write): Alloy → Mimir — 밀리면 지연, 넘치면 유실", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }, "panels": []
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
         },
         {
           "type": "timeseries",
           "title": "전송 실패 · 재시도 (샘플/초)",
-          "description": "실패 = 재시도 없이 버려진 샘플(4xx — 아래 쓰기 행의 거절이 여기선 실패로 보인다) = 곧 유실. 재시도 = 일시 오류(5xx·네트워크). 둘 다 0이 정상.",
+          "description": "Alloy가 보내다 버린 샘플. 실패 = 재시도 없이 버려짐(4xx — 옆 거절이 이쪽에선 실패로 보인다) = 곧 유실. 재시도 = 일시 오류. Mimir가 통째로 죽으면 거절 카운터는 침묵하지만 여기는 뜬다 — 백업 신호.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
+          "gridPos": { "h": 8, "w": 7, "x": 17, "y": 1 },
           "targets": [
             { "refId": "A", "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_failed_total[5m]))", "legendFormat": "실패 {{pod}}" },
             { "refId": "B", "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_retried_total[5m]))", "legendFormat": "재시도 {{pod}}" }
@@ -227,57 +78,22 @@ data:
         },
         {
           "type": "timeseries",
-          "title": "전송 지연 (수집 시각 − 전송 완료 시각)",
-          "description": "평시 0–10초(전송 배치 주기). 계속 커지면 전송이 생산을 못 따라가는 것이고, 버퍼가 넘치면 실패(유실)로 넘어간다. 120초 선 = prometheus-mixin 밀림 알림 기준.",
+          "title": "유입 (샘플/초)",
+          "description": "distributor가 받은 샘플 속도 — Mimir Writes 대시보드의 첫 헤드라인. 전송이 정상이면 Alloy 전송 처리량 합과 같아야 한다. 꺼지면 상류(수집·전송)가 멈춘 것.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
+          "gridPos": { "h": 8, "w": 7, "x": 0, "y": 9 },
           "targets": [
-            { "refId": "A", "expr": "prometheus_remote_storage_highest_timestamp_in_seconds - ignoring(remote_name, url) group_right prometheus_remote_storage_queue_highest_sent_timestamp_seconds", "legendFormat": "{{pod}}" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s", "min": 0,
-              "custom": { "fillOpacity": 10, "thresholdsStyle": { "mode": "line" } },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 120 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "전송 처리량 (샘플/초)",
-          "description": "Alloy별 전송 속도. 한 선이 꺼지면 그 Alloy가 멈춘 것 — 그 몫이 남은 두 선으로 옮겨 붙어야 수집 행의 분담 재편이 실제로 일한 것.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_total[5m]))", "legendFormat": "{{pod}}" }
+            { "refId": "A", "expr": "sum(rate(cortex_distributor_received_samples_total[5m]))", "legendFormat": "유입" }
           ],
           "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "row", "title": "쓰기 경로: distributor → ingester — 상한이 차면 새 시리즈부터 거절", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }, "panels": []
-        },
-        {
-          "type": "timeseries",
-          "title": "거절 (샘플/초, 사유별)",
-          "description": "0이 정상. per_user_series_limit = 시리즈 상한 도달 — 늦게 온 시리즈부터 선착순으로 밀려나고, 위 전송 행에는 실패로 비친다. reason 라벨이 원인을 말한다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 7, "x": 0, "y": 27 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (reason) (rate(cortex_discarded_samples_total[5m]))", "legendFormat": "{{reason}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
         },
         {
           "type": "timeseries",
           "title": "시리즈 보유·활성 vs 상한 300,000",
           "description": "보유(memory_series) = 메모리에 든 것 — 상한이 세는 대상. 활성(active) = 최근 샘플이 온 것. 간격 = 잔존(라벨 변경 뒤 최대 두 절단 주기 약 4시간까지 정상). 보유가 파드별 세 선인 이유 = RF3 복제 — 셋이 같아야 하고, 갈라지면 복제 이상.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 10, "x": 7, "y": 27 },
+          "gridPos": { "h": 8, "w": 10, "x": 7, "y": 9 },
           "targets": [
             { "refId": "A", "expr": "cortex_ingester_memory_series", "legendFormat": "보유 {{pod}}" },
             { "refId": "B", "expr": "max(cortex_ingester_active_series)", "legendFormat": "활성 (최대)" }
@@ -293,34 +109,62 @@ data:
           "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
         },
         {
-          "type": "timeseries",
-          "title": "인제스터 메모리 vs limit 2Gi",
-          "description": "시리즈당 실측 약 4.2KiB — 30만 만재 시 약 1.2GiB. limit에 닿으면 OOMKilled로 최근 구간을 잃는다(WAL 재생으로 복구, 그동안 조회가 빈다). 상한(거절)이 이 OOM을 막는 가드레일이다.",
+          "type": "bargauge",
+          "title": "job별 생산 시리즈 — 막대 배경 전체 = 상한 300,000",
+          "description": "수집기가 센 생산량 기준(scrape_samples_scraped) — 저장소를 훑는 쿼리는 상시 패널에 쓰지 않는다. 상한을 튜닝할 때 누가 얼마나 먹는지의 근거.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 7, "x": 17, "y": 27 },
+          "gridPos": { "h": 8, "w": 7, "x": 17, "y": 9 },
           "targets": [
-            { "refId": "A", "expr": "process_resident_memory_bytes{job=\"observability/ingester\"}", "legendFormat": "{{pod}}" }
+            { "refId": "A", "expr": "topk(12, sum by (job) (scrape_samples_scraped))", "instant": true, "legendFormat": "{{job}}" }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "bytes", "min": 0,
-              "custom": { "fillOpacity": 10, "thresholdsStyle": { "mode": "line" } },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 2147483648 } ] }
+              "unit": "locale", "decimals": 0, "min": 0, "max": 300000,
+              "color": { "mode": "fixed", "fixedColor": "blue" },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
             },
             "overrides": []
           },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true }
+        },
+        {
+          "type": "row", "title": "읽기 — 답하는가: query-frontend → querier", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "조회 요청 (상태코드)",
+          "description": "조회 입구(query-frontend)의 응답 분포 — 조회 API(route=prometheus_api.*)만. 499 = 기다리다 취소(느림의 증상), 5xx = 고장. 이 대시보드의 패널 쿼리도 여기로 들어온다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (status_code) (rate(cortex_request_duration_seconds_count{job=\"observability/query-frontend\", route=~\"prometheus_api.*\"}[5m]))", "legendFormat": "{{status_code}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
           "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
         },
         {
-          "type": "row", "title": "플러시·스토리지: ingester → MinIO · WAL 디스크 — 막히면 디스크가 조용히 찬다", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 }, "panels": []
+          "type": "timeseries",
+          "title": "조회 지연 p99",
+          "description": "조회 100건 중 99건이 이 시간 안에 끝났다는 값. 오르면 화면 체감이 먼저 느려진다. 최근 조회만 느리면 인제스터 쪽, 과거 구간 조회가 느리면 store-gateway(MinIO) 쪽.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(cortex_request_duration_seconds_bucket{job=\"observability/query-frontend\", route=~\"prometheus_api.*\"}[5m])))", "legendFormat": "p99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
+        },
+        {
+          "type": "row", "title": "저장 여정·상태 — 내려가는가: ingester → MinIO / 링 · 메모리", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }, "panels": []
         },
         {
           "type": "stat",
           "title": "마지막 블록 업로드 후 경과",
-          "description": "2시간 주기라 평시 2시간 미만. 4시간(빨강) = 공식 알림 기준 — 블록이 안 나가면 아래 PVC가 차오르고, 끝은 쓰기 정지다.",
+          "description": "인제스터는 2시간마다 메모리 구간을 블록으로 떠 MinIO에 올린다 — 평시 2시간 미만. 4시간(빨강) = 공식 알림 기준. 안 나가면 로컬 WAL 디스크만 차고, 끝은 쓰기 정지다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 4, "x": 0, "y": 36 },
+          "gridPos": { "h": 8, "w": 5, "x": 0, "y": 27 },
           "targets": [
             { "refId": "A", "expr": "time() - cortex_ingester_shipper_last_successful_upload_timestamp_seconds", "legendFormat": "{{pod}}" }
           ],
@@ -336,9 +180,9 @@ data:
         {
           "type": "stat",
           "title": "컴팩터 마지막 성공 후 경과",
-          "description": "RF3라 같은 구간 블록이 3벌 — 컴팩터가 병합한다. 멈추면 저장·조회 비용이 계속 는다. 24시간(빨강) = 공식 알림 기준.",
+          "description": "RF3라 같은 구간 블록이 3벌 올라간다 — 컴팩터가 병합한다. 멈추면 저장·조회 비용이 계속 는다. 24시간(빨강) = 공식 알림 기준.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 4, "x": 4, "y": 36 },
+          "gridPos": { "h": 8, "w": 5, "x": 5, "y": 27 },
           "targets": [
             { "refId": "A", "expr": "time() - cortex_compactor_last_successful_run_timestamp_seconds", "legendFormat": "{{pod}}" }
           ],
@@ -352,131 +196,40 @@ data:
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" }
         },
         {
-          "type": "timeseries",
-          "title": "MinIO 요청 (작업별) · 실패",
-          "description": "Mimir 전 컴포넌트의 오브젝트 스토리지 요청. Loki·Tempo도 같은 MinIO를 쓴다 — 여기가 아프면 셋이 같이 아프고, 위(플러시)와 아래(읽기)가 동시에 느려진다.",
+          "type": "stat",
+          "title": "링 ACTIVE 인제스터",
+          "description": "해시 링에 ACTIVE로 등록된 인제스터 수 — 3이어야 한다. 하나 빠지면 쓰기 quorum(2/3)의 여유가 사라진 상태. 링 관찰자마다 각자 보고하므로 sum이 아니라 max로 센다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 6, "x": 8, "y": 36 },
+          "gridPos": { "h": 8, "w": 4, "x": 10, "y": 27 },
           "targets": [
-            { "refId": "A", "expr": "sum by (operation) (rate(thanos_objstore_bucket_operations_total[5m]))", "legendFormat": "{{operation}}" },
-            { "refId": "B", "expr": "sum(rate(thanos_objstore_bucket_operation_failures_total[5m]))", "legendFormat": "실패(전체)" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "MinIO 요청 지연 p99",
-          "description": "단일 USB SSD 위의 오브젝트 스토리지 — 디스크 경합이 이 지연으로 나타난다. 부하테스트 관전 지점.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 5, "x": 14, "y": 36 },
-          "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(thanos_objstore_bucket_operation_duration_seconds_bucket[5m])))", "legendFormat": "p99" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
-        },
-        {
-          "type": "bargauge",
-          "title": "관측 스택 PVC 사용률",
-          "description": "인제스터 WAL 3장 · Loki · Tempo · MinIO. WAL이 차면 새 값을 못 적어 재시작 복구가 깨진다 — 80% 노랑, 90% 빨강.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 5, "x": 19, "y": 36 },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "kubelet_volume_stats_used_bytes{exported_namespace=\"observability\"} / kubelet_volume_stats_capacity_bytes{exported_namespace=\"observability\"}",
-              "instant": true,
-              "legendFormat": "{{persistentvolumeclaim}}"
-            }
+            { "refId": "A", "expr": "max(cortex_ring_members{name=\"ingester\", state=\"ACTIVE\"})", "legendFormat": "ACTIVE" }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "percentunit", "min": 0, "max": 1, "decimals": 1,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 0.9 } ] }
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 3 } ] }
             },
             "overrides": []
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true }
-        },
-        {
-          "type": "row", "title": "읽기 경로: query-frontend → querier — 쓰기와 독립적으로 고장 난다", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 44 }, "panels": []
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" }
         },
         {
           "type": "timeseries",
-          "title": "조회 지연 p99",
-          "description": "조회 100건 중 99건이 이 시간 안에 끝났다는 값. 오르면 화면 체감이 먼저 느려진다. 최근 조회만 느리면 인제스터 쪽, 과거 구간 조회가 느리면 store-gateway(MinIO) 쪽.",
+          "title": "인제스터 메모리 vs limit 2Gi",
+          "description": "시리즈를 메모리에 드는 컴포넌트 — 시리즈당 실측 약 4.2KiB, 30만 만재 시 약 1.2GiB. limit에 닿으면 OOMKilled로 최근 구간을 잃는다(WAL 재생으로 복구, 그동안 조회가 빈다). 시리즈 상한(거절)이 이 OOM을 막는 가드레일이다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 45 },
+          "gridPos": { "h": 8, "w": 10, "x": 14, "y": 27 },
           "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(cortex_request_duration_seconds_bucket{job=\"observability/query-frontend\", route=~\"prometheus_api.*\"}[5m])))", "legendFormat": "p99" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "querier 메모리 vs limit 512Mi",
-          "description": "무거운 쿼리의 비용이 청구되는 자리 — 전 시리즈를 훑는 패널 쿼리로 42회 OOMKilled됐던 그 컴포넌트. 읽기가 죽어도 쓰기는 돈다 — 컴포넌트를 나눈(distributed) 구성의 격리가 여기서 보인다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 45 },
-          "targets": [
-            { "refId": "A", "expr": "process_resident_memory_bytes{job=\"observability/querier\"}", "legendFormat": "{{pod}}" }
+            { "refId": "A", "expr": "process_resident_memory_bytes{job=\"observability/ingester\"}", "legendFormat": "{{pod}}" }
           ],
           "fieldConfig": {
             "defaults": {
               "unit": "bytes", "min": 0,
               "custom": { "fillOpacity": 10, "thresholdsStyle": { "mode": "line" } },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 536870912 } ] }
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 2147483648 } ] }
             },
             "overrides": []
           },
           "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "관측 파드 재시작 (파드별, 1시간 증가분)",
-          "description": "한눈에 행의 재시작 합계를 파드별로 분해 — 누가 죽고 있는지. 비어 있으면 정상. 왜 죽는지는 기록 행의 이벤트·로그로.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 45 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{exported_namespace=\"observability\"}[1h])) > 0", "legendFormat": "{{pod}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "row", "title": "기록: 이벤트 · 에러 로그 (Loki) — 사건의 원문", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 53 }, "panels": []
-        },
-        {
-          "type": "logs",
-          "title": "관측 네임스페이스 이벤트",
-          "description": "쿠버네티스 이벤트(OOMKilling·probe 실패·BackOff·스케줄 실패). 이벤트는 클러스터에서 약 1시간 뒤 사라지므로 Loki 적재본이 사후 추적의 기록이다.",
-          "datasource": { "type": "loki", "uid": "loki" },
-          "gridPos": { "h": 9, "w": 12, "x": 0, "y": 54 },
-          "targets": [
-            { "refId": "A", "expr": "{job=\"k8s-events\", namespace=\"observability\"}" }
-          ],
-          "options": {
-            "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true,
-            "dedupStrategy": "none", "enableLogDetails": true
-          }
-        },
-        {
-          "type": "logs",
-          "title": "관측 파드 에러 로그",
-          "description": "관측 스택 파드 로그 중 오류만. 위 그래프에서 이상 구간을 보고, 같은 시각의 이 목록에서 원인 문자열을 읽는다 — 메트릭과 로그의 상관.",
-          "datasource": { "type": "loki", "uid": "loki" },
-          "gridPos": { "h": 9, "w": 12, "x": 12, "y": 54 },
-          "targets": [
-            { "refId": "A", "expr": "{job=\"loki.source.kubernetes.pods\", namespace=\"observability\"} |~ \"(?i)(error|panic|fatal|corrupt)\"" }
-          ],
-          "options": {
-            "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true,
-            "dedupStrategy": "none", "enableLogDetails": true
-          }
         }
       ]
     }
