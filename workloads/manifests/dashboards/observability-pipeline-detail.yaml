@@ -125,8 +125,8 @@ data:
         },
         {
           "type": "bargauge",
-          "title": "job별 생산 시리즈 (개)",
-          "description": "job 사이 비교용 — 막대는 최대 job 기준 상대 길이. 상한 대비 총 사용량은 쓰기 경로 행에서 본다. 저장량이 아니라 수집기가 센 생산량 기준 — 저장소를 훑는 쿼리는 상시 패널에 쓰지 않는다.",
+          "title": "job별 생산 시리즈 — 막대 배경 전체 = 상한 300,000",
+          "description": "숫자는 그 job의 생산 시리즈 수, 막대 길이는 상한 300,000 대비 그 job의 위치. job 간 비율도 막대끼리 그대로 비교된다. 총합 대 상한은 쓰기 경로 행이 저장량 기준으로 본다. 상한을 바꾸면 이 패널의 max도 같이 고친다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 6, "w": 8, "x": 16, "y": 5 },
           "targets": [
@@ -142,6 +142,7 @@ data:
               "unit": "locale",
               "decimals": 0,
               "min": 0,
+              "max": 300000,
               "color": { "mode": "fixed", "fixedColor": "blue" },
               "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
             },
