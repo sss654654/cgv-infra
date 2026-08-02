@@ -125,24 +125,23 @@ data:
         },
         {
           "type": "bargauge",
-          "title": "job별 상한 점유 (%)",
-          "description": "분모 = 시리즈 상한 300,000. 막대 합이 100%에 못 미치는 만큼이 여유다. 저장량이 아니라 수집기가 센 생산량 기준 — 저장소를 훑는 쿼리는 상시 패널에 쓰지 않는다.",
+          "title": "job별 생산 시리즈 — 막대 길이는 상한 300,000 대비",
+          "description": "값은 절대치, 막대 길이는 상한 대비 비율. 채워지지 않은 길이가 곧 여유다. 저장량이 아니라 수집기가 센 생산량 기준 — 저장소를 훑는 쿼리는 상시 패널에 쓰지 않는다. 상한을 바꾸면 limit 변수와 이 패널의 max를 같이 고친다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 6, "w": 8, "x": 16, "y": 5 },
           "targets": [
             {
               "refId": "A",
-              "expr": "topk(12, sum by (job) (scrape_samples_scraped)) / $limit * 100",
+              "expr": "topk(12, sum by (job) (scrape_samples_scraped))",
               "instant": true,
               "legendFormat": "{{job}}"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "percent",
+              "unit": "short",
               "min": 0,
-              "max": 100,
-              "decimals": 1,
+              "max": 300000,
               "color": { "mode": "fixed", "fixedColor": "blue" },
               "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
             },
