@@ -257,16 +257,267 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 }, "panels": []
         },
         {
+          "type": "timeseries",
+          "title": "거절 (샘플/초, 사유별)",
+          "description": "저장소가 받기를 거부한 샘플. 0이 정상. per_user_series_limit = 시리즈 상한 도달 — 새 시리즈만 선착순으로 밀려난다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 21 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (reason) (rate(cortex_discarded_samples_total[5m]))", "legendFormat": "{{reason}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "시리즈 보유·활성 vs 상한 300,000",
+          "description": "보유(memory_series) = 메모리에 든 것 — 상한이 세는 대상. 활성(active) = 최근 샘플이 온 것. 둘의 간격 = 샘플이 끊겼는데 자리를 잡고 있는 잔존 — 라벨을 바꾸면 최대 두 절단 주기(약 4시간) 동안 벌어진다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 10, "x": 8, "y": 21 },
+          "targets": [
+            { "refId": "A", "expr": "cortex_ingester_memory_series", "legendFormat": "보유 {{pod}}" },
+            { "refId": "B", "expr": "max(cortex_ingester_active_series)", "legendFormat": "활성 (최대)" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short", "min": 0,
+              "custom": { "fillOpacity": 5, "thresholdsStyle": { "mode": "line" } },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 300000 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "type": "stat",
+          "title": "링 ACTIVE 인제스터",
+          "description": "해시 링에 ACTIVE로 등록된 인제스터 수. 3이어야 한다 — 하나가 빠지면 쓰기 quorum(2/3)의 여유가 사라진 상태다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 21 },
+          "targets": [
+            { "refId": "A", "expr": "max(cortex_ring_members{name=\"ingester\", state=\"ACTIVE\"})", "legendFormat": "ACTIVE" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 3 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" }
+        },
+        {
+          "type": "timeseries",
+          "title": "쓰기 요청 (route · 상태코드)",
+          "description": "api_v1_push = 게이트웨이→distributor(HTTP), /cortex.Ingester/Push = distributor→인제스터(gRPC). 400·FailedPrecondition 상승 = 거절 재개, 5xx = 컴포넌트 고장.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (route, status_code) (rate(cortex_request_duration_seconds_count{route=~\"api_v1_push|/cortex.Ingester/Push\"}[5m]))", "legendFormat": "{{route}} · {{status_code}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "인제스터 메모리 vs limit 2Gi",
+          "description": "시리즈를 메모리에 드는 컴포넌트 — 시리즈당 실측 약 4.2KiB, 30만을 다 채우면 약 1.2GiB. 이 선이 limit에 닿으면 OOMKilled로 최근 구간을 잃는다(WAL 재생으로 복구되지만 그동안 조회 불가).",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+          "targets": [
+            { "refId": "A", "expr": "process_resident_memory_bytes{job=\"observability/ingester\"}", "legendFormat": "{{pod}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes", "min": 0,
+              "custom": { "fillOpacity": 10, "thresholdsStyle": { "mode": "line" } },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 2147483648 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
           "type": "row", "title": "행4 — 플러시: ingester → MinIO (블록 · 컴팩터 · WAL)", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 }, "panels": []
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 }, "panels": []
+        },
+        {
+          "type": "stat",
+          "title": "마지막 블록 업로드 후 경과",
+          "description": "인제스터가 MinIO에 블록을 마지막으로 올린 뒤 지난 시간. 2시간 주기라 평시 2시간 미만. 4시간(빨강) = 블록이 안 나가 로컬 디스크만 차는 중 — 공식 알림 기준.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 38 },
+          "targets": [
+            { "refId": "A", "expr": "time() - cortex_ingester_shipper_last_successful_upload_timestamp_seconds", "legendFormat": "{{pod}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 10800 }, { "color": "red", "value": 14400 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name" }
+        },
+        {
+          "type": "stat",
+          "title": "컴팩터 마지막 성공 후 경과",
+          "description": "RF3라 같은 구간의 블록이 3벌 올라간다 — 컴팩터가 병합해 하나로 줄인다. 멈추면 저장 공간과 조회 비용이 계속 는다. 24시간(빨강) = 공식 알림 기준.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 5, "x": 6, "y": 38 },
+          "targets": [
+            { "refId": "A", "expr": "time() - cortex_compactor_last_successful_run_timestamp_seconds", "legendFormat": "{{pod}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 43200 }, { "color": "red", "value": 86400 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" }
+        },
+        {
+          "type": "timeseries",
+          "title": "head 압축 (1시간 증가분)",
+          "description": "메모리(head)를 블록으로 뜨는 동작 — 2시간마다 1씩 뛰는 게 정상 리듬. 시리즈 제거(head 절단)도 이 주기에 묶여 돈다. 실패는 0이어야 한다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 11, "y": 38 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (increase(cortex_ingester_tsdb_compactions_total[1h]))", "legendFormat": "{{pod}}" },
+            { "refId": "B", "expr": "sum(increase(cortex_ingester_tsdb_compactions_failed_total[1h]))", "legendFormat": "실패" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "WAL 이상 (손상 · 절단 실패)",
+          "description": "0이 정상. 손상 = 재시작 시 그 구간을 복구 못 한다 — 복제(RF3)가 남은 두 대로 메우는 상황. 단일 USB SSD라 디스크 이상의 조기 신호이기도 하다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 7, "x": 17, "y": 38 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(cortex_ingester_tsdb_wal_corruptions_total[5m]))", "legendFormat": "손상" },
+            { "refId": "B", "expr": "sum(rate(cortex_ingester_tsdb_wal_truncations_failed_total[5m]))", "legendFormat": "절단 실패" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
         },
         {
           "type": "row", "title": "행5 — 읽기 경로: query-frontend · querier · store-gateway", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }, "panels": []
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 46 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "조회 요청 (상태코드)",
+          "description": "조회 입구(query-frontend)의 응답 분포. 499 = 기다리다 취소된 것(느림의 증상), 5xx = 고장. 계기판 자신의 쿼리도 여기로 들어온다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 47 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (status_code) (rate(cortex_request_duration_seconds_count{job=\"observability/query-frontend\", route=~\"prometheus_api.*\"}[5m]))", "legendFormat": "{{status_code}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "조회 지연 p99",
+          "description": "조회 100건 중 99건이 이 시간 안에 끝났다는 값. 오르면 대시보드 체감이 먼저 느려진다 — 인제스터(최근)와 store-gateway(과거) 어느 쪽이 무거운지는 시간 범위를 좁혀 가른다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 47 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(cortex_request_duration_seconds_bucket{job=\"observability/query-frontend\", route=~\"prometheus_api.*\"}[5m])))", "legendFormat": "p99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "querier 메모리 vs limit 512Mi",
+          "description": "쿼리가 실제로 계산되는 자리 — 무거운 쿼리가 여기서 터진다. 256Mi 시절 전 시리즈를 훑는 패널 쿼리로 42회 OOMKilled됐던 그 컴포넌트다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 47 },
+          "targets": [
+            { "refId": "A", "expr": "process_resident_memory_bytes{job=\"observability/querier\"}", "legendFormat": "{{pod}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes", "min": 0,
+              "custom": { "fillOpacity": 10, "thresholdsStyle": { "mode": "line" } },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 536870912 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "type": "stat",
+          "title": "관측 파드 재시작 (1시간)",
+          "description": "observability 네임스페이스 전체의 컨테이너 재시작 합. 0이 정상 — querier 25회 재시작을 파드 상태를 열어보고서야 알았던 것의 상시화.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 47 },
+          "targets": [
+            { "refId": "A", "expr": "sum(increase(kube_pod_container_status_restarts_total{exported_namespace=\"observability\"}[1h]))", "legendFormat": "재시작" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 0,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" }
         },
         {
           "type": "row", "title": "행6 — 공유 스토리지: MinIO · WAL 디스크", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }, "panels": []
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 55 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "MinIO 요청 (작업별) · 실패",
+          "description": "모든 Mimir 컴포넌트가 MinIO에 거는 요청. Loki·Tempo도 같은 MinIO를 쓰므로 여기가 아프면 셋이 같이 아프다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 9, "x": 0, "y": 56 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (operation) (rate(thanos_objstore_bucket_operations_total[5m]))", "legendFormat": "{{operation}}" },
+            { "refId": "B", "expr": "sum(rate(thanos_objstore_bucket_operation_failures_total[5m]))", "legendFormat": "실패(전체)" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "MinIO 요청 지연 p99",
+          "description": "단일 USB SSD 위의 오브젝트 스토리지 — 디스크 경합이 이 지연으로 나타난다. 부하테스트 때 파일시스템 병목의 관전 지점.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 7, "x": 9, "y": 56 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(thanos_objstore_bucket_operation_duration_seconds_bucket[5m])))", "legendFormat": "p99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
+        },
+        {
+          "type": "bargauge",
+          "title": "관측 스택 PVC 사용률",
+          "description": "인제스터 WAL 3장 · Loki · Tempo · MinIO. WAL 디스크가 차면 새 값을 디스크에 못 적어 재시작 복구가 깨진다 — 80% 노랑, 90% 빨강.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 56 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "kubelet_volume_stats_used_bytes{exported_namespace=\"observability\"} / kubelet_volume_stats_capacity_bytes{exported_namespace=\"observability\"}",
+              "instant": true,
+              "legendFormat": "{{persistentvolumeclaim}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit", "min": 0, "max": 1, "decimals": 1,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "red", "value": 0.9 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true }
         }
       ]
     }
