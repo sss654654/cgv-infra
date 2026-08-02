@@ -160,20 +160,113 @@ data:
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 11 }, "panels": []
         },
         {
+          "type": "timeseries",
+          "title": "전송 실패 · 재시도 (샘플/초)",
+          "description": "실패 = 재시도 없이 버려진 샘플(4xx 거절 포함) — 곧 유실. 재시도 = 일시 오류(5xx·네트워크)로 다시 보내는 중. 둘 다 0이 정상.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_failed_total[5m]))",
+              "legendFormat": "실패 {{pod}}"
+            },
+            {
+              "refId": "B",
+              "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_retried_total[5m]))",
+              "legendFormat": "재시도 {{pod}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "fillOpacity": 10 }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "전송 지연 (수집 시각 − 전송 완료 시각)",
+          "description": "WAL에 적힌 최신 샘플 시각과 Mimir로 전송 완료된 최신 샘플 시각의 차. 평시 0–10초(전송 배치 주기). 계속 커지면 전송이 생산을 못 따라가는 것 — 120초 선은 prometheus-mixin의 밀림(RemoteWriteBehind) 알림 기준.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "prometheus_remote_storage_highest_timestamp_in_seconds - ignoring(remote_name, url) group_right prometheus_remote_storage_queue_highest_sent_timestamp_seconds",
+              "legendFormat": "{{pod}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "min": 0,
+              "custom": {
+                "fillOpacity": 10,
+                "thresholdsStyle": { "mode": "line" }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 120 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "전송 처리량 (샘플/초)",
+          "description": "Alloy별로 Mimir에 보내는 샘플 속도. 한 선이 꺼지면 그 Alloy의 수집·전송이 멈춘 것 — 수집 행의 동료 수 패널과 같이 본다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_total[5m]))",
+              "legendFormat": "{{pod}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "custom": { "fillOpacity": 10 }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+        {
           "type": "row", "title": "행3 — 쓰기 경로: distributor · ingester", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 }, "panels": []
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 }, "panels": []
         },
         {
           "type": "row", "title": "행4 — 플러시: ingester → MinIO (블록 · 컴팩터 · WAL)", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 }, "panels": []
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 }, "panels": []
         },
         {
           "type": "row", "title": "행5 — 읽기 경로: query-frontend · querier · store-gateway", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }, "panels": []
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }, "panels": []
         },
         {
           "type": "row", "title": "행6 — 공유 스토리지: MinIO · WAL 디스크", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "panels": []
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }, "panels": []
         }
       ]
     }
