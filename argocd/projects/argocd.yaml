@@ -1,0 +1,24 @@
+# AppProject argocd — ArgoCD 자신을 배포하는 Application 전용.
+# argo-cd 차트는 CRD·ClusterRole·ClusterRoleBinding까지 만들어 클러스터 범위 권한이 필요하다.
+# infra(플랫폼 워크로드)에 함께 두면 그 프로젝트의 App이 제어면 네임스페이스에도 닿게 되므로 분리한다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"   # argocd App(wave -9)보다 프로젝트가 먼저 존재해야 함
+spec:
+  description: ArgoCD 제어면 자신
+  sourceRepos:
+    - https://argoproj.github.io/argo-helm         # argo-cd 차트
+    - http://192.168.0.167:8929/cgv/cgv-infra.git  # 그 차트에 넘길 values 파일
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: argocd                            # 제어면 한 곳만
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"                                    # CRD·ClusterRole·ClusterRoleBinding
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

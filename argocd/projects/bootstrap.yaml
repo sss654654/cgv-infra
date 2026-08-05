@@ -1,0 +1,29 @@
+# AppProject bootstrap — root Application 전용 울타리.
+# root는 argocd/ 아래를 읽어 AppProject·Application·ApplicationSet만 만든다.
+# 워크로드는 그 App들이 각자의 프로젝트(apps·infra·secrets·argocd) 안에서 만들므로
+# 여기서는 argoproj.io 리소스와 argocd 네임스페이스만 허용한다.
+#
+# root를 default에 두면 sourceRepos·destinations·리소스가 전부 "*"다.
+# GitOps 진입점이 클러스터에서 가장 넓은 권한을 갖게 되므로 전용 프로젝트로 옮긴다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: bootstrap
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"   # 다른 AppProject보다 먼저 존재해야 root가 옮겨탈 수 있음
+spec:
+  description: root Application 전용 — argocd/ 아래 선언만 배달
+  sourceRepos:
+    - http://192.168.0.167:8929/cgv/cgv-infra.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: argocd                   # Application·AppProject·ApplicationSet이 사는 곳
+  clusterResourceWhitelist: []            # cluster-scoped 리소스를 만들지 않는다
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: AppProject
+    - group: argoproj.io
+      kind: Application
+    - group: argoproj.io
+      kind: ApplicationSet

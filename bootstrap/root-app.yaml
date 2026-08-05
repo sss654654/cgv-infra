@@ -6,7 +6,9 @@ metadata:
   name: root
   namespace: argocd
 spec:
-  project: default                         # 부트스트랩 진입점(AppProject·ApplicationSet 생성 허용)
+  # 이 파일은 argocd/ 밖에 있어 root가 배달하지 않는다. project를 바꾼 뒤에는
+  # kubectl apply -f bootstrap/root-app.yaml 로 직접 갱신해야 반영된다.
+  project: bootstrap                       # argocd/projects/bootstrap.yaml — argoproj.io 리소스만 허용
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
