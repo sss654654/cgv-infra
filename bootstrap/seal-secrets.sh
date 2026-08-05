@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SealedSecret 10종 봉인 — docs/시크릿-계약.md 표의 실행본.
+# SealedSecret 10종 일괄 봉인 — docs/시크릿-계약.md 표의 실행본. 클러스터를 처음 세울 때 한 번 돈다.
+# 뒤에 하나씩 더할 때는 seal-one.sh(낱개 추가) — 이 스크립트는 값 5개를 다시 물어 10종을 새로 만든다.
 # 값은 전부 프롬프트로 받는다(-s: 화면·히스토리에 안 남음). 원문 Secret은 파일로 만들지 않고
 # 표준입력으로 kubeseal에 흘린다. 결과 암호문만 workloads/manifests/secrets/에 남는다.
 #
