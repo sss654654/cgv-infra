@@ -8,7 +8,7 @@ metadata:
 spec:
   project: default                         # 부트스트랩 진입점(AppProject·ApplicationSet 생성 허용)
   source:
-    repoURL: https://github.com/sss654654/cgv-infra.git
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
     path: argocd
     directory:

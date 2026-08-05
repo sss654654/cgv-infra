@@ -11,6 +11,7 @@ spec:
   description: CGV 플랫폼 워크로드 (redis · kafka CR · 관측 · metallb · traefik)
   sourceRepos:
     - https://github.com/sss654654/cgv-infra.git
+    - http://192.168.0.167:8929/cgv/cgv-infra.git
     - https://grafana-community.github.io/helm-charts   # 관측 업스트림 차트(멀티소스) 허용
     - https://grafana.github.io/helm-charts
     - https://charts.min.io/

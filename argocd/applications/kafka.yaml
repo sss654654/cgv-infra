@@ -10,7 +10,7 @@ metadata:
 spec:
   project: infra
   source:
-    repoURL: https://github.com/sss654654/cgv-infra.git
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
     path: workloads/manifests/kafka
     directory:

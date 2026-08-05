@@ -22,7 +22,7 @@ spec:
     preserveResourcesOnDeletion: true
   generators:
     - git:
-        repoURL: https://github.com/sss654654/cgv-infra.git
+        repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
         revision: main
         directories:
           - path: workloads/charts/apps/*
@@ -36,7 +36,7 @@ spec:
     spec:
       project: apps
       source:
-        repoURL: https://github.com/sss654654/cgv-infra.git
+        repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
         targetRevision: main
         path: workloads/charts/apps/cgv-app     # 공통 틀
         helm:
