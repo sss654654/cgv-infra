@@ -35,8 +35,11 @@
       [1/9] Calico ... [9/9] argocd
       끝나면 멈춘다. GitOps는 아직 시작 안 함
                 ↓
-③ ★ SealedSecret 10종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
+③ ★ SealedSecret 11종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
       install.sh [5/9]가 세운 컨트롤러의 공개키로 암호화한다
+      초기 10종(seal-secrets.sh) + ArgoCD 저장소 자격 1종(seal-one.sh)
+      ★ 저장소 자격 한 장은 여기서 kubectl apply 까지 해둔다 —
+         그게 없으면 ArgoCD가 저장소를 못 읽어 ④ 다음이 안 돈다
                 ↓
 ④ root-app.sh
       봉인본 개수 확인 → root-app.yaml apply

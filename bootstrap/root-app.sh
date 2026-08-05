@@ -19,11 +19,16 @@ command -v kubectl >/dev/null || { echo "kubectl 없음." >&2; exit 1; }
 kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
   echo "argocd가 없다. install.sh를 먼저 완주해라." >&2; exit 1; }
 
-# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 10종이 커밋돼 있어야 한다.
+# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 11종이 커밋돼 있어야 한다.
+#   초기 10종(seal-secrets.sh 일괄) + ArgoCD 저장소 자격 argocd-repo-cgv-infra(seal-one.sh 낱개).
 # 파일이 부족한 채로 apply하면 argocd는 성공으로 보이는데 워크로드만 조용히 실패한다.
+#
+# ⚠️ argocd-repo-cgv-infra는 이 스크립트 전에 손으로 apply해야 한다. 그 Secret이 없으면
+#    ArgoCD가 저장소를 못 읽어 sealed-secrets App을 sync할 수 없고, 그 App이 배달하는 것이
+#    바로 그 Secret이라 순환에 걸린다(docs/시크릿-계약.md 조건부 항목).
 SECRET_DIR="../workloads/manifests/secrets"
 COUNT=$(find "$SECRET_DIR" -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l)
-EXPECTED=10
+EXPECTED=11
 if [ "$COUNT" -lt "$EXPECTED" ]; then
   echo "SealedSecret 봉인본이 ${COUNT}개다(필요 ${EXPECTED}종). ${SECRET_DIR}/ 확인." >&2
   echo "계약: docs/시크릿-계약.md · 봉인법: workloads/manifests/secrets/README.md" >&2
