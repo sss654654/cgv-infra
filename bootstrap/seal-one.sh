@@ -10,14 +10,15 @@
 #     type=git / url=<repoURL과 글자까지 같게> / username=<deploy token 사용자명> / password=<토큰>
 #
 # 예) 남이 만든 Secret에 키 하나만 얹기 — argocd-secret에 webhook 검증용 비밀:
-#   ./seal-one.sh -a sealedsecrets.bitnami.com/managed=true \
-#                 -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
-#     둘이 하는 일이 다르고 둘 다 필요하다.
-#     managed — 컨트롤러가 이미 있는 Secret을 건드려도 된다는 허가. 없으면
-#               "already exists and is not managed by SealedSecret"으로 거부한다.
-#               대신 소유권을 가져가므로 이 봉인본이 지워지면 Secret도 같이 지워진다.
-#     patch   — 봉인본에 없는 키를 지우지 않는다. 이게 없으면 통째 대체라
-#               argocd-server가 런타임에 써넣은 admin.password·server.secretkey가 사라진다.
+#   ./seal-one.sh -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
+#     patch가 없으면 통째 대체라 argocd-server가 런타임에 써넣은
+#     admin.password·server.secretkey가 사라진다.
+#
+#     ⚠️ 컨트롤러는 이 애노테이션을 봉인본이 아니라 클러스터에 이미 있는 Secret에서 읽는다.
+#        봉인본에만 적으면 "already exists and is not managed by SealedSecret"으로 거부하므로,
+#        대상 Secret이 이미 있는 경우에는 처음 한 번만 손으로 붙여야 한다:
+#          kubectl -n argocd annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true
+#        한 번 통과하면 이후로는 봉인본의 애노테이션이 Secret에 남아 계속 통과한다.
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT="../workloads/manifests/secrets"

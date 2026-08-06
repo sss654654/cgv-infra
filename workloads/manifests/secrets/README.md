@@ -25,11 +25,11 @@ app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/
 여기에 argocd ns 두 장이 더 있어 총 12종이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래 둘은 나중에 더해진 것이라 `seal-one.sh`로 낱개 봉인한다.
 
 - **`argocd-repo-cgv-infra`** — ArgoCD가 저장소를 읽는 자격. **이 한 장만 `root-app.sh` 전에 손으로 `kubectl apply`한다.** 이게 없으면 sealed-secrets App 자체가 sync되지 않아 순환에 걸린다.
-- **`argocd-secret`** — GitLab webhook의 발신자 확인용 키 하나를 **기존 Secret에 얹는다.** argo-cd 차트가 만들고 argocd-server가 `admin.password`·`server.secretkey`를 채워 쓰는 Secret이라, `template.metadata.annotations`에 **애노테이션 둘이 다 실려야 한다.** `managed`가 기존 Secret을 건드릴 허가고(없으면 컨트롤러가 거부), `patch`가 봉인본에 없는 키를 지우지 않게 한다(없으면 통째 대체). ⚠️ `managed`는 소유권을 가져가므로 이 봉인본이 prune되면 Secret도 같이 지워진다.
+- **`argocd-secret`** — GitLab webhook의 발신자 확인용 키 하나를 **기존 Secret에 얹는다.** argo-cd 차트가 만들고 argocd-server가 `admin.password`·`server.secretkey`를 채워 쓰는 Secret이라, `template.metadata.annotations`의 `patch`가 그 키들을 보존한다. **⚠️ 컨트롤러는 이 애노테이션을 봉인본이 아니라 클러스터의 Secret에서 읽으므로, 배달 전에 손으로 한 번 붙여야 한다.** 안 붙이면 `already exists and is not managed by SealedSecret`으로 거부한다.
 
-```
-./seal-one.sh -a sealedsecrets.bitnami.com/managed=true \
-              -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
+```bash
+kubectl -n argocd annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true   # 선행
+./seal-one.sh -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
 ```
 
 **dev = Redis Sentinel HA(auth on)**: `redis-secret`(서버, data ns, 키 `redis-password`) + 클라 비번은 app ns에 `queue-secrets`·`booking-secrets`로 복제(둘 다 키 `REDIS_PASSWORD` — cgv-app은 envFrom만 지원해 키명=env명, cross-ns 불가). 세 시크릿 **같은 값**.
