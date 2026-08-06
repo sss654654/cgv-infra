@@ -10,10 +10,14 @@
 #     type=git / url=<repoURL과 글자까지 같게> / username=<deploy token 사용자명> / password=<토큰>
 #
 # 예) 남이 만든 Secret에 키 하나만 얹기 — argocd-secret에 webhook 검증용 비밀:
-#   ./seal-one.sh -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
-#     기본 동작은 통째 대체라, 이 애노테이션이 없으면 argocd-server가 런타임에 써넣은
-#     admin.password·server.secretkey가 지워진다. patch는 봉인본에 없는 키를 건드리지 않는다.
-#     소유권은 가져가지 않으므로 이 봉인본을 지워도 얹힌 키는 남는다(지우려면 손으로).
+#   ./seal-one.sh -a sealedsecrets.bitnami.com/managed=true \
+#                 -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
+#     둘이 하는 일이 다르고 둘 다 필요하다.
+#     managed — 컨트롤러가 이미 있는 Secret을 건드려도 된다는 허가. 없으면
+#               "already exists and is not managed by SealedSecret"으로 거부한다.
+#               대신 소유권을 가져가므로 이 봉인본이 지워지면 Secret도 같이 지워진다.
+#     patch   — 봉인본에 없는 키를 지우지 않는다. 이게 없으면 통째 대체라
+#               argocd-server가 런타임에 써넣은 admin.password·server.secretkey가 사라진다.
 set -euo pipefail
 cd "$(dirname "$0")"
 OUT="../workloads/manifests/secrets"
