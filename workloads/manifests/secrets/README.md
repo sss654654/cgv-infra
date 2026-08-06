@@ -1,6 +1,6 @@
 # SealedSecret 봉인 (배포 전 필수)
 
-sealed-secrets 컨트롤러 up(install.sh [5/10]) 후, `docs/시크릿-계약.md` 표대로 각 Secret을 kubeseal로 봉인해
+sealed-secrets 컨트롤러 up(install.sh [5/9]) 후, `docs/시크릿-계약.md` 표대로 각 Secret을 kubeseal로 봉인해
 이 폴더에 `<name>.yaml`로 저장. `argocd/applications/sealed-secrets.yaml`이 sync-wave -2로 배달(앱보다 먼저).
 
 예 (mysql-secret):
@@ -22,7 +22,14 @@ app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/
 
 필요 목록(dev HA, 10종): `mysql-secret`·`redis-secret`(data) · `booking-secrets`·`queue-secrets`(app) · `minio-root-secret`·`minio-lgtm-user`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
 
-여기에 **`argocd-repo-cgv-infra`(argocd ns)** 한 장이 더 있어 총 11종이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 이 한 장은 나중에 더해진 것이라 `seal-one.sh`로 낱개 봉인한다. **이 한 장만 `root-app.sh` 전에 손으로 `kubectl apply`한다** — ArgoCD가 저장소를 읽는 자격이라, 이게 없으면 sealed-secrets App 자체가 sync되지 않아 순환에 걸린다.
+여기에 argocd ns 두 장이 더 있어 총 12종이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래 둘은 나중에 더해진 것이라 `seal-one.sh`로 낱개 봉인한다.
+
+- **`argocd-repo-cgv-infra`** — ArgoCD가 저장소를 읽는 자격. **이 한 장만 `root-app.sh` 전에 손으로 `kubectl apply`한다.** 이게 없으면 sealed-secrets App 자체가 sync되지 않아 순환에 걸린다.
+- **`argocd-secret`** — GitLab webhook의 발신자 확인용 키 하나를 **기존 Secret에 얹는다.** 이름이 같아 전체를 소유하는 것처럼 보이지만 아니다. argo-cd 차트가 만들고 argocd-server가 `admin.password`·`server.secretkey`를 채워 쓰는 Secret이라, `template.metadata.annotations`의 `sealedsecrets.bitnami.com/patch: "true"`가 그 키들을 보존한다. 봉인 명령은 아래처럼 `-a`로 그 애노테이션을 준다.
+
+```
+./seal-one.sh -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
+```
 
 **dev = Redis Sentinel HA(auth on)**: `redis-secret`(서버, data ns, 키 `redis-password`) + 클라 비번은 app ns에 `queue-secrets`·`booking-secrets`로 복제(둘 다 키 `REDIS_PASSWORD` — cgv-app은 envFrom만 지원해 키명=env명, cross-ns 불가). 세 시크릿 **같은 값**.
 **mysql-secret도 GitOps 배달**: sealed-secrets App(wave -2)이 배달 → mysql App(wave -1)이 그 뒤 sync. 수동 apply 게이트 없음. 단 root-app 전에 여기 봉인·커밋 선행 필수(컨트롤러[7] up 후 kubeseal).

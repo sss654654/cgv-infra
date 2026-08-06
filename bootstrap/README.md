@@ -35,9 +35,11 @@
       [1/9] Calico ... [9/9] argocd
       끝나면 멈춘다. GitOps는 아직 시작 안 함
                 ↓
-③ ★ SealedSecret 11종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
+③ ★ SealedSecret 12종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
       install.sh [5/9]가 세운 컨트롤러의 공개키로 암호화한다
-      초기 10종(seal-secrets.sh) + ArgoCD 저장소 자격 1종(seal-one.sh)
+      초기 10종(seal-secrets.sh) + 낱개 2종(seal-one.sh)
+        argocd-repo-cgv-infra  ArgoCD 저장소 자격
+        argocd-secret          webhook 발신자 확인용 키를 기존 Secret 에 얹는다
       ★ 저장소 자격 한 장은 여기서 kubectl apply 까지 해둔다 —
          그게 없으면 ArgoCD가 저장소를 못 읽어 ④ 다음이 안 돈다
                 ↓
@@ -188,7 +190,7 @@ kubectl create secret generic mysql-secret -n data \
 | | 언제 | 무엇을 |
 |---|---|---|
 | `seal-secrets.sh` | 클러스터를 처음 세울 때 한 번 | 값 5개를 물어 **10종을 일괄** 생성. 값이 서로 묶여 있어 한꺼번에 만들어야 계약이 맞는다 |
-| `seal-one.sh` | 그 뒤에 하나가 더 필요할 때 | 이름·네임스페이스·라벨을 받아 **낱개 하나**만 봉인. 기존 10종은 건드리지 않는다 |
+| `seal-one.sh` | 그 뒤에 하나가 더 필요할 때 | 이름·네임스페이스·라벨과 `-a` 애노테이션을 받아 **낱개 하나**만 봉인. 기존 10종은 건드리지 않는다. 남이 만든 Secret에 키만 얹을 때는 `-a sealedsecrets.bitnami.com/patch=true` |
 
 기존 봉인본에 하나를 더하려고 `seal-secrets.sh`를 다시 돌리면 값 5개를 전부 다시 입력해야 하고, 그 값이 지금 클러스터에 떠 있는 것과 하나라도 다르면 해당 워크로드가 붙지 못한다. 그래서 추가는 `seal-one.sh`로 한다.
 
