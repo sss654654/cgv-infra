@@ -28,6 +28,17 @@ controller:
     requests: { cpu: 100m, memory: 384Mi }
     limits:   { cpu: 500m, memory: 1Gi }
 server:
+  # 이름으로 접근한다 — Traefik이 Host 헤더를 보고 이 서비스로 보낸다.
+  # 이걸 켜기 전에는 port-forward가 유일한 경로였고, 외부에서 오는 요청(webhook)은 닿을 수 없었다.
+  # tls: false — 차트가 argocd-server-tls 시크릿을 참조하지 않게 한다. 인증서를 아직 발급하지 않았고,
+  #   configs.params의 server.insecure: true와 짝이라 Traefik과 argocd-server 사이도 평문이다.
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hostname: argocd.cgv.lan
+    path: /
+    pathType: Prefix
+    tls: false
   resources:
     requests: { cpu: 25m, memory: 100Mi }
     limits:   { cpu: 100m, memory: 192Mi }

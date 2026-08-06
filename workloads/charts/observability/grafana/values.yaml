@@ -15,8 +15,15 @@ service:
   enabled: true
   type: ClusterIP
   port: 80
+# 이름으로 접근한다 — Traefik이 Host 헤더를 보고 이 서비스로 보낸다.
+# hosts가 리스트인 것은 이 차트 스키마다(argo-cd 차트는 hostname 문자열 하나를 받는다 — 옮겨 쓰면 무시된다).
 ingress:
-  enabled: false
+  enabled: true
+  ingressClassName: traefik
+  path: /
+  pathType: Prefix
+  hosts:
+    - grafana.cgv.lan
 persistence:
   enabled: false                     # 의도적 비영속 — 대시보드·데이터소스 전부 코드로 관리해 sqlite에 보존할 상태가 없음.
                                      #   재시작하면 코드에서 재프로비저닝. (UI에서 손으로 만든 대시보드는 날아간다 — as-code 강제 장치.)
