@@ -2,7 +2,7 @@
 # 근거 = cgv-onprem/booking (application.yml PORT 8091·actuator probes / Dockerfile nonroot 1001 / pom Flyway 없음).
 
 image:
-  repository: registry.cgv.local/booking
+  repository: 192.168.0.167:5050/cgv/cgv-onprem/booking
 
 containerPort: 8091
 

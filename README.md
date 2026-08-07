@@ -155,7 +155,7 @@ cgv-infra/
 │   ├── charts/             apps/(cgv-app 틀 + queue·booking·frontend) · data/(cgv-mysql·cgv-redis 래퍼)
 │   │                       · observability/(loki·mimir·tempo·grafana·alloy·minio·ksm·node-exporter) · platform/(metallb·traefik)
 │   ├── environments/       dev(실물)·stg·prd(골격)
-│   └── manifests/          kafka/(CR) · metallb/(pool CR) · secrets/(SealedSecret 봉인 12종)
+│   └── manifests/          kafka/(CR) · metallb/(pool CR) · secrets/(SealedSecret 봉인 13종)
 │                           · dashboards/(Grafana 대시보드 ConfigMap)
 └── docs/               시크릿-계약 · 코드-반영사항
 ```
@@ -224,7 +224,7 @@ syncPolicy:
 ① cluster/ 스크립트 (SSH, 노드에서)   → k3s 3노드 조인 (CNI 없어 NotReady)
 ② bootstrap/install.sh (9단계)        → Calico(→Ready)→namespaces→storage→cert-manager→sealed-secrets
                                           →CRD→control-plane 수집→Strimzi→argocd
-③ SealedSecret 12종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
+③ SealedSecret 13종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
                                           그중 ArgoCD 저장소 자격 한 장은 apply까지 (없으면 ⑤ 이후가 안 돈다)
 ④ bootstrap/root-app.sh               → 봉인본 개수 확인 후 root-app apply. 여기서 손 끝
 ⑤ root-app → argocd/ recurse          → AppProject·ApplicationSet·Application 생성
@@ -350,7 +350,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 **되어 있는 것**
 
 - **PodSecurity** — 위 [k3s 클러스터 아키텍처](#k3s-클러스터-아키텍처)의 ns별 표대로 집행한다. 호스트 접근이 필요한 node-exporter만 별도 ns로 격리해 나머지를 baseline 이상으로 유지한다.
-- **SealedSecret**: 암호는 kubeseal로 봉인, 암호문만 Git. 초기 10종([docs/시크릿-계약](docs/시크릿-계약.md), dev HA — redis auth·minio-lgtm-user 포함) + ArgoCD 저장소 자격 `argocd-repo-cgv-infra` + webhook 발신자 확인용 `argocd-secret` = **현재 12개**. 마지막 한 장은 기존 Secret에 키만 얹는 `patch` 방식이다. `root-app.sh`가 봉인본 개수를 세어 부족하면 GitOps 인계를 막는다.
+- **SealedSecret**: 암호는 kubeseal로 봉인, 암호문만 Git. 초기 10종([docs/시크릿-계약](docs/시크릿-계약.md), dev HA — redis auth·minio-lgtm-user 포함) + 나중에 낱개로 더한 셋(`argocd-repo-cgv-infra` 저장소 자격 · `argocd-secret` webhook 발신자 확인 · `gitlab-registry` 이미지 pull 자격) = **현재 13개**. `argocd-secret`은 기존 Secret에 키만 얹는 `patch` 방식이고, `gitlab-registry`는 타입이 `dockerconfigjson`이라 만드는 명령이 다르다. `root-app.sh`가 봉인본 개수를 세어 부족하면 GitOps 인계를 막는다.
 - **저장소 자격도 평문으로 두지 않는다** — GitLab deploy token은 ArgoCD가 저장소를 읽는 데 필요한데, 그 값을 Git에 넣으면 저장소를 읽을 자격이 저장소 안에 있게 된다. 다른 암호와 같은 경로(SealedSecret)로 배달한다.
 - **etcd 저장 암호화**: `secrets-encryption: true` — 컨트롤러가 푼 Secret이 etcd에 평문으로 앉지 않게(외장 SSD 반출 대비).
 - **RBAC 축소**: loki·alloy는 차트 기본값이 SA에 전 네임스페이스 `secrets` 읽기 권한을 붙인다. loki는 룰 사이드카를 끄고, alloy는 기본 rules에서 `configmaps`·`secrets`를 뺀 목록을 명시해 그 경로를 닫았다.
@@ -381,7 +381,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 | 2 | 각 노드 OS prep(정적 IP·SSH키·**데이터 디스크 10장 mkfs + `/mnt/disks/<용도>` 마운트·fstab**·[cluster/README](bootstrap/cluster/README.md)) | ✅ 완료 (재부팅 검증 통과) |
 | 3 | `cluster/01-server-init.sh`(k3s-1) → `02-server-join.sh`(k3s-2·3) | ✅ 완료 (v1.36.2, etcd 3-member, CNI 전이라 NotReady) |
 | 4 | `bootstrap/install.sh` — Calico부터 argocd까지. 여기까지는 몇 번을 다시 돌려도 안전하다(전부 멱등) | ✅ 완료 |
-| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](workloads/manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 ArgoCD 저장소 자격·webhook 비밀 = 12종 | ✅ 완료 |
+| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](workloads/manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 저장소 자격·webhook 비밀·이미지 pull 자격 = 13종 | ✅ 완료 |
 | 6 | `bootstrap/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ✅ 완료 |
 | 7 | `kubectl -n argocd get applications -w` 로 sync 확인 | ✅ 완료 (플랫폼·관측·미들웨어 수렴. 자원값은 실측으로 재조정) |
 | 8 | **GitOps 원본을 GitLab으로** — 저장소 이전 · deploy token 봉인 · `repoURL` 전환 · AppProject 울타리 | ✅ 완료 |

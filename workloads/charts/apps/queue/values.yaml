@@ -2,7 +2,10 @@
 # 근거 = cgv-onprem/queue-go (config.go PORT 8090 / handler/health.go / Dockerfile nonroot).
 
 image:
-  repository: registry.cgv.local/queue-go   # env가 tag 지정
+  # GitLab 내장 레지스트리. 경로는 그룹/프로젝트/이미지 구조를 그대로 따른다.
+  #   주소를 이름이 아니라 IP로 둔 것은 GitLab external_url과 같게 맞춘 것이고,
+  #   대역이 바뀌는 시점에 둘을 함께 옮긴다.
+  repository: 192.168.0.167:5050/cgv/cgv-onprem/queue-go   # env가 tag 지정
 
 containerPort: 8090        # config.go PORT 기본 8090
 

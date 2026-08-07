@@ -1,0 +1,25 @@
+# k3s(containerd) 레지스트리 설정 — 3노드 동일 (/etc/rancher/k3s/registries.yaml).
+#
+# ⚠️ 이 파일은 이미 설치된 노드에 자동 반영되지 않는다. 세 노드에 복사하고
+#    `sudo systemctl restart k3s`를 한 대씩 순차로 해야 적용된다.
+#    (동시에 재시작하면 3-server embedded etcd의 쿼럼이 끊긴다.)
+#
+# 왜 필요한가: containerd는 레지스트리를 HTTPS로 가정한다. GitLab 내장 레지스트리를
+# 평문(http)으로 열었으므로, 이 파일이 없으면 이미지 경로와 태그를 다 맞게 고쳐도
+# 파드가 뜨지 않는다 — ImagePullBackOff의 사유만
+# "no such host"에서 "http: server gave HTTP response to HTTPS client"로 바뀐다.
+#
+# 평문으로 둔 이유: TLS를 붙이려면 인증서를 만들어 노드 3대와 데스크탑 Docker에
+# CA를 심어야 한다. 네트워크를 재구성하는 편에서 TLS를 전면 도입할 때 함께 한다.
+# 그때까지는 이미지가 평문으로 오가므로 같은 망에서 내용이 읽힌다.
+#
+# 주소를 이름이 아니라 IP로 둔 것은 GitLab external_url과 같게 맞춘 것이다.
+# 대역이 바뀌는 시점에 둘을 함께 옮기고, 그때 차트의 image.repository도 같이 바뀐다.
+#
+# 인증은 여기 적지 않는다. 프로젝트가 private이라 pull에 자격이 필요한데,
+# 그 자격은 SealedSecret(dockerconfigjson)으로 배달해 파드의 imagePullSecrets가 쓴다.
+# 이 파일에 평문으로 적으면 노드 디스크에 자격이 그대로 남는다.
+mirrors:
+  "192.168.0.167:5050":
+    endpoint:
+      - "http://192.168.0.167:5050"

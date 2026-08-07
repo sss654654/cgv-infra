@@ -22,7 +22,7 @@ app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/
 
 필요 목록(dev HA, 10종): `mysql-secret`·`redis-secret`(data) · `booking-secrets`·`queue-secrets`(app) · `minio-root-secret`·`minio-lgtm-user`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
 
-여기에 argocd ns 두 장이 더 있어 총 12종이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래 둘은 나중에 더해진 것이라 `seal-one.sh`로 낱개 봉인한다.
+여기에 세 장이 더 있어 총 13종이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래 셋은 나중에 더해진 것이라 낱개로 만든다.
 
 - **`argocd-repo-cgv-infra`** — ArgoCD가 저장소를 읽는 자격. **이 한 장만 `root-app.sh` 전에 손으로 `kubectl apply`한다.** 이게 없으면 sealed-secrets App 자체가 sync되지 않아 순환에 걸린다.
 - **`argocd-secret`** — GitLab webhook의 발신자 확인용 키 하나를 **기존 Secret에 얹는다.** argo-cd 차트가 만들고 argocd-server가 `admin.password`·`server.secretkey`를 채워 쓰는 Secret이라, `template.metadata.annotations`의 `patch`가 그 키들을 보존한다. **⚠️ 컨트롤러는 이 애노테이션을 봉인본이 아니라 클러스터의 Secret에서 읽으므로, 배달 전에 손으로 한 번 붙여야 한다.** 안 붙이면 `already exists and is not managed by SealedSecret`으로 거부한다.
@@ -30,6 +30,19 @@ app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/
 ```bash
 kubectl -n argocd annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true   # 선행
 ./seal-one.sh -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
+```
+
+- **`gitlab-registry`** — 노드가 GitLab 레지스트리에서 이미지를 받아오는 자격(app ns). 프로젝트가 private이라 pull에도 자격이 필요하다. **타입이 `kubernetes.io/dockerconfigjson`이라 `seal-one.sh`(generic 전용)로는 못 만든다.** 자격은 cgv-onprem 프로젝트의 deploy token이고 `read_registry`만 준다 — 노드는 받아오기만 한다. `--docker-server`는 차트의 `image.repository` 앞부분과 **글자까지 같아야** kubelet이 이 Secret을 그 레지스트리에 매칭한다.
+
+```bash
+kubectl create secret docker-registry gitlab-registry -n app \
+  --docker-server=192.168.0.167:5050 \
+  --docker-username='<deploy token 사용자명>' \
+  --docker-password='<토큰>' \
+  --dry-run=client -o yaml \
+| kubeseal --format yaml \
+    --controller-name sealed-secrets --controller-namespace kube-system \
+> gitlab-registry.yaml
 ```
 
 **dev = Redis Sentinel HA(auth on)**: `redis-secret`(서버, data ns, 키 `redis-password`) + 클라 비번은 app ns에 `queue-secrets`·`booking-secrets`로 복제(둘 다 키 `REDIS_PASSWORD` — cgv-app은 envFrom만 지원해 키명=env명, cross-ns 불가). 세 시크릿 **같은 값**.

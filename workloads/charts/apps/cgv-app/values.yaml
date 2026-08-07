@@ -9,7 +9,12 @@ image:
   tag: ""                   # env가 지정 (예: dev)
   pullPolicy: IfNotPresent
 
-imagePullSecrets: []
+# GitLab 레지스트리는 프로젝트 가시성을 따라 private이라 pull에도 자격이 필요하다.
+#   SealedSecret(gitlab-registry, app ns, kubernetes.io/dockerconfigjson)이 배달한다.
+#   자격은 read_registry만 가진 deploy token — 노드는 받아오기만 한다.
+#   Secret은 파드와 같은 네임스페이스에 있어야 kubelet이 읽는다.
+imagePullSecrets:
+  - name: gitlab-registry
 
 # 앱 리슨 포트. 프로브·Service가 이름 http로 참조.
 containerPort: 8080

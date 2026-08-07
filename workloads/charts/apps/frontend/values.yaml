@@ -2,7 +2,7 @@
 # 근거 = cgv-onprem/frontend (nginx.conf 게이트웨이 → k3s는 Traefik Ingress). 이미지=nginx-unprivileged(8080, uid 101).
 
 image:
-  repository: registry.cgv.local/frontend
+  repository: 192.168.0.167:5050/cgv/cgv-onprem/frontend
 
 containerPort: 8080        # nginx-unprivileged 기본 리슨
 

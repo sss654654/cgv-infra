@@ -19,9 +19,12 @@ command -v kubectl >/dev/null || { echo "kubectl 없음." >&2; exit 1; }
 kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
   echo "argocd가 없다. install.sh를 먼저 완주해라." >&2; exit 1; }
 
-# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 12종이 커밋돼 있어야 한다.
-#   초기 10종(seal-secrets.sh 일괄) + seal-one.sh로 낱개 봉인한 둘:
-#   ArgoCD 저장소 자격 argocd-repo-cgv-infra, webhook 검증용 키를 얹는 argocd-secret.
+# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 13종이 커밋돼 있어야 한다.
+#   초기 10종(seal-secrets.sh 일괄) + 나중에 낱개로 더한 셋:
+#   argocd-repo-cgv-infra(ArgoCD가 저장소를 읽는 자격),
+#   argocd-secret(webhook 발신자 확인 키를 기존 Secret에 얹는다),
+#   gitlab-registry(노드가 이미지를 받아오는 자격. dockerconfigjson이라 seal-one.sh가 아니라
+#                   kubectl create secret docker-registry로 만든다).
 # 파일이 부족한 채로 apply하면 argocd는 성공으로 보이는데 워크로드만 조용히 실패한다.
 #
 # ⚠️ argocd-repo-cgv-infra는 이 스크립트 전에 손으로 apply해야 한다. 그 Secret이 없으면
@@ -29,7 +32,7 @@ kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
 #    바로 그 Secret이라 순환에 걸린다(docs/시크릿-계약.md 조건부 항목).
 SECRET_DIR="../workloads/manifests/secrets"
 COUNT=$(find "$SECRET_DIR" -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l)
-EXPECTED=12
+EXPECTED=13
 if [ "$COUNT" -lt "$EXPECTED" ]; then
   echo "SealedSecret 봉인본이 ${COUNT}개다(필요 ${EXPECTED}종). ${SECRET_DIR}/ 확인." >&2
   echo "계약: docs/시크릿-계약.md · 봉인법: workloads/manifests/secrets/README.md" >&2
@@ -44,6 +47,16 @@ if git -C .. rev-parse --git-dir >/dev/null 2>&1; then
     echo "경고: ${SECRET_DIR}에 커밋되지 않은 변경이 있다. argocd는 원격 repo를 읽으므로 push까지 해야 반영된다." >&2
   fi
 fi
+
+# root Application이 참조하는 AppProject를 먼저 세운다.
+#   root-app.yaml은 project: bootstrap을 참조하는데, 그 AppProject를 만드는 매니페스트가
+#   root가 관리하는 argocd/ 트리 안에 있다(argocd/projects/bootstrap.yaml).
+#   ArgoCD는 참조한 AppProject가 없으면 Application을 sync하지 않고 멈추므로,
+#   빈 클러스터에서는 root가 자기 프로젝트를 스스로 만들지 못해 그 자리에서 정지한다.
+#   저장소 자격(argocd-repo-cgv-infra)과 같은 유형의 순환이라 같은 방식으로 푼다 —
+#   한 번만 손으로 세우고, 그 뒤로는 GitOps가 같은 것을 관리한다.
+echo "AppProject bootstrap 선행 apply (root가 참조하는 프로젝트)."
+kubectl apply -f ../argocd/projects/bootstrap.yaml
 
 echo "root-app apply → argocd/ 하위(AppProject·ApplicationSet·Application)를 argocd가 인계한다."
 kubectl apply -f root-app.yaml

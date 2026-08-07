@@ -35,11 +35,13 @@
       [1/9] Calico ... [9/9] argocd
       끝나면 멈춘다. GitOps는 아직 시작 안 함
                 ↓
-③ ★ SealedSecret 12종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
+③ ★ SealedSecret 13종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
       install.sh [5/9]가 세운 컨트롤러의 공개키로 암호화한다
-      초기 10종(seal-secrets.sh) + 낱개 2종(seal-one.sh)
-        argocd-repo-cgv-infra  ArgoCD 저장소 자격
-        argocd-secret          webhook 발신자 확인용 키를 기존 Secret 에 얹는다
+      초기 10종(seal-secrets.sh) + 낱개 3종
+        argocd-repo-cgv-infra  ArgoCD 저장소 자격                 seal-one.sh
+        argocd-secret          webhook 발신자 확인용 키를 기존 Secret 에 얹는다   seal-one.sh
+        gitlab-registry        노드가 이미지를 받아오는 자격        dockerconfigjson 이라
+                               kubectl create secret docker-registry 로 만든다
       ★ 저장소 자격 한 장은 여기서 kubectl apply 까지 해둔다 —
          그게 없으면 ArgoCD가 저장소를 못 읽어 ④ 다음이 안 돈다
                 ↓
