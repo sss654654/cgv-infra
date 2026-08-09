@@ -15,3 +15,23 @@ config:
       insecure: true
       # read_registry 전용 deploy token(dockerconfigjson 봉인본). 노드 pull 자격과 주체가 달라 가른다.
       credentials: pullsecret:argocd/image-updater-registry
+
+# 이 버전(v1.2)은 컨트롤러 방식이다 — ImageUpdater CR이 있어야 일을 시작한다.
+# CR 없이는 annotation이 붙어 있어도 아무것도 처리하지 않는다(로그: "No ImageUpdater CRs to process").
+# useAnnotations: 처리 대상 선정만 CR이 하고, 무엇을 어떻게 갱신할지는
+#   각 Application의 argocd-image-updater.argoproj.io/* annotation에서 읽는다
+#   (applicationsets/apps.yaml 템플릿에 있는 그것).
+extraObjects:
+  - apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+    kind: ImageUpdater
+    metadata:
+      name: dev-apps
+      namespace: argocd
+    spec:
+      applicationRefs:
+        - namePattern: queue
+          useAnnotations: true
+        - namePattern: booking
+          useAnnotations: true
+        - namePattern: frontend
+          useAnnotations: true
