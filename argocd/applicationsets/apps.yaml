@@ -45,9 +45,11 @@ spec:
         # 발견한 태그를 어느 헬름 값에 쓸지 — environments/dev 값 파일의 image.tag 한 줄.
         argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
         argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
-        # 되쓰기 = git 커밋. 자격은 image-updater-git 봉인본(write_repository 토큰).
-        #   main이 protected라 그 토큰(Maintainer)만 push 예외를 받는다.
-        argocd-image-updater.argoproj.io/write-back-method: 'git:secret:argocd/image-updater-git'
+        # 되쓰기 = git 커밋. 자격은 ArgoCD의 저장소 자격(argocd-repo-cgv-infra)을 빌린다(repocreds).
+        #   전용 시크릿(git:secret:) 경로는 updater 코드가 https 저장소만 받아 평문 http에서 죽는다
+        #   — repocreds 경로는 스킴을 안 가린다. 그래서 저장소 자격에 write_repository 토큰이 들어
+        #   있다(읽기·쓰기 통합). TLS 도입 때 전용 시크릿 분리로 되돌린다.
+        argocd-image-updater.argoproj.io/write-back-method: git
         argocd-image-updater.argoproj.io/git-branch: main
         # 앞의 / = 저장소 루트 기준. 이 App이 helm 값을 읽는 그 파일에 그대로 쓴다.
         argocd-image-updater.argoproj.io/write-back-target: 'helmvalues:/workloads/environments/dev/values-{{.path.basename}}.yaml'
