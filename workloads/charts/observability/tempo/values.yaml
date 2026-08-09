@@ -12,8 +12,9 @@ tempo:
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials
-  resources:                          # 시작값. [렌더 확인: 업스트림에 resources 2곳(tempo.resources/top-level) — 적용처 검증]
-    requests: { cpu: 100m, memory: 256Mi }
+  resources:                          # [렌더 확인: 업스트림에 resources 2곳(tempo.resources/top-level) — 적용처 검증]
+    # memory request 128Mi: 실측 54Mi 미만(2026-08-09, 트레이스 유입 저부하) + 여유. 스파이크는 limit이 받는다.
+    requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
   storage:
     trace:

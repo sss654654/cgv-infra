@@ -71,11 +71,13 @@ ingester:
   # 최근 시리즈를 메모리에 적재 — 메모리 사용이 가장 큼. 상한 30만과 짝으로 잡은 값이다.
   #   limit 2Gi   : 30만 × 실측 약 4.2KiB ≈ 1.2GiB. 1Gi로는 25만에서 이미 닿아 OOMKilled 된다.
   #                 limit은 스케줄링에 쓰이지 않아 올려도 다른 파드를 밀어내지 않는다.
-  #   request 1Gi : 실사용이 request(512Mi)보다 크면 그 초과분 때문에 eviction 우선순위 앞쪽에 놓인다.
-  #                 상태(최근 구간 + WAL)를 들고 있는 컴포넌트라 그건 피한다.
-  #   ⚠️ kube-reserved를 2Gi로 올려 노드에 반영하면 노드당 할당 가능량이 1Gi 줄어든다.
-  #      앱 3종이 실제로 뜬 뒤 실사용을 다시 재서 request 전반을 함께 재조정한다.
-  resources: { requests: { cpu: 250m, memory: 1Gi }, limits: { cpu: 1000m, memory: 2Gi } }
+  #   request 768Mi : 실측 410~510Mi(2026-08-09, 시리즈 약 18만) + 여유. request가 실사용보다
+  #                 크게 유지되는 한 eviction 랭킹에서 안전한 쪽에 남는다.
+  #                 kube-reserved 2Gi가 노드에 반영되며 할당 가능량이 5081Mi로 줄었고,
+  #                 1Gi로는 k3s-2에 자리가 없어 ingester-1이 Pending에 걸렸다(로컬 PV라 노드 고정).
+  #                 만재(30만, 약 1.2Gi)에 접근하면 이 값이 실사용 아래로 떨어진다 —
+  #                 13부 부하 실측에서 시리즈 수와 함께 재조정한다.
+  resources: { requests: { cpu: 250m, memory: 768Mi }, limits: { cpu: 1000m, memory: 2Gi } }
 querier:
   replicas: 1
   # 256Mi로 잡았다가 OOMKilled 42회. query-frontend가 쿼리를 16조각으로 쪼개 동시에 보내므로
@@ -100,8 +102,10 @@ compactor:
   persistentVolume: { enabled: false }         # emptyDir — 병합 스크래치(산출물은 MinIO로). dedup·병합·retention 적용 주체라 컴포넌트는 필수
   # ephemeral-storage: 차트가 compactor emptyDir에 sizeLimit을 못 넣어(emptyDir:{} 고정) 대신 쓴다.
   #   limit 초과 시 kubelet이 파드를 퇴거 → 병합은 다음 주기에 다시 돈다(산출물 truth는 MinIO라 무손실).
+  # memory request 192Mi: 실측 54Mi 미만(2026-08-09, 보유 18만 시리즈 병합 운전 중) + 여유.
+  #   병합 스파이크는 limit 1Gi가 받는다 — limit은 스케줄링에 안 쓰여 자리를 안 잡아먹는다.
   resources:
-    requests: { cpu: 250m, memory: 512Mi, ephemeral-storage: 1Gi }
+    requests: { cpu: 250m, memory: 192Mi, ephemeral-storage: 1Gi }
     limits:   { cpu: 1000m, memory: 1Gi, ephemeral-storage: 5Gi }   # 블록 병합 CPU·디스크 스파이크
 ruler:
   replicas: 1                                  # recording rule 자리 — rule은 이후 실측 후 채움
