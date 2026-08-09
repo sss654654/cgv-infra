@@ -2,25 +2,22 @@
 # 리소스는 실측 전 추정(노드설계 기준). 부하테스트 후 확정.
 
 image:
-  tag: dev-15-17dcc495
-
+  tag: dev-20-de670880
+  repository: 192.168.0.167:5050/cgv/cgv-onprem/queue-go
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling). HPA on이면 차트가 replicas 필드 생략.
-
 resources:
   # 메모리는 request = limit. 앱배포설계-queue-go §1-D 결정:
   #   ① Go 상주 메모리가 고정적이라 버스트할 이유가 없다(여유 칸 = 예약 낭비)
   #   ② 초과의 결말이 OOMKill이라 상한이 하나여야 명확하다
   #   ③ 예약=최대라 노드 bin-pack 계산이 정확해지고, 퇴거 랭킹(request 초과분 기준)에서 항상 안전한 쪽에 선다
   # CPU만 버스트한다(request 250m = HPA 스케일 기준, limit 500m).
-  requests: { cpu: 250m, memory: 64Mi }
-  limits:   { cpu: 500m, memory: 64Mi }
-
-autoscaling:                              # HPA 켬. max 4 = Kafka 파티션 4와 짝(그 이상은 소비 병렬성 증가 없음)
+  requests: {cpu: 250m, memory: 64Mi}
+  limits: {cpu: 500m, memory: 64Mi}
+autoscaling: # HPA 켬. max 4 = Kafka 파티션 4와 짝(그 이상은 소비 병렬성 증가 없음)
   enabled: true
-  minReplicas: 2                          # 단일장애 대비 상시 2
-  maxReplicas: 4                          # 차트 기본 6과 다름 — 명시 필수
-  targetCPUUtilizationPercentage: 70      # 실사용 175m(250m×70%) 넘으면 스케일
-
+  minReplicas: 2 # 단일장애 대비 상시 2
+  maxReplicas: 4 # 차트 기본 6과 다름 — 명시 필수
+  targetCPUUtilizationPercentage: 70 # 실사용 175m(250m×70%) 넘으면 스케일
 # 연결 대상 서비스명은 미들웨어 차트 배포 후 확정(placeholder). MAX_SESSIONS/SESSION_TIMEOUT=데모값.
 env:
   PORT: "8090"
