@@ -1,6 +1,6 @@
 # frontend dev 환경값. 정적 서버라 가벼움.
 image:
-  tag: dev
+  tag: dev-15-17dcc495
 
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling).
 
