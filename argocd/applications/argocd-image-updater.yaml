@@ -1,0 +1,33 @@
+# 이미지 → git 되쓰기 봇. 레지스트리에서 새 태그를 발견하면 environments/dev의 image.tag를
+# main에 커밋한다. ArgoCD는 그 커밋을 여느 커밋처럼 sync한다 — 배포 트리거는 끝까지 git이다.
+# 무엇을 감시하고 어디에 되쓸지는 여기가 아니라 applicationsets/apps.yaml의 annotation에 있다.
+#
+# platform ApplicationSet에 안 태운 이유: 그 템플릿은 대상 네임스페이스에 PodSecurity 라벨을
+# 무조건 건다(managedNamespaceMetadata). 이 App의 대상은 이미 존재하는 argocd 네임스페이스라,
+# 라벨이 걸리면 ArgoCD 본체까지 enforce 대상이 된다. 직속 App은 네임스페이스를 건드리지 않는다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-image-updater
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # 시크릿(-2)·제어면(-9) 뒤면 충분. 감시 대상인 앱(3)과의 순서는 무관 — 폴링이라 늦게 떠도 따라잡는다
+spec:
+  project: argocd
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argocd-image-updater
+      targetRevision: 1.2.4
+      helm:
+        valueFiles:
+          - $values/workloads/charts/platform/argocd-image-updater/values.yaml
+    - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+      targetRevision: main
+      ref: values                       # 차트를 렌더할 때 값만 제공. 이 소스 자체는 배포하지 않는다
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -33,6 +33,24 @@ spec:
       name: '{{.path.basename}}'          # queue / booking / frontend
       annotations:
         argocd.argoproj.io/sync-wave: "3"   # 미들웨어(-1)·관측(0~1) 뒤에 앱
+        # ── image updater — 이 App의 이미지를 감시하고 새 태그를 git에 되쓴다 ──
+        # 이미지 이름: 레지스트리 경로는 cgv-onprem의 디렉터리명을 따르는데 queue만 디렉터리가
+        #   queue-go라 App 이름(queue)과 어긋난다. 그 하나만 조건문으로 맞춘다.
+        argocd-image-updater.argoproj.io/image-list: 'app=192.168.0.167:5050/cgv/cgv-onprem/{{ if eq .path.basename "queue" }}queue-go{{ else }}{{ .path.basename }}{{ end }}'
+        # newest-build: 빌드 시각 기준 최신. 태그(dev-<파이프라인번호>-<해시>)가 사전순 정렬이
+        #   안 되는 형태라(dev-9 > dev-15) 시각으로 고른다.
+        argocd-image-updater.argoproj.io/app.update-strategy: newest-build
+        # dev 계열만 후보로. MR 파이프라인의 ci-pipeline-* 나 손으로 올린 태그는 배포 후보가 아니다.
+        argocd-image-updater.argoproj.io/app.allow-tags: 'regexp:^dev-[0-9]+-[0-9a-f]+$'
+        # 발견한 태그를 어느 헬름 값에 쓸지 — environments/dev 값 파일의 image.tag 한 줄.
+        argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
+        argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+        # 되쓰기 = git 커밋. 자격은 image-updater-git 봉인본(write_repository 토큰).
+        #   main이 protected라 그 토큰(Maintainer)만 push 예외를 받는다.
+        argocd-image-updater.argoproj.io/write-back-method: 'git:secret:argocd/image-updater-git'
+        argocd-image-updater.argoproj.io/git-branch: main
+        # 앞의 / = 저장소 루트 기준. 이 App이 helm 값을 읽는 그 파일에 그대로 쓴다.
+        argocd-image-updater.argoproj.io/write-back-target: 'helmvalues:/workloads/environments/dev/values-{{.path.basename}}.yaml'
     spec:
       project: apps
       source:

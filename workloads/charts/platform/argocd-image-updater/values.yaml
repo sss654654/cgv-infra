@@ -1,0 +1,17 @@
+# argocd-image-updater 값 — 봇의 신원과 레지스트리 접속.
+# 감시 대상·전략·되쓰기 방식은 여기가 아니라 applicationsets/apps.yaml의 annotation에 있다
+# — 무엇을 감시할지는 각 App의 속성이라 App 정의 옆에 둔다.
+config:
+  log.level: info
+  # 봇 커밋의 작성자. git 이력에서 사람 커밋과 작성자로 갈려 보인다 — 감사(audit)의 최소 단위.
+  git.user: argocd-image-updater
+  git.email: image-updater@cgv.lan
+  registries:
+    - name: gitlab
+      prefix: 192.168.0.167:5050            # 이미지 이름의 앞부분과 글자까지 같아야 이 설정이 매칭된다
+      api_url: http://192.168.0.167:5050
+      # 평문 레지스트리 — 노드 registries.yaml·데스크탑 insecure-registries와 같은 결정의 세 번째 자리.
+      # TLS는 이름(DNS)이 생기는 네트워크 재구성 편에서 셋을 함께 걷는다.
+      insecure: true
+      # read_registry 전용 deploy token(dockerconfigjson 봉인본). 노드 pull 자격과 주체가 달라 가른다.
+      credentials: pullsecret:argocd/image-updater-registry
