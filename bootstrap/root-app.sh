@@ -19,12 +19,14 @@ command -v kubectl >/dev/null || { echo "kubectl 없음." >&2; exit 1; }
 kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
   echo "argocd가 없다. install.sh를 먼저 완주해라." >&2; exit 1; }
 
-# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 13종이 커밋돼 있어야 한다.
-#   초기 10종(seal-secrets.sh 일괄) + 나중에 낱개로 더한 셋:
-#   argocd-repo-cgv-infra(ArgoCD가 저장소를 읽는 자격),
+# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 14종이 커밋돼 있어야 한다.
+#   초기 10종(seal-secrets.sh 일괄) + 나중에 낱개로 더한 넷:
+#   argocd-repo-cgv-infra(ArgoCD의 저장소 자격. 읽기·쓰기 통합 — image updater write-back 겸용),
 #   argocd-secret(webhook 발신자 확인 키를 기존 Secret에 얹는다),
 #   gitlab-registry(노드가 이미지를 받아오는 자격. dockerconfigjson이라 seal-one.sh가 아니라
-#                   kubectl create secret docker-registry로 만든다).
+#                   kubectl create secret docker-registry로 만든다),
+#   image-updater-registry(argocd-image-updater가 레지스트리 태그를 폴링하는 자격.
+#                          gitlab-registry와 같은 dockerconfigjson, ns만 argocd).
 # 파일이 부족한 채로 apply하면 argocd는 성공으로 보이는데 워크로드만 조용히 실패한다.
 #
 # ⚠️ argocd-repo-cgv-infra는 이 스크립트 전에 손으로 apply해야 한다. 그 Secret이 없으면

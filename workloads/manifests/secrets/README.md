@@ -22,7 +22,7 @@ app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/
 
 필요 목록(dev HA, 10종): `mysql-secret`·`redis-secret`(data) · `booking-secrets`·`queue-secrets`(app) · `minio-root-secret`·`minio-lgtm-user`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
 
-여기에 세 장이 더 있어 총 13종이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래 셋은 나중에 더해진 것이라 낱개로 만든다.
+여기에 네 장이 더 있어 총 14종이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래 넷은 나중에 더해진 것이라 낱개로 만든다.
 
 - **`argocd-repo-cgv-infra`** — ArgoCD가 저장소를 읽는 자격. **이 한 장만 `root-app.sh` 전에 손으로 `kubectl apply`한다.** 이게 없으면 sealed-secrets App 자체가 sync되지 않아 순환에 걸린다.
 - **`argocd-secret`** — GitLab webhook의 발신자 확인용 키 하나를 **기존 Secret에 얹는다.** argo-cd 차트가 만들고 argocd-server가 `admin.password`·`server.secretkey`를 채워 쓰는 Secret이라, `template.metadata.annotations`의 `patch`가 그 키들을 보존한다. **⚠️ 컨트롤러는 이 애노테이션을 봉인본이 아니라 클러스터의 Secret에서 읽으므로, 배달 전에 손으로 한 번 붙여야 한다.** 안 붙이면 `already exists and is not managed by SealedSecret`으로 거부한다.
@@ -44,6 +44,8 @@ kubectl create secret docker-registry gitlab-registry -n app \
     --controller-name sealed-secrets --controller-namespace kube-system \
 > gitlab-registry.yaml
 ```
+
+- **`image-updater-registry`** — argocd-image-updater가 레지스트리 태그를 폴링하는 자격(argocd ns). updater 설정의 `credentials: pullsecret:argocd/image-updater-registry`가 이 이름을 가리킨다. gitlab-registry와 같은 `dockerconfigjson` 타입이라 만드는 방법도 같다(`kubectl create secret docker-registry ... -n argocd | kubeseal`). 자격은 `read_registry`만 있는 deploy token.
 
 **dev = Redis Sentinel HA(auth on)**: `redis-secret`(서버, data ns, 키 `redis-password`) + 클라 비번은 app ns에 `queue-secrets`·`booking-secrets`로 복제(둘 다 키 `REDIS_PASSWORD` — cgv-app은 envFrom만 지원해 키명=env명, cross-ns 불가). 세 시크릿 **같은 값**.
 **mysql-secret도 GitOps 배달**: sealed-secrets App(wave -2)이 배달 → mysql App(wave -1)이 그 뒤 sync. 수동 apply 게이트 없음. 단 root-app 전에 여기 봉인·커밋 선행 필수(컨트롤러[7] up 후 kubeseal).

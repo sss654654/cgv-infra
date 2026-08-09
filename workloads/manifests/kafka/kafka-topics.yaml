@@ -2,11 +2,12 @@
 # 선언하지 않으면 앱이 처음 붙을 때 브로커가 기본값(파티션 1)으로 만들고, 파티션은 줄일 수 없어
 # 그 값이 굳는다 → 소비 병렬성이 1로 고정된다.
 #
-# 토픽 넷:
-#   admissions          queue→booking  입장 승인
-#   admissions-revoked  queue→booking  입장 회수(세션 만료·이탈·자리반환)
-#   bookings-completed  booking→queue  예매 확정 → 자리 반환
-#   admissions.DLT      booking 내부   admissions 소비 재시도 소진분 격리
+# 토픽 다섯:
+#   admissions              queue→booking  입장 승인
+#   admissions-revoked      queue→booking  입장 회수(세션 만료·이탈·자리반환)
+#   bookings-completed      booking→queue  예매 확정 → 자리 반환
+#   admissions.DLT          booking 내부   admissions 소비 재시도 소진분 격리
+#   admissions-revoked.DLT  booking 내부   admissions-revoked 소비 재시도 소진분 격리
 #
 # partitions 4 = 앱 HPA 상한과 짝 — 한 그룹의 동시 소비 파드는 파티션 수를 넘지 못한다.
 #   전역 순서는 포기하고 키 단위 순서만 지킨다. 발행 키는 requestId라, 같은 사용자의
@@ -18,8 +19,9 @@
 #   segment.ms 86400000(24h) — 세그먼트는 닫힌 뒤에야 삭제 대상이 된다. 기본 roll 주기가 7일이라
 #     그대로 두면 3일 보존이 실제로는 최대 10일까지 늘어난다.
 #   retention.bytes 2GiB/파티션 — 시간 기준이 못 막는 유입 급증에 대한 상한.
-#     RF3 · 브로커 3이라 브로커 한 대가 네 토픽의 파티션을 전부 들고 있는 최악을 가정한다.
-#     admissions·revoked·completed 각 4파티션 + DLT 1파티션 = 13파티션 × 2GiB = 26GiB.
+#     RF3 · 브로커 3이라 브로커 한 대가 전 토픽의 파티션을 전부 들고 있는 최악을 가정한다.
+#     admissions·revoked·completed 각 4파티션 × 2GiB = 24GiB
+#     + admissions.DLT 2GiB + admissions-revoked.DLT 1GiB = 27GiB.
 #     kafkadata ext4 실측 가용 약 27.8GiB(디스크 명목 30G) 아래.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaTopic
@@ -91,3 +93,24 @@ spec:
     retention.ms: 604800000          # 7일
     segment.ms: 86400000             # 24h
     retention.bytes: 2147483648      # 2GiB
+---
+# admissions-revoked 소비 실패 격리. booking의 에러핸들러는 리스너 공용이고 대상이
+# "{원본 토픽}.DLT"라, revoked 소비의 재시도 소진분은 여기로 온다 — 선언이 없으면
+# DLT 발행이 실패해 격리 대상 메시지가 ERROR 로그로만 남는다.
+# 파티션 1·보존 7일 근거는 admissions.DLT와 같다. retention.bytes 1GiB —
+# 브로커 한 대 최악 합산(위 주석)을 kafkadata 가용 27.8GiB 아래로 유지하는 값.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: admissions-revoked-dlt
+  namespace: data
+  labels:
+    strimzi.io/cluster: cgv
+spec:
+  topicName: admissions-revoked.DLT
+  partitions: 1
+  replicas: 3
+  config:
+    retention.ms: 604800000          # 7일
+    segment.ms: 86400000             # 24h
+    retention.bytes: 1073741824      # 1GiB

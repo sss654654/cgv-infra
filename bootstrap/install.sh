@@ -127,7 +127,7 @@ echo "  예외: 앞선 실행이 중간에 죽어 helm 릴리스가 pending-* �
 echo "  'another operation is in progress'로 거부된다 → helm rollback 또는 helm uninstall 후 재실행."
 echo
 echo "다음 순서:"
-echo "  1) SealedSecret 13종 봉인·커밋 — docs/시크릿-계약.md 표대로."
+echo "  1) SealedSecret 14종 봉인·커밋 — docs/시크릿-계약.md 표대로."
 echo "     seal-secrets.sh 가 10종을 일괄로, 나머지 3종은 낱개로 만든다"
 echo "     (argocd ns 2종은 seal-one.sh, app ns 의 gitlab-registry 는 docker-registry 타입)."
 echo "     컨트롤러가 지금 떠 있어야 kubeseal이 공개키를 받는다."

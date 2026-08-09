@@ -155,7 +155,7 @@ cgv-infra/
 │   ├── charts/             apps/(cgv-app 틀 + queue·booking·frontend) · data/(cgv-mysql·cgv-redis 래퍼)
 │   │                       · observability/(loki·mimir·tempo·grafana·alloy·minio·ksm·node-exporter) · platform/(metallb·traefik)
 │   ├── environments/       dev(실물)·stg·prd(골격)
-│   └── manifests/          kafka/(CR) · metallb/(pool CR) · secrets/(SealedSecret 봉인 13종)
+│   └── manifests/          kafka/(CR) · metallb/(pool CR) · secrets/(SealedSecret 봉인 14종)
 │                           · dashboards/(Grafana 대시보드 ConfigMap)
 └── docs/               시크릿-계약 · 코드-반영사항
 ```
@@ -224,7 +224,7 @@ syncPolicy:
 ① cluster/ 스크립트 (SSH, 노드에서)   → k3s 3노드 조인 (CNI 없어 NotReady)
 ② bootstrap/install.sh (9단계)        → Calico(→Ready)→namespaces→storage→cert-manager→sealed-secrets
                                           →CRD→control-plane 수집→Strimzi→argocd
-③ SealedSecret 13종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
+③ SealedSecret 14종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
                                           그중 ArgoCD 저장소 자격 한 장은 apply까지 (없으면 ⑤ 이후가 안 돈다)
 ④ bootstrap/root-app.sh               → 봉인본 개수 확인 후 root-app apply. 여기서 손 끝
 ⑤ root-app → argocd/ recurse          → AppProject·ApplicationSet·Application 생성
@@ -350,13 +350,13 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 **되어 있는 것**
 
 - **PodSecurity** — 위 [k3s 클러스터 아키텍처](#k3s-클러스터-아키텍처)의 ns별 표대로 집행한다. 호스트 접근이 필요한 node-exporter만 별도 ns로 격리해 나머지를 baseline 이상으로 유지한다.
-- **SealedSecret**: 암호는 kubeseal로 봉인, 암호문만 Git. 초기 10종([docs/시크릿-계약](docs/시크릿-계약.md), dev HA — redis auth·minio-lgtm-user 포함) + 나중에 낱개로 더한 셋(`argocd-repo-cgv-infra` 저장소 자격 · `argocd-secret` webhook 발신자 확인 · `gitlab-registry` 이미지 pull 자격) = **현재 13개**. `argocd-secret`은 기존 Secret에 키만 얹는 `patch` 방식이고, `gitlab-registry`는 타입이 `dockerconfigjson`이라 만드는 명령이 다르다. `root-app.sh`가 봉인본 개수를 세어 부족하면 GitOps 인계를 막는다.
+- **SealedSecret**: 암호는 kubeseal로 봉인, 암호문만 Git. 초기 10종([docs/시크릿-계약](docs/시크릿-계약.md), dev HA — redis auth·minio-lgtm-user 포함) + 나중에 낱개로 더한 넷(`argocd-repo-cgv-infra` 저장소 자격[읽기·쓰기 통합] · `argocd-secret` webhook 발신자 확인 · `gitlab-registry` 이미지 pull 자격 · `image-updater-registry` 레지스트리 폴링 자격) = **현재 14개**. `argocd-secret`은 기존 Secret에 키만 얹는 `patch` 방식이고, `gitlab-registry`는 타입이 `dockerconfigjson`이라 만드는 명령이 다르다. `root-app.sh`가 봉인본 개수를 세어 부족하면 GitOps 인계를 막는다.
 - **저장소 자격도 평문으로 두지 않는다** — GitLab deploy token은 ArgoCD가 저장소를 읽는 데 필요한데, 그 값을 Git에 넣으면 저장소를 읽을 자격이 저장소 안에 있게 된다. 다른 암호와 같은 경로(SealedSecret)로 배달한다.
 - **etcd 저장 암호화**: `secrets-encryption: true` — 컨트롤러가 푼 Secret이 etcd에 평문으로 앉지 않게(외장 SSD 반출 대비).
 - **RBAC 축소**: loki·alloy는 차트 기본값이 SA에 전 네임스페이스 `secrets` 읽기 권한을 붙인다. loki는 룰 사이드카를 끄고, alloy는 기본 rules에서 `configmaps`·`secrets`를 뺀 목록을 명시해 그 경로를 닫았다.
 - **앱 SA 토큰 미마운트**: `automountServiceAccountToken: false`. queue·booking·frontend는 쿠버네티스 API를 쓰지 않아, 쓰지 않는 자격증명을 파드에 얹지 않는다.
 - **kubelet 자원 예약**: `system-reserved`·`kube-reserved`·`eviction-hard`를 노드 실측값 기준으로 설정. k3s는 apiserver·etcd를 파드가 아니라 systemd 프로세스로 돌려 kubelet이 그 사용량을 allocatable에서 빼지 않는다 — 예약이 없으면 워크로드가 제어면 메모리를 잠식한다. 같은 이유로 PriorityClass로는 제어면을 보호할 수 없다(파드가 아니라서 evict 대상이 아님).
-  - `kube-reserved`는 **1Gi → 2Gi**다. 파드 0개일 때 645Mi였는데 App 18개를 배포한 뒤 재측정하니 `k3s.service` anon이 노드별 1549–1783Mi였다. 초기 1Gi 추정은 실제의 절반이라 그만큼 파드 몫에서 빼 쓰이고 있었다. 결과 allocatable memory ≈ 5081Mi. **⚠️ 이 값은 아직 노드에 반영되지 않았다** — 반영에 재시작(drain 동반)이 필요해 앱 투입 시 함께 한다.
+  - `kube-reserved`는 **1Gi → 2Gi**다. 파드 0개일 때 645Mi였는데 App 18개를 배포한 뒤 재측정하니 `k3s.service` anon이 노드별 1549–1783Mi였다. 초기 1Gi 추정은 실제의 절반이라 그만큼 파드 몫에서 빼 쓰이고 있었다. **노드 3대 반영 완료(2026-08-09, 순차 재시작)** — allocatable memory 5081Mi 실측. 부하 실측 후 재확정한다.
   - `eviction-hard`는 **기본 목록을 통째로 교체한다**. k3s 기본은 `nodefs 5%`·`imagefs 5%` 둘뿐이라 메모리·inode 신호가 아예 없다 — 그 상태에서는 메모리가 말라도 kubelet이 개입하지 않고 곧장 커널 OOM으로 간다. `memory.available<300Mi`(약 7941Mi의 3.8%)를 신설한 근거는 kubelet 확인 주기가 10초라, 선이 낮으면 JVM 같은 큰 할당이 그 사이를 뚫고 지나가서다.
 - **이미지 nonroot**: queue distroless(65532)·booking(1001)·frontend nginx-unprivileged(101).
 
@@ -368,8 +368,8 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 - **booking이 MySQL에 root로 접속** — 앱 컨테이너가 DB 전권을 들고 있다. prd 경로는 스키마 한정 전용 계정이다.
 - **JDBC 평문** — `useSSL=false`가 앱의 URL에 리터럴로 있어 인프라에서 끌 수 없다. 바꾸려면 앱 이미지를 다시 구워야 한다.
 - **etcd 메트릭 포트(:2381) 무인증** — 같은 LAN에서 인증 없이 읽힌다. 방화벽(ufw)이 꺼져 있어 사설망 전체에 열려 있다.
-- **이미지 태그가 가변** — `dev`/`stg`/`prd` 문자열 + `pullPolicy: IfNotPresent`. 같은 태그로 재push하면 캐시한 노드가 옛 이미지를 계속 쓴다.
-- **sealed-secrets 개인키 백업 미구현** — 분실하면 Git의 봉인본 전체가 복호화 불가다.
+- **stg/prd 이미지 승격 경로 미구현** — dev는 CI가 만드는 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) + image-updater write-back으로 전환 완료. stg/prd로 이미지를 올리는 경로는 아직 없다.
+- **sealed-secrets 개인키 자동 백업 미구현** — 수동 반출 사본은 확보(2026-08-09). 재설치 절차에 반출 단계가 코드로 없어, 잊으면 Git의 봉인본 전체가 복호화 불가다.
 
 ---
 
@@ -381,12 +381,12 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 | 2 | 각 노드 OS prep(정적 IP·SSH키·**데이터 디스크 10장 mkfs + `/mnt/disks/<용도>` 마운트·fstab**·[cluster/README](bootstrap/cluster/README.md)) | ✅ 완료 (재부팅 검증 통과) |
 | 3 | `cluster/01-server-init.sh`(k3s-1) → `02-server-join.sh`(k3s-2·3) | ✅ 완료 (v1.36.2, etcd 3-member, CNI 전이라 NotReady) |
 | 4 | `bootstrap/install.sh` — Calico부터 argocd까지. 여기까지는 몇 번을 다시 돌려도 안전하다(전부 멱등) | ✅ 완료 |
-| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](workloads/manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 저장소 자격·webhook 비밀·이미지 pull 자격 = 13종 | ✅ 완료 |
+| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](workloads/manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격 = 14종 | ✅ 완료 |
 | 6 | `bootstrap/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ✅ 완료 |
 | 7 | `kubectl -n argocd get applications -w` 로 sync 확인 | ✅ 완료 (플랫폼·관측·미들웨어 수렴. 자원값은 실측으로 재조정) |
 | 8 | **GitOps 원본을 GitLab으로** — 저장소 이전 · deploy token 봉인 · `repoURL` 전환 · AppProject 울타리 | ✅ 완료 |
 | 9 | **ArgoCD self-managed 인수인계** — `argocd` Application이 helm이 만든 리소스를 이어받음 | ✅ 완료 |
-| 10 | **이미지 공급 경로**(CI 러너 + 레지스트리) → 앱 3종 기동 | ⬜ 미착수 |
+| 10 | **이미지 공급 경로**(CI 러너 + 레지스트리) → 앱 3종 기동 | ✅ 완료 (CI 5단 게이트 → 불변 태그 push → image-updater가 태그를 Git에 write-back → 자동 롤아웃. 앱 3종 Running) |
 
 **실행 위치는 노드로 한정되지 않는다.** `kubectl`·`helm`이 있고 클러스터에 닿으면 어디서든 된다 — 두 도구는 API 서버로 HTTPS 요청을 보낼 뿐이다. kubeconfig는 `$KUBECONFIG` → k3s 기본 경로(`/etc/rancher/k3s/k3s.yaml`) → `~/.kube/config` 순으로 찾고, 셋 다 없으면 무엇이 필요한지 알리고 멈춘다. 시작 전에 `kubectl`·`helm`·kubeconfig 접근·클러스터 응답을 검사해, 중간에 죽어 부분 적용 상태가 남는 것을 막는다.
 

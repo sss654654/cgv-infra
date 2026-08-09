@@ -35,7 +35,7 @@
       [1/9] Calico ... [9/9] argocd
       끝나면 멈춘다. GitOps는 아직 시작 안 함
                 ↓
-③ ★ SealedSecret 13종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
+③ ★ SealedSecret 14종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
       install.sh [5/9]가 세운 컨트롤러의 공개키로 암호화한다
       초기 10종(seal-secrets.sh) + 낱개 3종
         argocd-repo-cgv-infra  ArgoCD 저장소 자격                 seal-one.sh
