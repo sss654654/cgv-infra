@@ -1,14 +1,12 @@
 # frontend dev 환경값. 정적 서버라 가벼움.
 image:
-  tag: dev-15-17dcc495
-
+  tag: dev-18-767410b6
+  repository: 192.168.0.167:5050/cgv/cgv-onprem/frontend
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling).
-
 resources:
-  requests: { cpu: 50m, memory: 32Mi }
-  limits:   { cpu: 200m, memory: 64Mi }
-
-autoscaling:               # 정적 서빙이라 스케일 필요 적음(min1/max2). PDB는 maxUnavailable:1로 호환(identity)
+  requests: {cpu: 50m, memory: 32Mi}
+  limits: {cpu: 200m, memory: 64Mi}
+autoscaling: # 정적 서빙이라 스케일 필요 적음(min1/max2). PDB는 maxUnavailable:1로 호환(identity)
   enabled: true
   minReplicas: 1
   maxReplicas: 2
