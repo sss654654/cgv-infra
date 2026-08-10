@@ -30,6 +30,8 @@ securityContext:
 envFrom:
   - secretRef:
       name: queue-secrets   # REDIS_PASSWORD (= data ns redis-secret 값)
+  - secretRef:
+      name: app-admin-token   # ADMIN_TOKEN. 값이 있어야 초기화 라우트가 등록된다(booking과 같은 시크릿)
 
 # health.go: /health/live(liveness), /health/ready(readiness=Redis PING) — 앱 포트.
 livenessProbe:
