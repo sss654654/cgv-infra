@@ -28,14 +28,15 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
 └─────────────────────────────────────────────────────────────┘
       데스크탑(별도, 192.168.0.167)
         ├─ GitLab CE — ArgoCD가 읽는 GitOps 원본            [구축됨]
-        └─ CI 러너 · 레지스트리 · 부하생성기                 [미구축]
+        ├─ CI 러너(docker executor) · Container Registry     [구축됨]
+        └─ 부하생성기(k6)                                    [미구축]
 ```
 
 - **하이퍼바이저 = Proxmox VE**, 외장 SSD에 설치(노트북 부팅 디스크와 분리).
 - **k3s 노드 3 = VM**, 각 4 vCPU / 8GB / 40GB 부팅 + 용도별 LV(아래 스토리지).
 - **OPNsense = 별도 VM**(k3s 노드 아님) — 외부노출 단계의 라우터·방화벽·VPN. 아직 만들지 않았다.
 - **GitLab = 데스크탑**(클러스터 밖, Docker). ArgoCD가 읽는 저장소가 여기다 — 아래 [GitOps 원본](#gitops-원본--gitlab). GitHub에는 push 미러로 공개 사본만 나간다.
-- **레지스트리·부하생성기 = 데스크탑**(예산 0). **아직 없다** — 앱 차트가 가리키는 `registry.cgv.local`은 실재하지 않는 호스트라, 앱을 올리려면 이미지 공급 경로를 먼저 정해야 한다(노드 반입 vs 레지스트리 구축).
+- **CI 러너·Container Registry = 같은 데스크탑 GitLab.** 파이프라인이 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) 이미지를 레지스트리에 올리고, 각 노드의 `registries.yaml`이 그 레지스트리를 신뢰한다. 부하생성기(k6)만 아직 없다 — 부하 실측 단계에서 세운다.
 
 ---
 
@@ -241,9 +242,9 @@ syncPolicy:
 > *리소스 생성 순서*(약 2초 간격)뿐이고, ApplicationSet이 만드는 App(metallb·traefik·MinIO·LGTM·앱)은
 > 그 sync에 속하지 않아 wave 값이 실효가 없다. 실제 동작은 **전 App이 거의 동시에 생성되어 병렬 sync**이고,
 > 의존이 안 뜬 사이의 crashloop는 selfHeal로 수렴한다(초기 red는 정상).
-> 그래서 "관측 먼저 → 확인 → 앱"을 sync-wave로 강제할 수는 없다. 다만 앱 3종은 `registry.cgv.local`이
-> 실재하지 않아 이미지를 못 받는다 — 이미지 공급 경로가 생기기 전까지는 관측·미들웨어만 수렴하고
-> 앱은 `ImagePullBackOff`로 남는다. 앱 투입 시점은 그 경로를 만드는 시점이 결정한다.
+> 그래서 "관측 먼저 → 확인 → 앱"을 sync-wave로 강제할 수는 없다. 앱 3종은 이미지 공급 경로
+> (CI 러너 + 레지스트리)가 생긴 뒤에야 뜬다 — 재구축 시에도 그 경로가 서기 전까지는
+> 관측·미들웨어만 수렴하고 앱은 `ImagePullBackOff`로 남는 것이 정상이다.
 
 ---
 
@@ -370,6 +371,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 - **etcd 메트릭 포트(:2381) 무인증** — 같은 LAN에서 인증 없이 읽힌다. 방화벽(ufw)이 꺼져 있어 사설망 전체에 열려 있다.
 - **stg/prd 이미지 승격 경로 미구현** — dev는 CI가 만드는 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) + image-updater write-back으로 전환 완료. stg/prd로 이미지를 올리는 경로는 아직 없다.
 - **sealed-secrets 개인키 자동 백업 미구현** — 수동 반출 사본은 확보(2026-08-09). 재설치 절차에 반출 단계가 코드로 없어, 잊으면 Git의 봉인본 전체가 복호화 불가다.
+- **앱 초기화 API 토큰 미주입** — queue·booking의 데이터 초기화 API는 `ADMIN_TOKEN`이 있어야 라우트가 등록된다. 클러스터에는 아직 그 Secret을 넣지 않아 초기화 API가 비활성이다(로컬 compose에서만 사용). 주입하려면 SealedSecret 한 장 + 앱 차트 env 배선이 필요하다.
 
 ---
 
@@ -406,22 +408,24 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 ---
 
-## 상태 (2026-08-06)
+## 상태 (2026-08-10)
 
-플랫폼·관측·미들웨어가 GitOps로 수렴했고, 그 GitOps 원본은 GitLab이다. ArgoCD는 자기 자신도 Application으로 관리한다.
+플랫폼·관측·미들웨어·앱이 전부 GitOps로 수렴했고, 그 GitOps 원본은 GitLab이다. ArgoCD는 자기 자신도 Application으로 관리한다.
 
 ```
-Application 21 개    플랫폼 · 관측 · 미들웨어 · 시크릿 = Synced · Healthy
-                    앱 3 종(queue · booking · frontend) = ImagePullBackOff
+Application 22 개 = Synced · Healthy   (플랫폼 · 관측 · 미들웨어 · 시크릿 · 앱 3종)
+서비스 접속 = LAN에서 http://192.168.0.240 (MetalLB LB IP → Traefik → 앱)
 ```
 
-앱만 못 뜨는 이유는 하나다 — **이미지가 없다.** 차트가 가리키는 `registry.cgv.local`이 실재하지 않아, CI 러너와 레지스트리를 세우는 것이 다음 단계다.
+코드 push부터 롤아웃까지 자동이다: push → CI 5단 게이트(check·test·build·scan·publish) →
+불변 태그 이미지 → argocd-image-updater가 태그를 이 저장소에 write-back → ArgoCD 롤아웃.
+다음 단계는 CI의 빈 test 게이트 채우기 → NetworkPolicy·RBAC → 부하 실측(k6)이다.
 
 ---
 
 ## 만든 과정 — 편별 기록
 
-노트북 한 대를 열어 이 클러스터를 세우기까지를 편별로 남겼다. 각 편은 **그 단계에서 실제로 한 작업**과 **그때 짚은 개념**을 함께 적는다 — 아래 표에서 필요한 편으로 바로 들어갈 수 있다.
+노트북 한 대를 열어 이 클러스터를 세우기까지를 편별로 남겼다. 각 편은 **그 단계에서 실제로 한 작업**과 **그때 짚은 개념**을 함께 적는다 — 아래 표에서 필요한 편으로 바로 들어갈 수 있다. (전체 목록: [블로그 Kubernetes 카테고리](https://zed6740.tistory.com/category/Kubernetes))
 
 | 편 | 한 작업 | 다룬 개념 |
 |:--|:--|:--|
@@ -434,5 +438,6 @@ Application 21 개    플랫폼 · 관측 · 미들웨어 · 시크릿 = Synced 
 | **[7부](https://zed6740.tistory.com/215)**<br>플랫폼 부트스트랩 | kubelet 자원 예약 3줄<br>`install.sh` 9단계 완주<br>SealedSecret 10종 봉인<br>`root-app.sh`로 GitOps 인계<br>MetalLB → Traefik `.240` · 파드 69개 | `allocatable = Capacity − 예약 − eviction`<br>requests vs limits — 뭐가 cgroup에 걸리나<br>손에 남길 것의 기준 셋<br>PodSecurity 3수준과 restricted 4줄<br>비대칭 키 봉인 · 개인키 분실의 의미 |
 | **[8부](https://zed6740.tistory.com/217)**<br>관측 파이프라인 | 사본 진단 — `:6443` = `:10250` 179,225줄<br>apiserver scrape 제거 · `job=k3s-server`<br>시리즈 상한 150k → 300k · ingester 2Gi<br>3축 12패널 대시보드 as-code<br>자원값 3건 교정(전부 `exit 137`) | 스크레이프 · 시리즈 · 카디널리티<br>Mimir 쓰기 / 읽기 경로<br>인제스터만 HA가 필요한 이유<br>head 절단 vs 블록 생성<br>상한 포화와 OOMKilled의 감별<br>실패 카운터 ≠ 고장 |
 | **[9부](https://zed6740.tistory.com/218)**<br>GitLab 세우기 | GitLab CE 기동 — 최소 4GB를 2.7GiB로<br>저장소 이전 · GitHub push 미러<br>보호 브랜치 · 스쿼시 + FF<br>deploy token 봉인 · `repoURL` 전환<br>AppProject 울타리 · ArgoCD self-managed | push형 vs pull형 CD<br>webhook은 설정 이전에 네트워크 문제<br>GitLab 부품 9개와 요청의 길<br>머지 3요소 — Merge commit · FF · 스쿼시<br>기계 자격 5종<br>부트스트랩 순환 |
+| **[10부](https://zed6740.tistory.com/221)**<br>CI 와 CD | 그룹 러너(docker executor) · Container Registry<br>5단 파이프라인 — check·test·build·scan·publish<br>불변 태그 `dev-<파이프라인>-<커밋>`<br>노드 `registries.yaml` · image-updater write-back<br>캐시 정비 — 파이프라인 6:06 → 0:46 | CI 게이트와 빈 단계의 값<br>불변 태그 vs latest — 무엇이 롤백을 만드나<br>러너 캐시 3층(볼륨·레이어·BuildKit)<br>write-back이 GitOps 정본을 지키는 방식 |
 | [번외](https://zed6740.tistory.com/216)<br>e1000e NIC hang | 반씩 좁히기로 업링크 구간 특정<br>`dmesg` — `Hardware Unit Hang` 34회<br>오프로드 off로 복구<br>udev 불발 규명 → `post-up`으로 교체 | carrier(링크) ≠ 데이터 흐름<br>ARP `FAILED`가 뜻하는 것<br>TSO/GSO/GRO와 Intel e1000e 결함<br>장치 개명이 udev 발화를 가름<br>검증의 층위 셋 |
 | [번외](https://zed6740.tistory.com/219)<br>WSL2와 커밋 한도 | 죽는 순간 기록 — `exit 137` · `0xc00000fd`<br>물리 여유 6.6GB → 물리 부족 가설 폐기<br>페이지파일 재설정 — 한도 17.9 → 28.0GB<br>`PeakUsage 1MB` → 램 증설 취소 | Windows 커밋 한도 vs 리눅스 오버커밋<br>`Vmmem`이 대표하는 것<br>`free -h`에서 봐야 할 칸<br>`exit 137`이 알려주지 않는 것<br>페이지파일의 역할 둘 |
