@@ -76,6 +76,13 @@ spec:
               matchLabels: {kubernetes.io/metadata.name: app}
             podSelector:
               matchLabels: {app.kubernetes.io/name: booking}
+          # 브로커 자신. 서비스 경로에는 필요 없지만(복제 9091·컨트롤러 9090은 별도 포트)
+          #   브로커 안에서 도는 관리 CLI가 이 경로를 쓴다. kafka-topics.sh --describe 나
+          #   kafka-consumer-groups.sh 는 접속한 브로커에서 파티션 리더 목록을 받은 뒤
+          #   각 리더에 9092로 직접 붙으므로, 이 항목이 없으면 조회가 타임아웃된다.
+          # 브로커는 이미 그 데이터를 보관하는 주체라 이 항목으로 새로 열리는 범위는 없다.
+          - podSelector:
+              matchLabels: {strimzi.io/name: cgv-kafka}
     config:
       offsets.topic.replication.factor: 3
       transaction.state.log.replication.factor: 3
