@@ -61,6 +61,21 @@ spec:
         port: 9092
         type: internal
         tls: false                   # 내부 평문·무인증(홈랩). 노출 시 tls 리스너 추가
+        # Strimzi가 브로커용 NetworkPolicy를 이 리스너 정의를 보고 만든다.
+        #   networkPolicyPeers가 비어 있으면 9092 규칙이 출처 없이 렌더되어 클러스터 안
+        #   아무 파드나 admissions에 발행할 수 있다 → booking은 발신자를 확인하지 않으므로
+        #   대기열·정원을 거치지 않고 예매 자격이 나온다.
+        # 인증이 붙는 것은 아니다. 아래 라벨을 단 파드는 여전히 인증 없이 9092에 접속한다.
+        # 9090(컨트롤러)·9091(복제)·8443(오퍼레이터)은 Strimzi가 출처까지 스스로 지정한다.
+        networkPolicyPeers:
+          - namespaceSelector:
+              matchLabels: {kubernetes.io/metadata.name: app}
+            podSelector:
+              matchLabels: {app.kubernetes.io/name: queue}
+          - namespaceSelector:
+              matchLabels: {kubernetes.io/metadata.name: app}
+            podSelector:
+              matchLabels: {app.kubernetes.io/name: booking}
     config:
       offsets.topic.replication.factor: 3
       transaction.state.log.replication.factor: 3

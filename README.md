@@ -76,7 +76,7 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
   | `metallb-system` / `traefik` | privileged / restricted | Argo가 만드는 ns라 라벨도 ApplicationSet에서 건다 |
   | `kube-system` · `calico-system` · `tigera-operator` | 없음 | k3s·tigera-operator가 소유한다. 집행을 걸면 클러스터 기동이 막힌다 |
 
-  현재 경계는 **PodSecurity 라벨뿐**이다 — NetworkPolicy·ResourceQuota는 아직 없다(아래 [보안](#보안) 참조).
+  경계는 **PodSecurity 라벨**과 **data 계층 ingress NetworkPolicy**다. 후자는 mysql·redis 차트가 만드는 넓은 정책이 남아 있는 동안 절반만 적용된다(아래 [보안](#보안) 참조). ResourceQuota는 없다.
 
 ---
 
@@ -252,7 +252,7 @@ syncPolicy:
 
 | 계층 | 구성요소 | 채널 | 역할 |
 |---|---|---|---|
-| CNI | **Calico** | install.sh (순환) | 파드 네트워크 (flannel 대체). NetworkPolicy 집행 주체이나 정책 리소스는 아직 없음 |
+| CNI | **Calico** | install.sh (순환) | 파드 네트워크 (flannel 대체). NetworkPolicy 집행 주체 — 정책 객체를 노드 iptables 규칙으로 옮긴다 |
 | LB | **MetalLB** | **GitOps** (wave -4) | 온프렘 LoadBalancer IP 할당 |
 | Ingress | **Traefik** | **GitOps** (wave -2) | L7 라우팅 (번들 traefik 대체) — OTel 튜닝을 수동 upgrade 없이 |
 | TLS | **cert-manager** | install.sh | 인증서 발급(DNS-01). **현재 소비자가 없다** — 외부노출 단계에 대비해 설치만 해두고, 파드 3개가 자원을 점유한다 |
@@ -363,9 +363,9 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 **아직 없는 것** (선언과 실물을 구분해 적는다)
 
-- **NetworkPolicy 0건** — 네임스페이스 간 통신이 전면 허용이다. app ns 컨테이너 하나가 침해되면 Kafka(무인증)·MySQL(root)·Redis·Loki·Mimir·MinIO·ArgoCD에 그대로 도달한다. dev에서는 감수하고, prd 경로는 "기본 차단 + 필요한 경로만 허용"이다.
+- **MySQL·Redis는 아직 출처를 제한하지 않는다** — `workloads/manifests/netpol/`에 data 계층 ingress 정책을 넣었고 Kafka 리스너에도 출처를 지정했으나, mysql·redis 차트가 만드는 정책(`allowExternal: true`라 `from` 절 없이 렌더)이 아직 살아 있다. NetworkPolicy는 여러 개가 겹치면 허용의 합집합이라 넓은 쪽이 남는 동안은 좁혀지지 않는다. 두 차트 values의 `networkPolicy.enabled`를 끄는 것이 남은 단계다. 그때까지 클러스터 안 어느 파드에서든 MySQL 3306·Redis 6379에 도달한다.
 - **ResourceQuota·LimitRange 0건** — 한 파드가 노드 메모리를 다 먹어도 ns 차원에서 막는 장치가 없다. 지금은 kubelet 예약과 파드별 limit이 방어선이다.
-- **Kafka 무인증 평문** — `type: internal`은 클러스터 밖 노출만 막는다. 클러스터 안에서는 누구나 토픽을 읽고 쓴다. queue→booking 입장 이벤트가 곧 예매 권한이라, 이 노출은 NetworkPolicy가 생기기 전까지 열려 있다. userOperator는 켜져 있어 SCRAM+ACL로 갈 재료는 준비돼 있다.
+- **Kafka 무인증 평문** — `type: internal`은 클러스터 밖 노출만 막는다. 리스너의 `networkPolicyPeers`로 9092에 닿을 수 있는 파드를 queue·booking으로 좁혔지만 인증이 붙은 것은 아니다. 그 라벨을 단 파드는 인증 없이 토픽을 읽고 쓴다. queue→booking 입장 이벤트가 곧 예매 권한이라 라벨을 달 수 있는 사람은 그 권한을 얻는다. userOperator는 켜져 있어 SCRAM+ACL로 갈 재료는 준비돼 있다.
 - **booking이 MySQL에 root로 접속** — 앱 컨테이너가 DB 전권을 들고 있다. prd 경로는 스키마 한정 전용 계정이다.
 - **JDBC 평문** — `useSSL=false`가 앱의 URL에 리터럴로 있어 인프라에서 끌 수 없다. 바꾸려면 앱 이미지를 다시 구워야 한다.
 - **etcd 메트릭 포트(:2381) 무인증** — 같은 LAN에서 인증 없이 읽힌다. 방화벽(ufw)이 꺼져 있어 사설망 전체에 열려 있다.
@@ -413,13 +413,13 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 플랫폼·관측·미들웨어·앱이 전부 GitOps로 수렴했고, 그 GitOps 원본은 GitLab이다. ArgoCD는 자기 자신도 Application으로 관리한다.
 
 ```
-Application 22 개 = Synced · Healthy   (플랫폼 · 관측 · 미들웨어 · 시크릿 · 앱 3종)
+Application 23 개 = Synced · Healthy   (플랫폼 · 관측 · 미들웨어 · 시크릿 · 정책 · 앱 3종)
 서비스 접속 = LAN에서 http://192.168.0.240 (MetalLB LB IP → Traefik → 앱)
 ```
 
 코드 push부터 롤아웃까지 자동이다: push → CI 5단 게이트(check·test·build·scan·publish) →
 불변 태그 이미지 → argocd-image-updater가 태그를 이 저장소에 write-back → ArgoCD 롤아웃.
-다음 단계는 CI의 빈 test 게이트 채우기 → NetworkPolicy·RBAC → 부하 실측(k6)이다.
+다음 단계는 mysql·redis 차트 정책 끄기(data 계층 출처 제한 완결) → 앱 관측 배선 → 부하 실측(k6)이다.
 
 ---
 

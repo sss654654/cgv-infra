@@ -1,0 +1,24 @@
+# netpol — 네임스페이스로 들어오는 접속의 출처 규칙(자체 매니페스트).
+# 차트가 만드는 정책은 각 차트 values에서 끄고, 출처 규칙은 이 App이 배달하는 파일에 모은다.
+#   NetworkPolicy는 여러 개가 겹치면 허용의 합집합이라, 출처를 한 곳에서만 관리해야
+#   "무엇이 무엇에 닿을 수 있나"를 파일 하나로 읽을 수 있다.
+# sync-wave 없음(0) — 데이터 계층 App(wave -1)이 먼저 서고 그 뒤에 정책이 얹힌다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: netpol
+  namespace: argocd
+spec:
+  project: infra
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/netpol
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      # prune: 파일을 지우면 정책도 사라진다 — 통신이 열리는 방향이라 되돌리기가 즉시 된다.
+      prune: true
+      selfHeal: true

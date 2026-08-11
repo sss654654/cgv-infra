@@ -1,0 +1,106 @@
+# data 네임스페이스로 들어오는 접속의 출처를 제한한다.
+#
+# NetworkPolicy는 정책이 고른 파드만 판정 대상으로 삼는다. 고르는 순간 그 파드로 들어오는
+#   접속이 전부 막히고 ingress에 적은 것만 통과한다. 거부 규칙은 문법에 없다.
+# 여러 정책이 같은 파드를 고르면 허용의 합집합이 된다 → 출처 없는 넓은 정책(차트 생성분)이
+#   남아 있으면 여기서 좁혀도 효과가 없다. cgv-mysql·cgv-redis values의 networkPolicy.enabled를
+#   함께 꺼야 한다.
+# Kafka 9092는 이 파일이 아니라 Kafka CR 리스너의 networkPolicyPeers로 좁힌다 —
+#   Strimzi가 자기 정책을 계속 재생성하므로 여기서 적어도 덮인다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: data
+spec:
+  podSelector: {}          # data의 모든 파드를 판정 대상으로 만든다
+  policyTypes: [Ingress]
+  ingress: []              # 규칙 0개 = 이 정책만 놓고 보면 통과할 조건이 없다
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mysql-ingress
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+  policyTypes: [Ingress]
+  ingress:
+    # MySQL을 쓰는 것은 booking 하나다.
+    - from:
+        - namespaceSelector:                              # 한 원소 안의 셀렉터 둘 = AND
+            matchLabels:
+              kubernetes.io/metadata.name: app            # 쿠버네티스가 모든 ns에 자동으로 다는 라벨
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: booking
+      ports:
+        - port: 3306
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes: [Ingress]
+  ingress:
+    # 클라이언트는 26379(Sentinel)로 마스터 주소를 받고 그 주소로 6379에 다시 접속한다.
+    #   26379만 열면 마스터 조회는 되고 다음 명령에서 멈춘다.
+    - from:                                               # 원소가 여럿 = OR
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: app}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: queue}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: app}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: booking}
+        - podSelector:                                    # ns 지정 없음 = 같은 ns(data) 안
+            matchLabels: {app.kubernetes.io/name: redis}  # 복제·Sentinel 투표
+      ports:
+        - port: 6379
+        - port: 26379
+    # 9121은 redis 파드의 지표 노출 사이드카. 출처가 둘이다.
+    #   Alloy는 hostNetwork를 쓰지 않아 출발지가 파드 IP → 셀렉터로 잡힌다.
+    #   kubelet의 httpGet 프로브는 출발지가 노드 IP → 파드 셀렉터에 안 잡혀 ipBlock으로 적는다.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+        - ipBlock: {cidr: 192.168.0.201/32}
+        - ipBlock: {cidr: 192.168.0.202/32}
+        - ipBlock: {cidr: 192.168.0.203/32}
+      ports:
+        - port: 9121
+---
+# strimzi-cluster-operator는 지금까지 어떤 정책에도 걸리지 않아 전부 열린 상태였다.
+#   위 default-deny가 이 파드를 처음으로 고르므로, 같이 반영되지 않으면 kubelet의
+#   liveness·readiness httpGet(8080)이 막혀 재시작이 반복되고 Kafka 리소스 조정이 멈춘다.
+# 이 파드를 목적지로 하는 다른 접속은 없다 — data의 Service 어느 것도 이 파드를 고르지 않고,
+#   이 파드를 대상으로 하는 ServiceMonitor도 없다.
+# 셀렉터로 strimzi.io/kind를 쓰는 이유: 이 파드에는 app.kubernetes.io/ 계열 라벨이 없고,
+#   Strimzi 자신이 생성하는 정책에서도 이 라벨로 오퍼레이터를 가리킨다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: strimzi-operator-probe
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      strimzi.io/kind: cluster-operator
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: {cidr: 192.168.0.201/32}
+        - ipBlock: {cidr: 192.168.0.202/32}
+        - ipBlock: {cidr: 192.168.0.203/32}
+      ports:
+        - port: 8080
