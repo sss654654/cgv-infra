@@ -16,7 +16,11 @@ spec:
   project: infra
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
-    targetRevision: main
+    # 대시보드는 화면을 보고 고치는 반복이 잦아 전용 브랜치를 본다.
+    #   dashboards 브랜치에 push하면 머지 없이 바로 반영된다.
+    # 대시보드 구성이 확정되면 dashboards를 main에 합치고 이 값을 main으로 되돌린다.
+    #   그때까지 workloads/manifests/dashboards의 정본은 dashboards 브랜치다.
+    targetRevision: dashboards
     path: workloads/manifests/dashboards
   destination:
     server: https://kubernetes.default.svc
