@@ -1,0 +1,296 @@
+# booking 서비스 대시보드 — 부하 실측용. 판정 순서가 행 순서다.
+#   행1 무슨 일이 → 행2 파드(JVM 힙) → 행3 커넥션 풀 → 행4 MySQL → 행5 좌석 → 행6 워밍업·흐름
+# 패널 제목 = "대상 — 신호" 형식. 설명(ⓘ) = 역할 / 패널 / 읽는 법 3줄.
+# rate 윈도우 1m — 앱 지표 스크레이프 15s. cAdvisor 지표만 2m(스크레이프 간격이 더 길다).
+# 지표 출처: jvm_*·hikaricp_*·http_server_requests_* = Spring Actuator(ServiceMonitor app/booking, 8091)
+#            booking_* = 앱 코드 커스텀 카운터 / container_* = cAdvisor
+# 아직 없는 것: MySQL exporter(질의·잠금·접속) · 남은 좌석 · 응답 시간 히스토그램(p99).
+#   해당 자리는 텍스트 패널로 두고, 계측이 들어오면 그래프로 바꾼다.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-app-booking-detail
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  app-booking-detail.json: |
+    {
+      "uid": "app-booking-detail",
+      "title": "booking 서비스",
+      "editable": true,
+      "timezone": "browser",
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "templating": { "list": [] },
+      "panels": [
+        {
+          "type": "row", "title": "지금 무슨 일이 일어나는가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 엔드포인트별 요청 (건/초)",
+          "description": "- **역할**: 부하의 크기. queue와 달리 반복 폴링이 아니라 정원 안 사람이 순서대로 한 번씩 진행한다\n- **패널**: uri 라벨별 초당 요청. actuator 경로는 제외한다\n- **읽는 법**: 좌석도 조회와 결제 확정은 요청 하나의 무게가 다르다. 건수만으로 부하를 비교하면 안 된다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (uri) (rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*\"}[1m]))", "legendFormat": "{{uri}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 엔드포인트별 응답 (평균 · 최대)",
+          "description": "- **역할**: 사용자가 겪는 지연. 판정의 출발점이다\n- **패널**: 실선 = sum÷count 로 낸 평균, 점선 = Micrometer가 들고 있는 최근 최댓값\n- **읽는 법**: 분위수(p99)가 없다 — 응답 시간 히스토그램이 꺼져 있어 버킷이 안 나온다. 평균은 느린 소수를 가리므로 최댓값과 같이 본다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (uri) (rate(http_server_requests_seconds_sum{application=\"cgv-booking\", uri!~\"/actuator.*\"}[1m])) / sum by (uri) (rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*\"}[1m]))", "legendFormat": "평균 {{uri}}" },
+            { "refId": "B", "expr": "max by (uri) (http_server_requests_seconds_max{application=\"cgv-booking\", uri!~\"/actuator.*\"})", "legendFormat": "최대 {{uri}}" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "최대.*" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 엔드포인트별 실패율",
+          "description": "- **역할**: 좌석 경합에서 진 요청과 뒷단이 막혀 실패한 요청이 여기 나온다\n- **패널**: outcome이 SUCCESS가 아닌 건수 ÷ 전체 건수. 4xx와 5xx를 나눠 본다\n- **읽는 법**: 4xx는 좌석이 이미 팔렸거나 입장 인증이 없는 경우 — 정상 동작이다. 5xx가 오르면 뒷단(풀·MySQL)을 본다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*\", status=~\"4..\"}[1m])) / sum(rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*\"}[1m]))", "legendFormat": "4xx" },
+            { "refId": "B", "expr": "sum(rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*\", status=~\"5..\"}[1m])) / sum(rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*\"}[1m]))", "legendFormat": "5xx" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 20 } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "5xx" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+
+        {
+          "type": "row", "title": "① 파드 — 힙이 주역이다", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — JVM 메모리 (영역별)",
+          "description": "- **역할**: 컨테이너 limit 1Gi 의 75%인 768Mi가 힙이고, 나머지는 클래스 정보와 컴파일해 둔 기계어가 쓴다\n- **패널**: heap과 nonheap을 영역별로 쌓아서. 컨테이너 limit 1Gi 선을 함께 둔다\n- **읽는 법**: 힙이 상한 가까이 붙어 있으면 GC가 잦아진다. nonheap까지 더한 합이 1Gi에 닿으면 컨테이너가 종료된다 — 힙만 보면 그 여유를 못 본다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (area) (jvm_memory_used_bytes{application=\"cgv-booking\"})", "legendFormat": "{{area}}" },
+            { "refId": "B", "expr": "sum(jvm_memory_max_bytes{application=\"cgv-booking\", area=\"heap\"} > 0)", "legendFormat": "힙 상한" },
+            { "refId": "C", "expr": "1073741824", "legendFormat": "컨테이너 limit" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "bytes", "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "컨테이너 limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.stacking", "value": { "mode": "none" } } ] },
+              { "matcher": { "id": "byName", "options": "힙 상한" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.stacking", "value": { "mode": "none" } } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — GC 멈춘 시간 (초/초) · 횟수",
+          "description": "- **역할**: 힙이 빡빡해지면 증상이 메모리 부족이 아니라 느려짐으로 나온다. GC가 도는 동안 요청 처리가 멈추기 때문이다\n- **패널**: GC로 멈춘 시간의 초당 증가와 초당 횟수. 값 0.1이면 1초 중 0.1초를 멈춰 있었다는 뜻\n- **읽는 법**: 지연이 올랐는데 여기가 같이 오르면 힙 쪽이다. 다만 원인인지 결과인지는 오른쪽 행의 풀 대기와 겹쳐 봐야 갈린다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (action) (rate(jvm_gc_pause_seconds_sum{application=\"cgv-booking\"}[1m]))", "legendFormat": "멈춘 시간 {{action}}" },
+            { "refId": "B", "expr": "sum by (action) (rate(jvm_gc_pause_seconds_count{application=\"cgv-booking\"}[1m]))", "legendFormat": "횟수 {{action}}" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 4, "custom": { "fillOpacity": 10 } },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "횟수.*" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking 파드 — CPU 사용량 · 스로틀 비율",
+          "description": "- **역할**: booking에서 CPU는 첫 용의자가 아니다. 요청 수가 적고 그나마도 대부분 DB를 기다리는 시간이라 코어를 안 쓴다\n- **패널**: 컨테이너 CPU 사용량(코어)과 스로틀 비율. limit 1코어 선\n- **읽는 법**: 여기가 평평한데 지연이 오르면 원인은 뒤(풀·MySQL)다. GC가 잦아도 CPU가 오르므로 왼쪽 패널과 같이 본다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"booking\"}[2m]))", "legendFormat": "CPU (코어)" },
+            { "refId": "B", "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"booking\"}[2m])) / sum(rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"booking\"}[2m]))", "legendFormat": "스로틀 비율" },
+            { "refId": "C", "expr": "1", "legendFormat": "limit" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 3, "custom": { "fillOpacity": 10 } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+
+        {
+          "type": "row", "title": "② DB 커넥션 풀이 상한인가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 커넥션 풀 상태",
+          "description": "- **역할**: 가상 스레드를 켜 두어 요청은 오는 대로 다 받는다. 그래서 동시성의 실제 상한이 스레드 풀이 아니라 이 커넥션 풀이다\n- **패널**: active 쓰는 중 · idle 노는 중 · pending 커넥션을 기다리는 요청 수. max 10 선\n- **읽는 법**: active가 10에 붙고 pending이 쌓이면 풀이 말랐다. 다만 원인이 풀 크기인지 MySQL인지는 획득 시간과 사용 시간을 같이 봐야 갈린다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
+          "targets": [
+            { "refId": "A", "expr": "hikaricp_connections_active{application=\"cgv-booking\"}", "legendFormat": "active" },
+            { "refId": "B", "expr": "hikaricp_connections_idle{application=\"cgv-booking\"}", "legendFormat": "idle" },
+            { "refId": "C", "expr": "hikaricp_connections_pending{application=\"cgv-booking\"}", "legendFormat": "pending" },
+            { "refId": "D", "expr": "hikaricp_connections_max{application=\"cgv-booking\"}", "legendFormat": "max" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "max" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] },
+              { "matcher": { "id": "byName", "options": "pending" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 커넥션 획득 시간 · 사용 시간",
+          "description": "- **역할**: 이 둘이 ②와 ③을 가른다. 획득 시간은 통로를 기다린 시간이고, 사용 시간은 커넥션을 쥔 채 DB를 기다린 시간이다\n- **패널**: 각각 sum÷count 로 낸 평균\n- **읽는 법**: 획득만 오르고 사용은 그대로면 풀 크기가 좁다. 사용이 먼저 오르고 획득이 따라 오르면 원인은 MySQL이고, 그때 풀을 늘리면 더 나빠진다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 19 },
+          "targets": [
+            { "refId": "A", "expr": "rate(hikaricp_connections_acquire_seconds_sum{application=\"cgv-booking\"}[1m]) / rate(hikaricp_connections_acquire_seconds_count{application=\"cgv-booking\"}[1m])", "legendFormat": "획득까지 기다린 시간" },
+            { "refId": "B", "expr": "rate(hikaricp_connections_usage_seconds_sum{application=\"cgv-booking\"}[1m]) / rate(hikaricp_connections_usage_seconds_count{application=\"cgv-booking\"}[1m])", "legendFormat": "커넥션을 쥔 시간" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "decimals": 4, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 커넥션 획득 실패 (누적)",
+          "description": "- **역할**: 커넥션을 10초 안에 못 얻은 요청이 실패로 끊긴 건수. 풀이 말랐다는 가장 분명한 증거다\n- **패널**: 누적 카운터 그대로\n- **읽는 법**: 0에서 올라가기 시작한 지점이 풀 10의 한계다. 그 시점의 초당 요청 수가 곧 이 설정으로 감당한 상한이 된다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+          "targets": [
+            { "refId": "A", "expr": "hikaricp_connections_timeout_total{application=\"cgv-booking\"}", "legendFormat": "획득 실패 누적" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 20 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+        },
+
+        {
+          "type": "row", "title": "③ MySQL 이 상한인가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "MySQL 컨테이너 — CPU · 메모리",
+          "description": "- **역할**: 예매 확정은 좌석 행을 잠그고 중복을 확인하고 쓰고 디스크에 커밋한다. 그 몫이 여기 나온다\n- **패널**: 컨테이너 CPU(코어)와 메모리 사용량. limit CPU 1 · 메모리 768Mi\n- **읽는 법**: CPU가 1에 붙으면 파드를 늘려도 안 풀리는 자리다. 다만 이 패널로는 CPU를 무엇에 썼는지(잠금 대기인지 커밋인지)가 안 갈린다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"mysql\"}[2m]))", "legendFormat": "CPU (코어)" },
+            { "refId": "B", "expr": "1", "legendFormat": "CPU limit" },
+            { "refId": "C", "expr": "sum(container_memory_working_set_bytes{namespace=\"data\", container=\"mysql\"}) / 805306368", "legendFormat": "메모리 (limit 대비)" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 3, "custom": { "fillOpacity": 10 } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "CPU limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "text",
+          "title": "MySQL 안이 안 보인다",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+          "options": {
+            "mode": "markdown",
+            "content": "mysql 파드에 컨테이너가 `mysql` 하나뿐이다. exporter 가 없어 `mysql_` 로 시작하는 지표가 하나도 안 들어온다.\n\n**그래서 못 보는 것**\n\n```\n질의 시간          어느 질의가 오래 걸리나\n잠금 대기          같은 좌석을 두고 붙은 트랜잭션이 얼마나 기다리나\n진행 중 트랜잭션    지금 몇 건이 열려 있나\n접속 수            max_connections 에 닿았나\n버퍼풀 적중률       디스크로 내려가는 비율\n```\n\n**이것이 비면 판정이 성립하지 않는다.** 왼쪽 행의 마지막 갈래가 \"풀이 마른 원인이 ② 인가 ③ 인가\" 인데, 둘 다 겉모습이 \"풀이 찼다\" 로 같다. MySQL 쪽 신호가 없으면 구분할 방법이 없고, 잘못 판정해 풀을 늘리면 더 많은 요청이 같은 뒷단에 몰린다.\n\n`max_connections` 도 확인한 적이 없다. 풀 10 × 파드 수가 그 값을 넘으면 ② 가 아니라 접속 거절로 먼저 끊긴다."
+          }
+        },
+
+        {
+          "type": "row", "title": "④ 좌석이 남았는가 · 흐름은 이어지는가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 예매 확정 (건/초, 결과별)",
+          "description": "- **역할**: 좌석 4,000은 부하를 낮춰도 안 돌아오는 유일한 축이다. 얼마나 빨리 소진되는지가 판 하나의 길이를 정한다\n- **패널**: 확정 시도의 결과별 초당 건수. 활성화되기 전에는 시리즈가 없다\n- **읽는 법**: 성공 건수를 누적하면 팔린 좌석 수다. 실패는 좌석 경합에서 진 것과 뒷단이 막힌 것이 섞여 있어 result 라벨로 갈라 본다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 37 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (result) (rate(booking_confirm_total{application=\"cgv-booking\"}[1m]))", "legendFormat": "{{result}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 입장 인증 처리 · 회수 (건/초)",
+          "description": "- **역할**: queue 가 승격시킨 사람이 Kafka 를 거쳐 booking 에 닿아야 좌석을 고를 수 있다. 그 전달이 이어지는지를 본다\n- **패널**: 인증 등록과 회수의 결과별 초당 건수\n- **읽는 법**: 정원이 비었는데 예매가 안 늘면 이 값이 0인지부터 본다. 0이면 승격은 됐는데 전달이 안 닿은 것이다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 37 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (result) (rate(booking_admissions_total{application=\"cgv-booking\"}[1m]))", "legendFormat": "인증 {{result}}" },
+            { "refId": "B", "expr": "sum by (result) (rate(booking_admission_revoked_total{application=\"cgv-booking\"}[1m]))", "legendFormat": "회수 {{result}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "text",
+          "title": "남은 좌석이 안 보인다",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 37 },
+          "options": {
+            "mode": "markdown",
+            "content": "좌석 총량은 설정에서 나온다.\n\n```\n지점 5 x 관 4        = 회차 20\n관마다 10행 x 20열   = 200석\n                       ----------\n                       4,000석\n```\n\n판 것은 `booking_confirm_total` 로 세지만 **남은 수를 내는 지표가 없다.** 지금은 데이터베이스를 직접 조회해야 안다.\n\n부하 실측에서 이것이 필요한 이유: 4,000석이 소진되면 그 뒤로는 무엇을 재도 \"팔 것이 없어서\" 나온 값이다. 판을 끊을 지점을 화면에서 알 수 없으면 초기화 시점을 놓친다.\n\n한 요청에 담을 수 있는 좌석은 8개까지다. 좌석 잠금은 45초 뒤 풀린다."
+          }
+        },
+
+        {
+          "type": "row", "title": "워밍업이 끝났는가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — JIT 컴파일 누적 시간 (초/초)",
+          "description": "- **역할**: JVM 은 바이트코드를 처음엔 한 줄씩 해석해 실행하고, 자주 도는 코드를 발견하면 그 부분을 기계어로 컴파일한다. 그동안은 실제 성능이 아니다\n- **패널**: 컴파일에 쓴 누적 시간의 초당 증가. 부하가 시작되면 치솟았다가 잦아든다\n- **읽는 법**: 이 값이 평평해진 뒤부터가 실측 구간이다. 앞 구간을 넣고 재면 실제보다 나쁘게 나온다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 46 },
+          "targets": [
+            { "refId": "A", "expr": "rate(jvm_compilation_time_ms_total{application=\"cgv-booking\"}[1m]) / 1000", "legendFormat": "컴파일 시간" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 4, "custom": { "fillOpacity": 20 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "booking — 스레드 수",
+          "description": "- **역할**: 가상 스레드를 켜 두어 요청마다 만드는 흐름은 여기 안 잡힌다. 여기 잡히는 것은 그 아래에서 실제로 실행해 주는 운영체제 스레드다\n- **패널**: 살아 있는 스레드 수와 그중 데몬 스레드 수\n- **읽는 법**: 요청이 수천 건이어도 이 값이 수십에 머물면 가상 스레드가 의도대로 도는 것이다. 요청 수에 비례해 늘면 어딘가에서 옛 방식으로 되돌아간 것이다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
+          "targets": [
+            { "refId": "A", "expr": "jvm_threads_live_threads{application=\"cgv-booking\"}", "legendFormat": "살아 있는 스레드" },
+            { "refId": "B", "expr": "jvm_threads_daemon_threads{application=\"cgv-booking\"}", "legendFormat": "데몬 스레드" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } }
+        }
+      ]
+    }

@@ -1,0 +1,276 @@
+# queue 서비스 대시보드 — 부하 실측용. 판정 순서가 행 순서다.
+#   행1 무슨 일이 → 행2 파드 CPU → 행3 커넥션 풀 → 행4 Redis 명령 → 행5 Redis 메모리 → 행6 배경 루프
+# 패널 제목 = "대상 — 신호" 형식. 설명(ⓘ) = 역할 / 패널 / 읽는 법 3줄.
+# rate 윈도우 1m — 부하 구간의 변화를 보는 화면이다(앱 지표 스크레이프 15s → 1m에 4점).
+#   단 cAdvisor 지표만 2m: 스크레이프 간격이 더 길어 1m 창에 점이 하나뿐이라 rate가 안 나온다.
+# 지표 출처: queue_* = 앱 코드(PodMonitor app/queue, 9091) / container_* = cAdvisor
+#            redis_* = Redis exporter(ServiceMonitor data/redis) / kube_* = kube-state-metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-app-queue-detail
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  app-queue-detail.json: |
+    {
+      "uid": "app-queue-detail",
+      "title": "queue 서비스",
+      "editable": true,
+      "timezone": "browser",
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "templating": { "list": [] },
+      "panels": [
+        {
+          "type": "row", "title": "지금 무슨 일이 일어나는가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — 경로별 요청 (건/초)",
+          "description": "- **역할**: 부하의 크기 자체. 폴링이 셋(순번·전체 현황·실황 피드)이라 경로를 나눠야 어느 쪽이 무거운지 갈린다\n- **패널**: path 라벨은 라우트 패턴이라 원시 URL로 갈라지지 않는다. 히스토그램의 _count 증가율\n- **읽는 법**: position = 대기 인원에 비례. stats·events = 열린 화면 수에 비례하고 주기가 3초 고정",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/.*\"}[1m]))", "legendFormat": "{{path}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — 경로별 응답 p99",
+          "description": "- **역할**: 사용자가 겪는 지연. 판정의 출발점이다\n- **패널**: 히스토그램 버킷에서 99분위. 경로마다 하는 일이 달라 합치면 뜻이 없다\n- **읽는 법**: 여기가 오르면 아래 행들로 내려가며 어디인지 가른다. 에러가 같이 나면 Redis 쪽(500ms 타임아웃), 안 나면 파드 CPU 쪽",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (path, le) (rate(queue_http_request_duration_seconds_bucket{path=~\"/api/.*\"}[1m])))", "legendFormat": "{{path}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — 경로별 에러율",
+          "description": "- **역할**: 파드 CPU가 상한일 때와 Redis가 상한일 때를 가르는 축. 앞은 느려지기만 하고 뒤는 실패한다\n- **패널**: status 5xx 건수 ÷ 전체 건수\n- **읽는 법**: 0이 아니면 Redis 응답이 클라이언트 타임아웃 500ms를 넘긴 것을 먼저 의심한다. 단 지금은 다른 5xx와 섞여 있어 원인이 확정되지 않는다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/.*\", status=~\"5..\"}[1m])) / sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/.*\"}[1m]))", "legendFormat": "{{path}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 20 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+
+        {
+          "type": "row", "title": "① 파드 CPU 가 상한인가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "queue 파드 — CPU 사용량 (코어)",
+          "description": "- **역할**: 파드가 요청을 받아 풀고 답을 만드는 데 쓰는 몫. Redis를 기다리는 시간은 여기 안 잡힌다\n- **패널**: 파드별 CPU 초/초 = 코어 수. requests 0.25 · limit 0.5 선을 함께 둔다\n- **읽는 법**: limit 0.5에 붙어서 평평하면 스로틀이 걸리는 중이다. requests 0.175(70%)를 넘으면 HPA가 파드를 늘린다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[2m]))", "legendFormat": "{{pod}}" },
+            { "refId": "B", "expr": "0.5", "legendFormat": "limit" },
+            { "refId": "C", "expr": "0.25", "legendFormat": "requests" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 3, "custom": { "fillOpacity": 10 } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] },
+              { "matcher": { "id": "byName", "options": "requests" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "queue 파드 — 스로틀 비율",
+          "description": "- **역할**: 커널이 100ms 구간마다 이 컨테이너의 몫을 채우고 세는데, 다 쓰면 남은 구간 동안 코어에 안 올린다. 그 구간의 비율\n- **패널**: 스로틀된 구간 수 ÷ 전체 구간 수\n- **읽는 법**: 0이 아니면 CPU limit이 좁다. 파드는 죽지 않고 늦어진다 — 지연은 오르고 에러는 안 난다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"queue\"}[2m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"queue\"}[2m]))", "legendFormat": "{{pod}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 20 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — 파드 수 (HPA)",
+          "description": "- **역할**: ①은 파드를 늘리면 풀리는 자리다. HPA가 제때 늘렸는지를 본다\n- **패널**: HPA가 원하는 수와 실제 수. min 2 · max 4\n- **읽는 법**: 원하는 수가 4에 붙어 있으면 상한에 걸린 것이다. 그 위로는 파드로 못 푼다. 원하는 수와 실제 수가 벌어져 있으면 파드가 못 앉고 있다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "kube_horizontalpodautoscaler_status_current_replicas{exported_namespace=\"app\", horizontalpodautoscaler=\"queue\"}", "legendFormat": "실제" },
+            { "refId": "B", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{exported_namespace=\"app\", horizontalpodautoscaler=\"queue\"}", "legendFormat": "HPA가 원하는 수" },
+            { "refId": "C", "expr": "kube_horizontalpodautoscaler_spec_max_replicas{exported_namespace=\"app\", horizontalpodautoscaler=\"queue\"}", "legendFormat": "max" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 0, "lineInterpolation": "stepAfter" } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "max" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        },
+
+        {
+          "type": "row", "title": "② 커넥션 풀이 상한인가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — Redis 커넥션 풀 (파드별 · 상태별)",
+          "description": "- **역할**: 파드에서 Redis로 나가는 통로 수. 풀 크기가 곧 그 파드가 같은 순간에 보낼 수 있는 명령 수다\n- **패널**: in_use 쓰는 중 · idle 노는 중 · waiting 커넥션을 기다리는 요청 수\n- **읽는 법**: idle이 0이고 waiting이 0보다 크면 통로가 다 찼다. 다만 Redis가 느려도 같은 모양이 되므로 아래 행의 Redis CPU를 먼저 본다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+          "targets": [
+            { "refId": "A", "expr": "queue_redis_pool", "legendFormat": "{{pod}} {{state}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "text",
+          "title": "풀 크기의 근거",
+          "description": "",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+          "options": {
+            "mode": "markdown",
+            "content": "REDIS_POOL_SIZE 를 설정에 주지 않아 라이브러리 기본값이 쓰인다.\n\n```\n기본값       10 x GOMAXPROCS\nGOMAXPROCS   컨테이너 CPU limit 에서 정해진다\nCPU limit    500m = 코어 0.5개분 -> 1개 미만이라 최소값 1\n\n풀 크기      10 x 1 = 10\n```\n\n파드 하나가 같은 순간에 Redis 로 보낼 수 있는 명령이 10개다. HPA 상한 4대를 다 써도 40.\n\nCPU limit 을 1000m 으로 올려도 GOMAXPROCS 는 1 그대로라 풀도 10 그대로다. 2000m 이라야 20이 된다.\n\n**아직 없는 패널**: 풀을 기다린 시간. 지금 waiting 은 \"몇 건이 기다리는 중\"이라 순간값이고, 얼마나 기다렸는지는 코드에 계측을 넣어야 나온다."
+          }
+        },
+
+        {
+          "type": "row", "title": "③ Redis 명령 처리가 상한인가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "Redis — 프로세스 CPU (코어)",
+          "description": "- **역할**: Redis는 명령을 하나씩 순서대로 실행한다. 코어 하나가 천장이고 limit도 1이다\n- **패널**: 노드 3대의 사용자·시스템 CPU 합. Sentinel 구성이라 master 1 · replica 2\n- **읽는 법**: 한 선만 1에 붙는다면 그것이 master다. 쓰기와 읽기가 전부 master로 가고 replica는 놀고 있다는 뜻이기도 하다. 1에 닿으면 파드를 늘려도 안 풀린다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (rate(redis_cpu_user_seconds_total[1m]) + rate(redis_cpu_sys_seconds_total[1m]))", "legendFormat": "{{pod}}" },
+            { "refId": "B", "expr": "1", "legendFormat": "limit" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "none", "decimals": 3, "custom": { "fillOpacity": 10 } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "Redis — 명령별 호출 (건/초)",
+          "description": "- **역할**: 명령 수를 줄이는 것이 이 자리의 유일한 수단이라, 어느 명령이 몇 번 오는지가 손댈 곳을 정한다\n- **패널**: 명령 종류별 초당 호출. 상위 10개\n- **읽는 법**: 순번 폴링은 evalsha(Lua)로 나가고, 전체 현황은 zcard·get, 실황 피드는 lrange다. 화면 둘을 캐시로 줄이면 zcard·get·lrange가 준다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
+          "targets": [
+            { "refId": "A", "expr": "topk(10, sum by (cmd) (rate(redis_commands_total[1m])))", "legendFormat": "{{cmd}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "Redis — 명령별 소요 시간 (초/초)",
+          "description": "- **역할**: 호출 수가 적어도 하나가 무거우면 그 명령이 코어를 먹는다. 실황 피드가 매번 읽는 목록 조회가 그런 경우다\n- **패널**: 명령 종류별로 Redis가 그 명령에 쓴 시간의 초당 증가. 값이 1이면 그 명령 하나로 코어 하나를 다 쓴 것이다\n- **읽는 법**: 호출 수 패널과 나란히 본다. 호출은 적은데 시간이 큰 명령이 먼저 줄일 대상이다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 28 },
+          "targets": [
+            { "refId": "A", "expr": "topk(10, sum by (cmd) (rate(redis_commands_duration_seconds_total[1m])))", "legendFormat": "{{cmd}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 4, "custom": { "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+
+        {
+          "type": "row", "title": "④ Redis 메모리에 여유가 있는가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "Redis — 사용 메모리",
+          "description": "- **역할**: 대기 명부를 담는 용량. 속도가 아니라 몇 명이 서 있을 수 있는가의 축이다\n- **패널**: 노드별 사용 메모리와 컨테이너 limit 512Mi 선\n- **읽는 법**: maxmemory가 설정되어 있지 않아(실측 0) Redis는 자기 한계를 모른다. 512Mi에 닿으면 거절이 아니라 컨테이너 종료로 끝나고, 디스크 저장도 꺼져 있어 대기열이 통째로 사라진다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 37 },
+          "targets": [
+            { "refId": "A", "expr": "redis_memory_used_bytes", "legendFormat": "{{pod}}" },
+            { "refId": "B", "expr": "536870912", "legendFormat": "컨테이너 limit" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "컨테이너 limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — 대기 인원 · 입장 인원",
+          "description": "- **역할**: 메모리를 채우는 것이 이 숫자다. 대기자 한 명이 몇 바이트인지는 이 값과 사용 메모리를 나눠서 나온다\n- **패널**: 영화별 대기 인원과 입장 인원. 활성 큐가 없으면 시리즈 자체가 생기지 않는다\n- **읽는 법**: 유입이 없는데 대기 인원이 줄면 30초 넘게 폴링이 없는 사람이 지워진 것이다 — 응답이 밀려 살아 있는 사람이 지워지는 경우가 여기 섞인다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 37 },
+          "targets": [
+            { "refId": "A", "expr": "queue_waiting", "legendFormat": "대기 {{movie}}" },
+            { "refId": "B", "expr": "queue_active", "legendFormat": "입장 {{movie}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "Redis — 키 개수",
+          "description": "- **역할**: 대기자 한 명이 키를 몇 개 차지하는지를 인원과 대조해 확인한다\n- **패널**: 노드별 키 개수\n- **읽는 법**: 대기자는 줄 자체와 마지막 폴링 시각 두 곳에 들어간다. 인원 대비 키가 그 배수로 늘어나는지 본다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 37 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (redis_db_keys)", "legendFormat": "{{pod}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+
+        {
+          "type": "row", "title": "배경 루프가 살아 있는가", "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 }, "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — 루프별 마지막 완주 경과 (초)",
+          "description": "- **역할**: 승격·입장 만료·대기 만료·발행 저널 스윕 넷은 요청과 무관하게 파드 안에서 돈다. 멈춰도 응답 지연에는 안 나타난다\n- **패널**: 지금 시각에서 그 루프가 마지막으로 한 바퀴를 끝낸 시각을 뺀 값. 파드마다 따로 돈다\n- **읽는 법**: 각 루프의 주기(승격 2초 · 만료 10초 · 스윕 5초)보다 계속 크면 그 루프가 밀리는 중이다. 파드가 4대면 같은 루프가 4벌 돌아 Redis 부하도 4배가 된다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 46 },
+          "targets": [
+            { "refId": "A", "expr": "time() - queue_loop_last_tick_timestamp_seconds", "legendFormat": "{{loop}} · {{pod}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "decimals": 1, "custom": { "fillOpacity": 0 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "queue — Kafka 최종 실패 (누적)",
+          "description": "- **역할**: 입장 알림 발행과 완료 소비가 재시도를 소진하고 최종 실패한 건수. 대기열이 도는데도 입장이 전달되지 않는 상태를 잡는다\n- **패널**: 두 카운터의 누적값\n- **읽는 법**: 올라가면 그 시점부터 정원이 비어도 승격자가 booking에 안 닿거나, 나간 자리가 반납되지 않는다",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
+          "targets": [
+            { "refId": "A", "expr": "sum(queue_kafka_publish_failures_total)", "legendFormat": "발행 실패" },
+            { "refId": "B", "expr": "sum(queue_kafka_consume_failures_total)", "legendFormat": "소비 실패" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+        }
+      ]
+    }
