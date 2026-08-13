@@ -12,12 +12,20 @@ tempo:
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials
+  extraEnv:
+    # Go 런타임은 컨테이너 memory limit을 읽지 않는다. GOMEMLIMIT 미설정이면 기본값이 int64 최대라
+    #   메모리가 무한이라고 보고, GOGC=100 규칙(직전 GC의 살아있는 힙 × 2에서 다음 GC)으로
+    #   다음 GC 목표를 2.36GB에 잡았다(실측 go_memstats_next_gc_bytes). limit 1Gi의 두 배가 넘는다.
+    #   그래서 힙이 limit 근처까지 차오른 뒤에야 GC가 몰려 돌고, 그 동안 /ready가 프로브 timeout 5초를 넘긴다.
+    # 800MiB = limit 1Gi의 약 78%. 나머지는 고루틴 스택·런타임 메타데이터·OS 버퍼 몫.
+    - name: GOMEMLIMIT
+      value: "800MiB"
   resources:                          # [렌더 확인: 업스트림에 resources 2곳(tempo.resources/top-level) — 적용처 검증]
-    # memory limit 512Mi에서 110회 재시작(exit 137). 사용량이 511Mi로 상한에 붙어 뜨는 즉시 다시 죽었고,
-    #   그 사이 WAL에 쓰다 만 블록이 남아 다음 기동의 replay가 그것을 지우는 고리가 됐다.
-    #   앱 트레이스가 붙으면서 유입이 늘었는데 이 값이 그대로였다.
+    # memory limit 512Mi에서 110회 재시작. 종료 코드는 137이지만 OOMKilled가 아니다 —
+    #   이벤트는 Killing(사유: failed liveness probe)이고 OOMKilling은 0건. /ready가 답하지 못해 kubelet이 죽였다.
+    #   재시작할 때마다 WAL replay로 힙이 부풀고(기동 직후 live_traces 1736 → 4분 뒤 13) 같은 자리에 다시 닿는 고리가 됐다.
     # request는 128Mi에서 256Mi로. 실측이 그보다 위라 그대로 두면 스케줄러가 이 파드를 과소 평가한다.
-    # 부하 실측(13부)에서는 앱 샘플링이 전 요청(1.0)이라 유입이 다시 몇 배가 된다 — 그때 이 값을 다시 잰다.
+    # 앱 샘플링이 전 요청(1.0)이라 부하를 걸면 유입이 다시 몇 배가 된다 — 그때 이 값을 다시 잰다.
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 1Gi }
   storage:
