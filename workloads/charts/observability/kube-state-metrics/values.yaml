@@ -9,3 +9,8 @@ resources:                           # 경량 발행기. request 부여로 evict
 prometheus:
   monitor:
     enabled: true
+    # kube-state-metrics는 자신이 아니라 다른 오브젝트의 상태를 발행한다. 메트릭에 실린
+    # namespace/pod/container가 그 대상의 것인데, honorLabels 없이 스크레이프하면 수집 대상
+    # (kube-state-metrics 파드 자신)의 라벨이 덮어쓰고 원래 값은 exported_ 접두어로 밀린다.
+    # 그러면 cAdvisor의 container_* (namespace/pod 그대로)와 라벨 이름이 달라 조인이 안 된다.
+    honorLabels: true
