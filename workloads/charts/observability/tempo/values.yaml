@@ -12,6 +12,13 @@ tempo:
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials
+  # 차트 기본값이 memBallastSizeMbs: 1024 다. 밸러스트는 GC 를 늦추려고 1GiB 를 가짜로
+  #   할당해 두는 옛 기법인데, GOMEMLIMIT(아래 800MiB)이 생긴 뒤로는 해가 된다 —
+  #   밸러스트가 상한보다 커서 GC 가 목표를 영원히 못 맞추고 계속 돈다.
+  # 실측 2026-08-15: GC 12.58 회/초 · CPU 120m.  같은 Go 프로그램인 Loki 는 0.01 회/초 · 9m.
+  #   그런데 이 파드가 실제로 하는 일은 0.83 span/초 · live traces 13개다.
+  #   살아있는 힙 1,039MiB 로 보고되는데 RSS 는 109MiB — 그 차이가 밸러스트다.
+  memBallastSizeMbs: 0
   extraEnv:
     # Go 런타임은 컨테이너 memory limit을 읽지 않는다. GOMEMLIMIT 미설정이면 기본값이 int64 최대라
     #   메모리가 무한이라고 보고, GOGC=100 규칙(직전 GC의 살아있는 힙 × 2에서 다음 GC)으로

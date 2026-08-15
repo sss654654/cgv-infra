@@ -1,14 +1,27 @@
 # cert-manager 자원 (set-once) — 3파드(controller·webhook·cainjector). evict 방지 최소 request.
+#
+# ★ 2026-08-15 — 세 파드를 0대로 내렸다. 발급 대상이 아직 없다.
+#   저장소 전수 확인: Certificate 0건 · Issuer/ClusterIssuer 0건 · cert-manager.io 주석 0건.
+#   주변 설정도 같은 상태다 — argocd tls:false · cgv-app ingress.enabled:false · Kafka tls:false ·
+#   dev 접속은 LB IP 경로라 인증서를 쓰는 자리가 없다.
+#   따라서 파드를 내려도 동작이 달라지는 오브젝트가 없다. 회수: requests 128Mi · CPU 150m.
+#   CRD(crds.enabled)와 아래 resources 는 그대로 둔다 — 되살릴 때 replicaCount 세 줄만 지우면 된다.
+#   되살릴 시점: 외부 노출 편에서 도메인·TLS 를 세울 때(그때 DNS-01 발급자가 처음 생긴다).
 crds:
   enabled: true                       # install.sh --set에서 이관(값 파일로 일원화)
+replicaCount: 0                       # controller
+startupapicheck:
+  enabled: false                      # 파드가 0대라 API 확인 Job이 영원히 대기한다
 resources:                            # controller
   requests: { cpu: 50m, memory: 64Mi }
   limits:   { cpu: 200m, memory: 128Mi }
 webhook:
+  replicaCount: 0
   resources:
     requests: { cpu: 50m, memory: 32Mi }
     limits:   { cpu: 100m, memory: 64Mi }
 cainjector:
+  replicaCount: 0
   resources:
     requests: { cpu: 50m, memory: 32Mi }
     limits:   { cpu: 100m, memory: 64Mi }

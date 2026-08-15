@@ -3,4 +3,6 @@ mysql:
   primary:
     resources:                        # commit CPU 병목(부하 때 1코어 burst). C++라 JVM 힙 짝 불필요
       requests: { cpu: 250m, memory: 512Mi }
-      limits:   { cpu: "1", memory: 768Mi }
+      # 실측 익명 433-494MiB 에 768Mi 는 여유가 얇다. 부하 때 임시 테이블·정렬 버퍼가
+      #   연결 수만큼 늘어 익명이 뛴다 — 판 도중 OOMKill 이면 그 판을 다시 돌려야 한다.
+      limits:   { cpu: "1", memory: 1Gi }

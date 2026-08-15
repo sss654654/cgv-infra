@@ -8,11 +8,16 @@ redis:
   sentinel:
     resources:
       requests: { cpu: 50m, memory: 64Mi }
-      limits:   { cpu: 100m, memory: 128Mi }
+      # CPU limit 100m 은 0.1초 조각마다 10ms 배급이다. sentinel 은 1초마다 깨어나 마스터를
+      #   확인하는데 깨어난 순간엔 코어를 통째로 원해 매번 배급을 소진한다 — 유휴에서도 상시
+      #   10-12% 스로틀(실측 2026-08-15, cpu.stat 의 nr_throttled/nr_periods 로 확인).
+      #   묶이면 그만큼 판정이 늦어져 failover 감지가 밀린다. limit 은 예약이 아니라 공짜다.
+      limits:   { cpu: 300m, memory: 128Mi }
   metrics:
     resources:                                  # exporter nano preset(128/192)이 과해 축소
       requests: { cpu: 50m, memory: 32Mi }
-      limits:   { cpu: 100m, memory: 64Mi }
+      # 스크레이프가 오는 순간에만 바짝 일해 그 조각에서 배급을 넘긴다 — 같은 이유로 올린다.
+      limits:   { cpu: 300m, memory: 64Mi }
 
 # sealedSecret.encryptedPassword 는 sealed-secrets 컨트롤러 up 후 kubeseal 출력값을 여기 주입:
 # sealedSecret:

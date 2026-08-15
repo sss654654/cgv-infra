@@ -107,9 +107,11 @@ compactor:
   resources:
     requests: { cpu: 250m, memory: 192Mi, ephemeral-storage: 1Gi }
     limits:   { cpu: 1000m, memory: 1Gi, ephemeral-storage: 5Gi }   # 블록 병합 CPU·디스크 스파이크
-ruler:
-  replicas: 1                                  # recording rule 자리 — rule은 이후 실측 후 채움
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+# ruler: 끔 — recording rule 이 0건이고(PrometheusRule CR·record: 저장소 전수 0건)
+#   알림은 Grafana Alerting 이 맡는다. Grafana 데이터소스에 manageAlerts 도 없어
+#   Grafana 가 이 ruler 를 부르지도 않는다. 룰을 넣게 되면 아래 두 줄을 되살린다.
+#   gateway nginx 는 ruler 주소를 변수+resolver 로 참조해 대상이 없어도 기동한다.
+ruler: { enabled: false }
 alertmanager: { enabled: false }               # 끔 — 알림은 Grafana Alerting으로 통합. PV도 소멸
 overrides_exporter: { enabled: false }         # 끔 — 단일테넌트라 테넌트별 한도 노출 무의미
 gateway:

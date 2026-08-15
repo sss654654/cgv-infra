@@ -56,8 +56,12 @@ alloy:
   clustering: { enabled: true }
   mounts: { varlog: false, dockercontainers: false }
   resources:
+    # request 128Mi 는 실사용(313-462Mi)보다 한참 낮다. 위 버킷 drop 으로 시리즈가 절반이
+    #   되므로 그 뒤 재측정해서 정한다 — 지금 올리면 컷 전 값으로 굳는다.
     requests: { cpu: 100m, memory: 128Mi }
-    limits: { memory: 512Mi }
+    # limit 512Mi 는 실측 peak 가 81-90% 로 이미 임박이다. 부하 판에서 로그·시리즈가 늘면
+    #   여기서 OOMKill 이 나고, 그러면 그 노드의 메트릭과 로그가 통째로 끊겨 판을 다시 돌려야 한다.
+    limits: { memory: 768Mi }
   extraPorts:
     - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP }
     - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
@@ -161,6 +165,24 @@ alloy:
         }
       }
 
+      // 제어면 히스토그램의 버킷 시리즈를 버린다.
+      //   apiserver_request_duration_seconds_bucket 하나가 24,816 시리즈다. 버킷은 le 라벨마다
+      //   시리즈가 하나씩 생겨 이름 하나가 수만 개로 불어난다.
+      //   실측(2026-08-15): k3s-server 126,219 중 버킷이 96,707 — 클러스터 전체 185,158의 52%.
+      //   대시보드 4장 어디에서도 이 계열을 쓰지 않는다(전수 확인). 행0의 생존 판정은
+      //   up{job="k3s-server"} · etcd_server_has_leader · kube_node_status_condition 셋이고
+      //   전부 히스토그램이 아니다.
+      //   _sum 과 _count 는 남긴다 — 평균과 비율은 그 둘로 계산되므로 분위수만 포기하는 것이다.
+      //   되살릴 조건: 제어면 지연의 분포(p99)를 봐야 하는 일이 생기면 이 rule 을 지운다.
+      prometheus.relabel "k3s_server_drop_buckets" {
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        rule {
+          source_labels = ["__name__"]
+          regex         = "(apiserver|etcd|workqueue|rest_client|kubelet|scheduler)_.*_bucket"
+          action        = "drop"
+        }
+      }
+
       prometheus.scrape "kubelet" {
         targets      = discovery.relabel.kubelet.output
         job_name     = "k3s-server"          // 위 주석 참고 — 이 응답은 kubelet 것이 아니라 k3s server 프로세스 전체다
@@ -170,7 +192,7 @@ alloy:
         // 이름 검증을 끄지 않으면 x509 오류로 전부 실패한다(사설망 노드 직접 접속).
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         tls_config { insecure_skip_verify = true }
-        forward_to = [prometheus.remote_write.mimir.receiver]
+        forward_to = [prometheus.relabel.k3s_server_drop_buckets.receiver]
         clustering { enabled = true }
       }
 

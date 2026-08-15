@@ -1,4 +1,5 @@
 # sealed-secrets 컨트롤러 자원 (set-once) — evict 방지 최소 request.
 resources:
   requests: { cpu: 50m, memory: 32Mi }
-  limits:   { cpu: 100m, memory: 64Mi }
+  # 실측 peak 51-54MiB 로 64Mi 의 80%. 봉인본이 14종에서 더 늘면 넘는다.
+  limits:   { cpu: 100m, memory: 128Mi }
