@@ -6,13 +6,17 @@ image:
   repository: 192.168.0.167:5050/cgv/cgv-onprem/queue-go
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling). HPA on이면 차트가 replicas 필드 생략.
 resources:
-  # 메모리는 request = limit. 앱배포설계-queue-go §1-D 결정:
-  #   ① Go 상주 메모리가 고정적이라 버스트할 이유가 없다(여유 칸 = 예약 낭비)
-  #   ② 초과의 결말이 OOMKill이라 상한이 하나여야 명확하다
-  #   ③ 예약=최대라 노드 bin-pack 계산이 정확해지고, 퇴거 랭킹(request 초과분 기준)에서 항상 안전한 쪽에 선다
-  # CPU만 버스트한다(request 250m = HPA 스케일 기준, limit 500m).
-  requests: {cpu: 250m, memory: 64Mi}
-  limits: {cpu: 500m, memory: 64Mi}
+  # 메모리 request = limit 이던 것을 갈랐다. 그 결정의 첫 근거는 "Go 상주 메모리가 고정적"
+  # 이었는데 실측이 다르게 나왔다 — 메모리는 동시 연결 수에 비례해서 는다.
+  # 연결 하나가 고루틴과 읽기·쓰기 버퍼를 들고, 폴링 주기(1-5초)가 IdleTimeout(60초)보다
+  # 짧아 접속해 있는 내내 끊기지 않는다. 실측 연결당 33-64KB.
+  #   limit 256Mi = 파드당 약 2,000 연결 × 40KB(80MiB) + 베이스 20MiB + GC 헤드룸.
+  #   request 96Mi = 유휴 상주(약 20MiB)와 스케줄 여유 사이. request를 limit과 같이 두면
+  #     HPA가 4대로 늘 때 노드 하나(스케줄 여유 약 200MiB)에 자리가 없어 Pending이 된다.
+  # CPU는 그대로다. 요청 1건당 약 100µ코어이고 판마다 limit의 13%를 넘지 않았다.
+  #   request 250m 은 HPA 스케일 기준선(70% = 175m)을 만드는 값이라 건드리지 않는다.
+  requests: {cpu: 250m, memory: 96Mi}
+  limits: {cpu: 500m, memory: 256Mi}
 autoscaling: # HPA 켬. max 4 = Kafka 파티션 4와 짝(그 이상은 소비 병렬성 증가 없음)
   enabled: true
   minReplicas: 2 # 단일장애 대비 상시 2
@@ -28,4 +32,7 @@ env:
   MAX_SESSIONS: "2"
   SESSION_TIMEOUT: "60"
   METRICS_PORT: "9091"
+  # 컨테이너 limit(256Mi)의 약 78%. Go 런타임은 cgroup limit을 스스로 읽지 않아
+  # 이 값이 없으면 GC 상한이 int64 최대가 되고, 힙이 limit을 넘긴 순간 커널이 OOMKill한다.
+  GOMEMLIMIT: "200MiB"
   OTLP_GRPC_ENDPOINT: alloy.observability.svc.cluster.local:4317

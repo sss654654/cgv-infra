@@ -19,9 +19,32 @@ affinity:
           matchLabels:
             app.kubernetes.io/name: traefik
             app.kubernetes.io/instance: traefik-traefik
-resources:                            # set-once — evict 방지 최소 request
-  requests: { cpu: 100m, memory: 64Mi }
-  limits:   { cpu: 500m, memory: 128Mi }
+# 메모리는 동시 연결 수에 비례한다. Traefik은 사용자 연결 하나를 그대로 받고(앞) 백엔드로
+# 나가는 연결을 따로 든다(뒤). 사용자 1,000명 판에서 앞 1,000 + 뒤 790 = 1,790 연결이었고
+# 컨테이너 메모리는 사용자 100명당 약 11 MiB로 올랐다.
+# limit 768Mi = 사용자 5,000명을 한 대가 전부 받아도 버티는 크기다(5,000 × 110KB ≈ 550MiB + 여유).
+#   대수로 나눈 값(2,500명분)을 쓰지 않는 이유: 파드 하나가 죽으면 남은 한 대가 전부 받는다.
+#   그 크기로 못 버티면 남은 대도 뒤따라 죽어 관문이 통째로 사라진다.
+# CPU는 같은 판에서 limit의 13%였다 — 500m 유지.
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits:   { cpu: 500m, memory: 768Mi }
+# GOMEMLIMIT은 따로 넣지 않는다. 이 차트가 memory limit의 90%를 계산해 자동으로 넣는다
+# (768Mi → 691MiB). 직접 적으면 env가 두 벌이 되고, limit을 바꿔도 따라가지 않는다.
+# 앞뒤 연결 수를 직접 세려면 Traefik 자신의 메트릭이 필요하다. cAdvisor는 컨테이너 메모리만
+# 알려 주고 그 메모리가 몇 개의 연결에서 왔는지는 모른다(traefik_open_connections).
+#   addRoutersLabels는 기본 false로 둔다 — 라우터마다 시리즈가 갈려 개수가 크게 는다.
+metrics:
+  prometheus:
+    service:
+      enabled: true        # ServiceMonitor가 가리킬 대상
+    # 차트는 ServiceMonitor를 만들기 전에 monitoring.coreos.com/v1 이 API 목록에 있는지 확인한다.
+    # 클러스터에는 CRD가 있지만 helm template 단독 실행에는 API 목록이 없어 렌더가 그 자리에서 멈춘다.
+    # 끄면 로컬에서도 렌더 결과를 확인할 수 있다.
+    disableAPICheck: true
+    serviceMonitor:
+      enabled: true
+      interval: 15s
 service:
   type: LoadBalancer
 ingressClass:
