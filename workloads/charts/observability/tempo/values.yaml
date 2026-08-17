@@ -23,8 +23,10 @@ tempo:
     # Go 런타임은 컨테이너 memory limit을 읽지 않는다. GOMEMLIMIT 미설정이면 기본값이 int64 최대라
     #   메모리가 무한이라고 보고, GOGC=100 규칙(직전 GC의 살아있는 힙 × 2에서 다음 GC)으로
     #   다음 GC 목표를 2.36GB에 잡았다(실측 go_memstats_next_gc_bytes). limit 1Gi의 두 배가 넘는다.
-    #   그래서 힙이 limit 근처까지 차오른 뒤에야 GC가 몰려 돌고, 그 동안 /ready가 프로브 timeout 5초를 넘긴다.
-    # 800MiB = limit 1Gi의 약 78%. 나머지는 고루틴 스택·런타임 메타데이터·OS 버퍼 몫.
+    #   커널이 죽이는 선은 1Gi인데 런타임의 다음 GC 지점이 2.36GB라, 그 사이에서는 GC가 안 돈다.
+    #   (앞서 이 자리에 "limit 근처에서 GC가 몰려 돌아 /ready가 늦는다"고 적혀 있었으나 근거가 없어 지운다 —
+    #    Go 런타임은 cgroup을 읽지 않아 limit 근접을 감지할 수 없고, 그 시점의 GC 실측도 없다.)
+    # 800MiB는 limit 1Gi 아래로 정한 값이다. 나머지는 고루틴 스택·런타임 메타데이터·OS 버퍼 몫.
     - name: GOMEMLIMIT
       value: "800MiB"
   resources:                          # [렌더 확인: 업스트림에 resources 2곳(tempo.resources/top-level) — 적용처 검증]

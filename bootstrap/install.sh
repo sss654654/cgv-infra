@@ -78,10 +78,11 @@ kubectl apply -f storage/
 #   여기서 손 설치 안 함. argocd는 아래 손 설치 후 kubectl로 root-app apply(ingress 불요) → 폭포가 metallb/traefik를 뒤이어 세움.
 
 # helm repo add는 같은 이름이 다른 URL로 이미 등록돼 있으면 실패한다 → --force-update로 재실행에서도 통과시킨다.
-echo "[4/9] cert-manager (현재 소비자 없으나 Phase2 예약 — bootstrap 손 유지)"
+echo "[4/9] cert-manager (CRD만 세운다 — values에서 세 파드를 0대로 내려 뒀다)"
 helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
-# --timeout 10m: 파드 3개(controller·webhook·cainjector)가 각기 다른 이미지를 받는다.
-# 첫 실행은 VM 3대가 USB SSD 한 장을 공유한 채 동시에 pull하므로 helm 기본 5분을 넘길 수 있다.
+# 지금은 replicaCount 0이라 받을 이미지가 없어 --wait이 즉시 끝난다.
+# --timeout 10m은 되살릴 때를 위해 둔다 — 파드 3개(controller·webhook·cainjector)가 각기 다른
+# 이미지를 받고, VM 3대가 USB SSD 한 장을 공유한 채 동시에 pull하면 helm 기본 5분을 넘긴다.
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
   -f cert-manager/values.yaml --wait --timeout 10m --version v1.21.0   # crds.enabled=true는 values로 이관. 버전 핀
 
