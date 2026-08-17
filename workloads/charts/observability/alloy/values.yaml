@@ -56,12 +56,14 @@ alloy:
   clustering: { enabled: true }
   mounts: { varlog: false, dockercontainers: false }
   resources:
-    # request 128Mi 는 실사용(313-462Mi)보다 한참 낮다. 위 버킷 drop 으로 시리즈가 절반이
-    #   되므로 그 뒤 재측정해서 정한다 — 지금 올리면 컷 전 값으로 굳는다.
-    requests: { cpu: 100m, memory: 128Mi }
-    # limit 512Mi 는 실측 peak 가 81-90% 로 이미 임박이다. 부하 판에서 로그·시리즈가 늘면
-    #   여기서 OOMKill 이 나고, 그러면 그 노드의 메트릭과 로그가 통째로 끊겨 판을 다시 돌려야 한다.
-    limits: { memory: 768Mi }
+    # request 640Mi: 버킷 컷 후 실측(2026-08-17) working_set 390/467/638Mi — 노드마다 다르고
+    #   최대는 파드가 가장 많은 노드다(스크레이프 타깃 수가 노드의 파드 수를 따라간다).
+    #   DaemonSet이라 한 값이 세 노드에 다 걸리므로 최대 노드 기준으로 잡는다.
+    #   실사용보다 낮게 두면 압박 시 이 파드가 먼저 밀려나고, 그 노드의 메트릭·로그가 통째로 끊긴다.
+    requests: { cpu: 100m, memory: 640Mi }
+    # limit 1Gi: 실측 peak 638Mi가 768Mi의 83%로 임박이었다. 부하에서 로그·시리즈가 늘면
+    #   OOMKill로 그 노드 관측이 끊긴다. limit은 스케줄링에 쓰이지 않아 다른 파드를 밀어내지 않는다.
+    limits: { memory: 1Gi }
   extraPorts:
     - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP }
     - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
