@@ -53,9 +53,13 @@ spec:
     version: 4.3.0
     metadataVersion: 4.3-IV0
     # resources는 여기 못 적는다 — v1 스키마에 없다. 노드풀(cgv-pool) 쪽에 있다.
-    jvmOptions:                      # 힙 상한 = limit의 60%(약 900MB). 나머지 40% = 비힙(다이렉트버퍼·메타스페이스).
-      "-XX":
-        MaxRAMPercentage: "60"
+    # 힙 상한을 절대값으로 고정한다. 이전의 MaxRAMPercentage 60은 limit(1536Mi)에서 힙 상한이
+    #   파생되는 구조라(실측 MaxHeapSize 922Mi), limit을 조정하면 힙 상한이 따라 움직였다.
+    #   실측(2026-08-16)은 힙 사용 325Mi·커밋 389Mi로 922Mi 근처에 간 적이 없다 — 512m이면 들어간다.
+    #   컨테이너 사용 621-643Mi의 몸집은 힙 밖(메타스페이스 68Mi + 미분해 잔여)이라, 힙을 고정해야
+    #   사용을 힙/비힙으로 갈라 request 근거를 만들 수 있다. 부하에서 힙이 512에 닿으면 그때 올린다.
+    jvmOptions:
+      "-Xmx": 512m
     listeners:
       - name: plain
         port: 9092

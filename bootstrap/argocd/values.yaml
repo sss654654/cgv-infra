@@ -27,6 +27,14 @@ controller:
   resources:
     requests: { cpu: 100m, memory: 384Mi }
     limits:   { cpu: 500m, memory: 1Gi }
+  # Go 런타임은 cgroup limit을 읽지 않는다 — 기본 GC 규칙(직전 살아있는 양의 두 배에서 회수)만으로는
+  #   RSS가 살아있는 양(실측 127Mi)의 3배(359-487Mi)까지 부푼다. GC 헤드룸과 미반납 페이지 몫.
+  # GOMEMLIMIT 384MiB: 힙+고루틴 스택+런타임 메타의 목표. limit 1Gi 아래 여유를 두고 잡는다.
+  # GOGC 50: 회수 지점을 살아있는 양의 1.5배로 내린다. 메모리를 줄이는 대신 GC CPU를 더 쓴다.
+  # 적용 후 24시간 + sync 폭풍 1회를 관측해 RSS가 내려오는지 확인하고 request를 재산정한다.
+  env:
+    - { name: GOGC, value: "50" }
+    - { name: GOMEMLIMIT, value: "384MiB" }
 server:
   # 이름으로 접근한다 — Traefik이 Host 헤더를 보고 이 서비스로 보낸다.
   # 이걸 켜기 전에는 port-forward가 유일한 경로였고, 외부에서 오는 요청(webhook)은 닿을 수 없었다.
