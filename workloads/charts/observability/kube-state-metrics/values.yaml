@@ -3,8 +3,10 @@
 # Alloy가 라벨셀렉터 없이 observability 전체 ServiceMonitor를 잡으면 그대로 발견. 라벨필터 쓰면 monitor.additionalLabels 추가.
 replicas: 1
 autosharding: { enabled: false }     # 단일 replica Deployment(StatefulSet 아님)
-resources:                           # 경량 발행기. request 부여로 evict 우선순위 방어
-  requests: { cpu: 50m, memory: 64Mi }
+resources:
+  # request 96Mi: 평시 실측 71Mi(2026-08-17)가 이전 request 64Mi의 110% — 발행 시리즈가
+  #   클러스터 오브젝트 수에 비례해 늘며 넘었다. limit 128Mi 유지.
+  requests: { cpu: 50m, memory: 96Mi }
   limits:   { cpu: 200m, memory: 128Mi }
 prometheus:
   monitor:

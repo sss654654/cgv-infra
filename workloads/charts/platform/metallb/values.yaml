@@ -1,7 +1,6 @@
 # MetalLB 자원. controller는 네임스페이스마다 IP 풀을 reconcile해서, 네임스페이스가 늘면
-# 메모리도 는다. 초기 64Mi는 install.sh 직후(ns 적음)엔 버텼지만 GitOps로 ns가 10여 개로
-# 늘자 OOMKilled로 반복 재시작했다(2026-07-28 실측, exit 137). request는 평소값 유지하고
-# limit만 버스트 여유로 올린다.
+# 메모리도 는다. 초기 limit 64Mi는 install.sh 직후(ns 적음)엔 버텼지만 GitOps로 ns가
+# 10여 개로 늘자 OOMKilled로 반복 재시작했다(2026-07-28 실측, exit 137).
 #
 # ★ 2026-08-15 — frr-k8s 를 끈다. 이 클러스터는 L2 만 쓴다.
 #   manifests/metallb/pool.yaml 이 IPAddressPool + L2Advertisement 둘뿐이고
@@ -17,13 +16,16 @@ frrk8s:
   enabled: false
 controller:
   resources:
-    requests: { cpu: 50m, memory: 32Mi }
-    # 실측 peak 94-97MiB 로 128Mi 의 76%. Service·네임스페이스가 늘수록 오르므로 여유를 준다.
+    # request 128Mi: 평시 실측 106Mi(2026-08-17)가 이전 request 32Mi의 330%였다.
+    #   평시 사용이 request를 넘는 파드는 노드 메모리 압박 시 퇴거 랭킹 앞순위로 묶인다.
+    # limit 192Mi 유지 — reconcile 대상(Service·ns)이 늘 때의 버스트 몫(평시의 55%).
+    requests: { cpu: 50m, memory: 128Mi }
     limits:   { cpu: 100m, memory: 192Mi }
 speaker:
   resources:
-    requests: { cpu: 50m, memory: 32Mi }
-    # 실측 peak 51-54MiB 로 64Mi 의 83%. 들고 있는 EndpointSlice 가 파드 수에 비례하는데
-    #   부하 계단에서 파드를 늘릴 예정이라 그때 넘는다. 여기서 OOMKill 이 나면 VIP 의 ARP
-    #   광고가 끊겨 클러스터 진입 자체가 막힌다.
-    limits:   { cpu: 100m, memory: 128Mi }
+    # request 96Mi: 평시 실측 약 78Mi(2026-08-17)가 이전 request 32Mi의 245%였다.
+    # limit 128→192Mi: 들고 있는 EndpointSlice가 파드 수에 비례하는데 부하 테스트에서
+    #   replica를 늘린다. 여기서 OOMKill이 나면 VIP의 ARP 광고가 끊겨
+    #   클러스터 진입 자체가 막히므로 한 단계 여유를 둔다.
+    requests: { cpu: 50m, memory: 96Mi }
+    limits:   { cpu: 100m, memory: 192Mi }
