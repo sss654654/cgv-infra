@@ -201,6 +201,10 @@ alloy:
       prometheus.scrape "cadvisor" {
         targets      = discovery.relabel.kubelet.output
         job_name     = "cadvisor"
+        // 기본값 60초로는 부하 구간이 짧을 때 컨테이너 사용량 표본이 몇 개 안 남는다
+        // (3분 판이면 3개). 배포 스펙을 이 값에서 역산하므로 해상도를 올린다.
+        // 주기를 바꿔도 시리즈 개수는 그대로이고 초당 샘플만 약 317 -> 1270 으로 는다.
+        scrape_interval = "15s"
         metrics_path = "/metrics/cadvisor"
         scheme       = "https"
         bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
