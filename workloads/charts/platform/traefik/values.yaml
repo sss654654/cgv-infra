@@ -1,6 +1,19 @@
 # Traefik — Ingress 컨트롤러(k3s 번들은 disable, 자체 설치). MetalLB LB로 노출. GitOps로 관리.
 deployment:
   replicas: 3                         # 진입점 HA + 사용자 10,000명 메모리 용량(아래 근거)
+# 롤링 방식 — 새 파드를 먼저 띄우는 차트 기본값(maxSurge 1 / maxUnavailable 0)은
+#   이 구성에서 배포가 영구 정지한다.
+#   replicas 3 = 노드 3대이고 아래 podAntiAffinity가 required라 노드마다 정확히 하나가 앉는다.
+#   그 상태에서 "새 파드를 먼저 띄운다"는 앉을 노드가 없어 Pending에 걸리고, maxUnavailable 0이라
+#   옛 파드를 지우지도 못한다. 실제로 replicas 2→3 배포에서 그렇게 멈췄다(2026-08-18).
+#   순서를 뒤집는다 — 옛 파드를 먼저 지우고 그 자리에 새 파드를 띄운다.
+#   배포 중 잠깐 2대로 도는데, 아래 PDB minAvailable 1이 최소선을 지키고
+#   관문은 2대로도 선다(5,000명 판까지 2대로 돌았다).
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
 podDisruptionBudget:
   enabled: true
   minAvailable: 1                     # drain 시 최소 1 파드 유지
