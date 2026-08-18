@@ -48,14 +48,16 @@ server:
     pathType: Prefix
     tls: false
   resources:
-    requests: { cpu: 25m, memory: 100Mi }
+    # 부하 판 실측 31Mi. UI·API 서버라 요청이 없으면 상주분이 작다.
+    requests: { cpu: 25m, memory: 64Mi }
     limits:   { cpu: 100m, memory: 192Mi }
 # repoServer는 git을 읽어 매니페스트를 렌더하는 담당. root-app 인계 직후 App 19개의 차트를
 # 동시에 렌더하는데(mimir-distributed 포함), limit 256Mi로는 OOMKilled 루프에 빠져
 # sync 전체가 정체된다(2026-07-28 실측 — exit 137 반복). 렌더 동시성의 최대 부하 기준으로 상향.
 repoServer:
   resources:
-    requests: { cpu: 50m, memory: 256Mi }
+    # 부하 판 실측 134Mi. 렌더 스파이크(App 19개 동시 갱신)는 limit 1Gi 가 받는다.
+    requests: { cpu: 50m, memory: 192Mi }
     limits:   { cpu: 500m, memory: 1Gi }
 redis:
   resources:

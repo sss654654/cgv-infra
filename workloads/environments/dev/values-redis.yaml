@@ -3,7 +3,10 @@
 redis:
   replica:
     resources:                                  # 단일스레드 CPU 병목: limit 1000m = 부하테스트 종점(상한 도달 = 최대 처리량)
-      requests: { cpu: 250m, memory: 256Mi }
+      # 메모리 request: 부하 판(사용자 5,000명) 실측이 파드 전체 31-98Mi 다. 줄이 ZSet 세 개라
+      #   대기 인원 5,000명이 약 250KB 이고, 10만 명이어도 약 5MB 다 — 데이터가 메모리를 정하지 않는다.
+      #   늘어나는 쪽은 클라이언트 버퍼·복제 버퍼라 limit 512Mi 가 받는다.
+      requests: { cpu: 250m, memory: 128Mi }
       limits:   { cpu: "1", memory: 512Mi }
   sentinel:
     resources:

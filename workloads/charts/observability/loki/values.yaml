@@ -65,8 +65,8 @@ singleBinary:
 gateway:
   enabled: true
   replicas: 1
-  resources:                        # loki gateway(mimir gateway와 동일)
-    requests: { cpu: 100m, memory: 128Mi }
+  resources:                        # loki gateway(mimir gateway와 동일). 부하 판 실측 38Mi
+    requests: { cpu: 100m, memory: 64Mi }
     limits: { cpu: 500m, memory: 256Mi }
 # Monolithic이라도 SSD 타겟 기본 3 → validate.yaml이 0으로 안 내리면 거부(필수).
 read: { replicas: 0 }

@@ -76,26 +76,33 @@ ingester:
   #                 가동시간·GC 상태가 달라 참고값이고, RSS에는 GC 헤드룸·반납 지연이 섞여 있어
   #                 여유를 넓게 둔다. limit은 스케줄링에 쓰이지 않아 다른 파드를 밀어내지 않는다.
   #   만재(30만)에 접근하면 실사용이 request를 넘을 수 있다 — 부하 실측에서 시리즈 수와 함께 재조정.
-  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: 1000m, memory: 2Gi } }
+  # 부하 판(사용자 5,000명) 실측 CPU 32-38m · 메모리 414-444Mi. 메모리 request 는 실측에 붙어 있어 유지하고
+  #   CPU 만 내린다. 인원이 늘면 시리즈 수가 아니라 샘플 유입이 느는데, 그 몫은 limit 1000m 이 받는다.
+  resources: { requests: { cpu: 150m, memory: 512Mi }, limits: { cpu: 1000m, memory: 2Gi } }
 querier:
   replicas: 1
   # 256Mi로 잡았다가 OOMKilled 42회. query-frontend가 쿼리를 16조각으로 쪼개 동시에 보내므로
   #   조각 하나의 피크가 그대로 곱해진다. 대시보드가 30초마다 상시 조회하는 구성이라 상수 부하가 된다.
   #   공식 산정은 querier에 10 QPS당 1코어·1GB — 이 규모에선 512Mi가 하한.
-  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  # 부하 판 실측 60Mi. request 256Mi 는 실측의 4배였다. 질의가 늘면 limit 512Mi 가 받는다.
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
 query_frontend:
   replicas: 1
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+  # 부하 판 실측 59Mi.
+  resources: { requests: { cpu: 100m, memory: 96Mi }, limits: { cpu: 500m, memory: 256Mi } }
 query_scheduler:
   replicas: 1                                  # read path 대기열 — stg 패리티로 유지
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+  # 부하 판 실측 52Mi.
+  resources: { requests: { cpu: 100m, memory: 96Mi }, limits: { cpu: 500m, memory: 256Mi } }
 store_gateway:
   replicas: 1
   zoneAwareReplication: { enabled: false }
   persistentVolume:                            # emptyDir — MinIO 블록 캐시, 크래시=재다운로드(무손실)
     enabled: false
     emptyDir: { sizeLimit: 5Gi }               # 차트가 이 맵을 emptyDir 스펙으로 그대로 렌더
-  resources: { requests: { cpu: 100m, memory: 512Mi }, limits: { cpu: 500m, memory: 1Gi } }
+  # 부하 판 실측 CPU 5m · 메모리 60Mi. request 512Mi 는 실측의 8배였다 — 블록 캐시가 emptyDir(디스크)이라
+  #   메모리로 안 올라온다. 질의가 늘어 캐시 인덱스가 커지면 limit 1Gi 가 받는다.
+  resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { cpu: 500m, memory: 1Gi } }
 compactor:
   replicas: 1
   persistentVolume: { enabled: false }         # emptyDir — 병합 스크래치(산출물은 MinIO로). dedup·병합·retention 적용 주체라 컴포넌트는 필수
@@ -104,7 +111,9 @@ compactor:
   # memory request 192Mi: 실측 54Mi 미만(2026-08-09, 보유 18만 시리즈 병합 운전 중) + 여유.
   #   병합 스파이크는 limit 1Gi가 받는다 — limit은 스케줄링에 안 쓰여 자리를 안 잡아먹는다.
   resources:
-    requests: { cpu: 250m, memory: 192Mi, ephemeral-storage: 1Gi }
+    # 부하 판 실측 CPU 9m · 메모리 44Mi. 병합은 주기적으로만 돌아 평상시가 거의 0 이고,
+    #   그 스파이크는 limit(1000m / 1Gi)이 받는다. request 는 평상시로 잡는다.
+    requests: { cpu: 100m, memory: 128Mi, ephemeral-storage: 1Gi }
     limits:   { cpu: 1000m, memory: 1Gi, ephemeral-storage: 5Gi }   # 블록 병합 CPU·디스크 스파이크
 # ruler: 끔 — recording rule 이 0건이고(PrometheusRule CR·record: 저장소 전수 0건)
 #   알림은 Grafana Alerting 이 맡는다. Grafana 데이터소스에 manageAlerts 도 없어
@@ -115,7 +124,8 @@ alertmanager: { enabled: false }               # 끔 — 알림은 Grafana Alert
 overrides_exporter: { enabled: false }         # 끔 — 단일테넌트라 테넌트별 한도 노출 무의미
 gateway:
   replicas: 1
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }  # gateway 자원 명시
+  # 부하 판 실측 14Mi. nginx 역방향 프록시라 상주분이 작다.
+  resources: { requests: { cpu: 100m, memory: 64Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
 # self-metric: Mimir 각 컴포넌트(ingester·distributor·compactor…)의 상태를 발행한다.
 # ingester OOM·S3 쓰기 실패·compactor 지연을 이걸로 본다. dashboards는 끈다 — 대시보드는

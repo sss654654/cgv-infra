@@ -19,7 +19,8 @@ controller:
     # request 128Mi: 평시 실측 106Mi(2026-08-17)가 이전 request 32Mi의 330%였다.
     #   평시 사용이 request를 넘는 파드는 노드 메모리 압박 시 퇴거 랭킹 앞순위로 묶인다.
     # limit 192Mi 유지 — reconcile 대상(Service·ns)이 늘 때의 버스트 몫(평시의 55%).
-    requests: { cpu: 50m, memory: 128Mi }
+    # 부하 판 실측 47Mi.
+    requests: { cpu: 50m, memory: 64Mi }
     limits:   { cpu: 100m, memory: 192Mi }
 speaker:
   resources:
@@ -27,5 +28,6 @@ speaker:
     # limit 128→192Mi: 들고 있는 EndpointSlice가 파드 수에 비례하는데 부하 테스트에서
     #   replica를 늘린다. 여기서 OOMKill이 나면 VIP의 ARP 광고가 끊겨
     #   클러스터 진입 자체가 막히므로 한 단계 여유를 둔다.
-    requests: { cpu: 50m, memory: 96Mi }
+    # 부하 판 실측 33Mi (3노드 동일).
+    requests: { cpu: 50m, memory: 64Mi }
     limits:   { cpu: 100m, memory: 192Mi }

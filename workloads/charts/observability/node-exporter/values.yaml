@@ -5,7 +5,8 @@
 #     observability 본체는 baseline으로 두기 위한 분리다 — MinIO 루트 크레덴셜·Grafana 관리자 자격이 거기 있다.
 #     ServiceMonitor는 Alloy가 네임스페이스 제한 없이 발견하므로 스크레이프 경로는 그대로.
 resources:                           # 경량 발행기(DaemonSet ×3). request 부여로 evict 우선순위 방어
-  requests: { cpu: 50m, memory: 64Mi }
+  # 부하 판 실측 16-26Mi.
+  requests: { cpu: 50m, memory: 32Mi }
   limits:   { cpu: 200m, memory: 128Mi }
 prometheus:
   monitor:
