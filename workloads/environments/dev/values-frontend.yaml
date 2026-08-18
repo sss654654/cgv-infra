@@ -1,15 +1,22 @@
-# frontend dev 환경값. 정적 서버라 가벼움.
+# frontend dev 환경값. 정적 서빙 + /api/movies 캐시 프록시.
 image:
   tag: dev-42-c568c819
   repository: 192.168.0.167:5050/cgv/cgv-onprem/frontend
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling).
 resources:
-  requests: {cpu: 50m, memory: 32Mi}
-  limits: {cpu: 200m, memory: 64Mi}
-autoscaling: # 정적 서빙이라 스케일 필요 적음(min1/max2). PDB는 maxUnavailable:1로 호환(identity)
+  # 정적 서빙만 하던 값에서 올린다. /api/movies 가 이 nginx 를 지나게 되면서
+  #   방문자 전원의 첫 요청이 여기로 들어온다 — 사용자 5,000명 판에서 시작 3초에 약 1,600건.
+  #   캐시 히트는 응답당 1ms 미만이지만 그 순간 CPU 를 200m 로는 못 받는다.
+  # memory: proxy_cache 의 키 영역(keys_zone 1MB) + 워커 버퍼. 캐시 본문은 emptyDir(디스크)라
+  #   메모리에 안 올라온다. 64Mi 에 여유가 없어 128Mi 로 둔다.
+  requests: {cpu: 50m, memory: 64Mi}
+  limits: {cpu: 500m, memory: 128Mi}
+autoscaling: # PDB는 maxUnavailable:1로 호환(identity)
   enabled: true
-  minReplicas: 1
-  maxReplicas: 2
+  # min 2 — 캐시가 파드마다 따로 있어 대수가 늘면 booking 으로 나가는 요청도 그만큼 는다.
+  #   그래도 1대면 그 파드가 재시작할 때 첫 화면이 통째로 멈춘다.
+  minReplicas: 2
+  maxReplicas: 3
   targetCPUUtilizationPercentage: 70
 
 # ingress.host 미지정 → dev는 path-only 라우팅(LB IP 접근). prd는 envs/prd에서 host 도메인 지정.

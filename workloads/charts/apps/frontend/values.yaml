@@ -50,12 +50,20 @@ metrics:
   enabled: false
 
 # Ingress 게이트웨이 — nginx.conf 라우팅을 Traefik으로 이관. host는 env가 지정.
-# longest-prefix 매칭: /api/admission → queue, /api → booking, / → frontend(정적).
+# longest-prefix 매칭: /api/admission → queue, /api/movies → frontend, /api → booking, / → frontend.
+#
+# /api/movies 만 booking 이 아니라 frontend(nginx)로 보낸다. 그 nginx 가 응답을 캐시하고
+#   booking 으로는 캐시가 빌 때만 나간다(proxy_cache 10초 + proxy_cache_lock).
+#   영화 목록은 첫 화면이라 대기열 게이트 밖이고 방문자 전원이 부른다 — 실측(2026-08-18,
+#   사용자 5,000명)에서 판 시작 3초 안에 booking 스로틀 81.79%, readiness 프로브가 떨어졌다.
+#   대기열이 뒷단을 지키는 구조인데 이 경로만 그 보호 밖이었다.
+# frontend 는 정적 서빙만 하던 파드라 이 프록시가 얹혀도 CPU 여유가 있다.
 ingress:
   enabled: true
   className: traefik
   paths:
     - { path: /api/admission, pathType: Prefix, service: queue,    port: 8090 }
+    - { path: /api/movies,    pathType: Prefix, service: frontend, port: 8080 }
     - { path: /api,           pathType: Prefix, service: booking,  port: 8091 }
     - { path: /,              pathType: Prefix, service: frontend, port: 8080 }
 
