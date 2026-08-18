@@ -19,7 +19,14 @@ resources:
   limits: {cpu: 500m, memory: 256Mi}
 autoscaling: # HPA 켬. max 4 = Kafka 파티션 4와 짝(그 이상은 소비 병렬성 증가 없음)
   enabled: true
-  minReplicas: 2 # 단일장애 대비 상시 2
+  # 예열 — 판 하나를 위한 값이다. 판이 끝나면 2 로 되돌린다.
+  # 사용자 5,000명 판에서 HPA 가 파드를 2 → 4 로 늘렸는데, 봉우리(오픈 순간 30초-1분)가
+  #   지난 뒤에 도착했다. metrics-server 스크레이프 15초 + HPA 판정 주기 15초 + 파드 기동이
+  #   그 안에 안 들어간다. 그래서 봉우리를 원래 2대가 통째로 받았고 스로틀이 33.28% 였다.
+  #   같은 판에서 나중에 뜬 두 대는 평탄한 구간만 봐서 3.6-4.8% 였다.
+  # 4 로 미리 띄우면 봉우리가 올 때 이미 4대다. 그때 스로틀이 얼마인지가 이 판의 답이고,
+  #   그 값이 예매 오픈처럼 시각을 미리 아는 부하에서 예열이 필요한지를 정한다.
+  minReplicas: 4
   maxReplicas: 4 # 차트 기본 6과 다름 — 명시 필수
   targetCPUUtilizationPercentage: 70 # 실사용 175m(250m×70%) 넘으면 스케일
 # 연결 대상 서비스명은 미들웨어 차트 배포 후 확정(placeholder). MAX_SESSIONS/SESSION_TIMEOUT=데모값.
