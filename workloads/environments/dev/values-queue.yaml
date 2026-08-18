@@ -2,7 +2,7 @@
 # 리소스는 실측 전 추정(노드설계 기준). 부하테스트 후 확정.
 
 image:
-  tag: dev-40-7ce11614
+  tag: dev-44-b2d6c6f3
   repository: 192.168.0.167:5050/cgv/cgv-onprem/queue-go
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling). HPA on이면 차트가 replicas 필드 생략.
 resources:
