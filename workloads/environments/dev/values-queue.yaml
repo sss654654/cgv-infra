@@ -65,7 +65,7 @@ env:
   REDIS_MASTER_NAME: cgvmaster
   REDIS_SENTINEL_ADDRS: redis.data.svc.cluster.local:26379
   KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
-  MAX_SESSIONS: "200"
+  MAX_SESSIONS: "500"
   SESSION_TIMEOUT: "60"
   METRICS_PORT: "9091"
   # 컨테이너 limit(256Mi)의 약 78%. Go 런타임은 cgroup limit을 스스로 읽지 않아
