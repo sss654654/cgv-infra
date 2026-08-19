@@ -4,7 +4,7 @@
 #    migration.enabled=true + DDL_AUTO=none. (= booking 코드 과제, 차트 토글은 준비됨.)
 
 image:
-  tag: dev-50-fde54643
+  tag: dev-52-c3c72f76
   repository: 192.168.0.167:5050/cgv/cgv-onprem/booking
 replicaCount: 1 # DDL update 스키마 레이스 회피(단일). 마이그레이션 도구 생기면 증설.
 resources:
