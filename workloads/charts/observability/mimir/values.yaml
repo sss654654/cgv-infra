@@ -29,6 +29,13 @@ mimir:
       #   RF3에 ingester도 3대라 전역 상한이 곧 ingester 한 대가 지는 양이다 → 상한이 그대로 노드당 메모리가 된다.
       #   실측 시리즈당 약 4.2KiB(150000일 때 RSS 약 618MiB) → 30만이면 약 1.2GiB. 아래 ingester limit 2Gi와 짝.
       max_global_series_per_user: 300000
+      # exemplar = 히스토그램 버킷에 붙는 대표 표본 하나. trace_id 를 달고 온다.
+      #   이 값이 없으면(기본 0) Mimir 가 받은 exemplar 를 버려서, 앱이 실어 보내도
+      #   Grafana 의 p99 그래프에 점이 뜨지 않는다. Mimir 문서 권장 시작값이 100,000.
+      # 버킷당 하나만 남고 스크레이프마다 갱신되므로, 느린 버킷의 대표는 느린 요청이 된다
+      #   — "p99 가 튄 그 요청" 에서 트레이스로 넘어가는 경로가 이 값에서 열린다.
+      # 비용: ingester 인메모리. 시리즈와 별도 링버퍼라 상한이 곧 최대 보유량이다.
+      max_global_exemplars_per_user: 100000
     common:
       storage:
         backend: s3

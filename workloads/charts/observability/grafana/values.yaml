@@ -54,23 +54,53 @@ datasources:
   datasources.yaml:
     apiVersion: 1
     datasources:
+      # 세 데이터소스를 서로 잇는다. 신호는 원래 이어져 있었다 — 로그 줄에 trace_id 가 이미 찍히고
+      #   히스토그램에 exemplar 가 실려 온다. 이 설정이 없으면 그 연결을 화면에서 못 건넌다.
+      #   지표 → 트레이스 → 로그 → 트레이스 왕복이 아래 세 블록으로 열린다.
       - name: Mimir
         uid: mimir
         type: prometheus
         access: proxy
         url: http://mimir-gateway.observability.svc.cluster.local/prometheus
         isDefault: true
-        jsonData: { httpMethod: POST }
+        jsonData:
+          httpMethod: POST
+          # p99 그래프의 점 → 그 요청의 트레이스. name 은 exemplar 에 실려 오는 라벨 이름이라
+          #   앱이 붙이는 이름과 글자까지 같아야 한다(Micrometer 기본·queue 수동 계측 모두 trace_id).
+          # Mimir 쪽에 limits.max_global_exemplars_per_user 가 있어야 점 자체가 저장된다.
+          exemplarTraceIdDestinations:
+            - name: trace_id
+              datasourceUid: tempo
       - name: Loki
         uid: loki
         type: loki
         access: proxy
         url: http://loki-gateway.observability.svc.cluster.local
+        jsonData:
+          # 로그 줄 → 그 트레이스. 두 서비스가 키 이름이 달라 하나의 정규식으로 받는다 —
+          #   queue(slog) 는 trace_id, booking(logback MDC) 은 traceId 로 찍는다.
+          derivedFields:
+            - name: TraceID
+              matcherRegex: '"trace_?[iI]d":"([a-f0-9]+)"'
+              url: '${__value.raw}'
+              datasourceUid: tempo
+              urlDisplayLabel: 트레이스 열기
       - name: Tempo
         uid: tempo
         type: tempo
         access: proxy
         url: http://tempo.observability.svc.cluster.local:3200
+        jsonData:
+          # 트레이스의 한 span → 그 시각 로그. 라벨이 아니라 줄 내용에서 trace_id 를 찾는다
+          #   (trace_id 를 라벨로 올리면 값이 무한해 카디널리티가 터진다).
+          # 그래서 라벨 매칭 대신 customQuery 로 네임스페이스만 좁히고 줄 필터를 건다.
+          # 시간창 ±5분 — span 시각 그대로 자르면 경계에 걸린 줄이 빠진다.
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: '-5m'
+            spanEndTimeShift: '5m'
+            customQuery: true
+            query: '{namespace="app"} |= "${__span.traceId}"'
 
 # self-metric: Grafana 자신의 상태(데이터소스 응답·로그인·대시보드 렌더).
 serviceMonitor:

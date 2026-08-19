@@ -72,9 +72,14 @@ env:
   # 이 값이 없으면 GC 상한이 int64 최대가 되고, 힙이 limit을 넘긴 순간 커널이 OOMKill한다.
   GOMEMLIMIT: "200MiB"
   OTLP_GRPC_ENDPOINT: alloy.observability.svc.cluster.local:4317
-  # 트레이스 표본 비율. 미설정이면 코드가 AlwaysSample()로 전부 보낸다.
-  # 사용자 5000명 부하에서 queue가 초당 864 span을 만드는데, 그때 tempo가 초당 141개(16%)를
-  # 버리고 live traces가 상한 10000에 붙었으며 alloy RSS가 963MiB(limit 1Gi의 94%)까지 올랐다.
-  # 0.01이면 초당 8.6 span — 유휴(0.83 span/초, tempo RSS 109MiB)의 10배 수준이다.
-  # 값을 올리려면 이 판에서 span/초 대 tempo·alloy 메모리 기울기를 먼저 재고, 그 값으로 정한다.
+  # 트레이스 표본 비율 — **폴링 경로에만** 걸린다(position·stats·events·health).
+  #   enter·complete·leave와 Kafka 발행/소비는 이 값과 무관하게 전부 남는다.
+  #   경로 목록과 근거는 queue-go/tracing.go의 pollingSpans.
+  # 낮춘 이유: 사용자 5000명 부하에서 queue가 초당 864 span을 만드는데, 그때 tempo가
+  #   초당 141개(16%)를 버리고 live traces가 상한 10000에 붙었으며 alloy RSS가
+  #   963MiB(limit 1Gi의 94%)까지 올랐다. 그 span의 대부분이 폴링이다.
+  # 폴링만 남기지 않는 이유: 이 값이 전 경로에 걸리던 동안 승격→admissions→booking 체인이
+  #   100건 중 1건만 남아, 서비스 경계를 넘는 트레이스를 사실상 못 봤다.
+  # 값을 올리려면 판을 한 번 돌려 span/초 대 tempo·alloy 메모리 기울기를 재고 그 값으로 정한다.
+  #   Redis 명령 span(redisotel)이 켜지면서 요청당 span 수가 늘었으므로 이전 기울기는 못 쓴다.
   OTEL_TRACES_SAMPLER_ARG: "0.01"
