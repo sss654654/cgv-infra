@@ -38,6 +38,20 @@ spec:
               app.kubernetes.io/name: booking
       ports:
         - port: 3306
+    # 9104는 mysql 파드의 지표 노출 사이드카(mysqld_exporter). redis 9121과 출처가 같다.
+    #   Alloy는 hostNetwork를 쓰지 않아 출발지가 파드 IP → 셀렉터로 잡힌다.
+    #   kubelet의 httpGet 프로브는 출발지가 노드 IP → 파드 셀렉터에 안 잡혀 ipBlock으로 적는다.
+    #   이 규칙이 없으면 프로브가 막혀 사이드카가 NotReady로 남고 mysql 파드 전체가 준비되지 않는다.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+        - ipBlock: {cidr: 192.168.0.201/32}
+        - ipBlock: {cidr: 192.168.0.202/32}
+        - ipBlock: {cidr: 192.168.0.203/32}
+      ports:
+        - port: 9104
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -26,6 +26,30 @@ mysql:
       size: 8Gi                       # PV capacity 20Gi ≥ 요청 8Gi → 바인딩. 실상한 = 디스크 20G
     nodeSelector:
       cgv.io/data: db                 # mysqldata LV가 있는 k3s-1에 핀
+  metrics:
+    # mysqld_exporter 사이드카. 켜기 전에는 mysql_ 로 시작하는 지표가 하나도 없어서,
+    #   booking 쪽 커넥션 풀이 마를 때 원인이 MySQL 상한(threads_connected ≥ max_connections)인지
+    #   쿼리가 안 돌아오는 것(Innodb_row_lock_waits)인지 가릴 수 없다.
+    # 인증: 차트가 mysql-secret 의 mysql-root-password 를 읽어 root 로 localhost:3306 에 붙는다.
+    #   별도 계정·시크릿 키를 만들지 않는다.
+    enabled: true
+    image:
+      # 본체 이미지와 같은 이유로 bitnamilegacy(동결 미러) + digest 지정.
+      #   차트 14.0.3 기본 태그와 같은 버전이고 레지스트리만 다르다.
+      registry: docker.io
+      repository: bitnamilegacy/mysqld-exporter
+      tag: 0.17.2-debian-12-r16
+      digest: "sha256:0848fdc6fb3d91d5ff6bdec676ac08839fa4896dc061773b53b441a2b30dec2c"
+    serviceMonitor:
+      enabled: true                   # Alloy 가 ServiceMonitor 를 발견해 Mimir 로 보낸다
+      interval: 15s                   # 부하 판에서 30s 면 봉우리가 한두 점으로 뭉개진다
+    # 기본 수집기(global_status·global_variables)에 Threads_connected·Innodb_row_lock_* 가 들어 있다.
+    #   여기 더하는 것은 그것으로 안 보이는 것들이다.
+    extraArgs:
+      primary:
+        - --collect.info_schema.innodb_metrics    # 락 대기 건수를 잠금 종류별로 가른다
+        - --collect.info_schema.processlist       # 지금 어떤 상태(Sending data·statistics)에서 멈춰 있나
+        - --collect.info_schema.tables            # 좌석 테이블 행 수 — 판마다 초기화됐는지 확인용
   networkPolicy:
     # 차트가 만드는 정책을 끈다. 기본값(enabled: true, allowExternal: true)은 포트만 적고
     #   from 절 없이 렌더되어 3306 으로 오는 접속을 출처와 무관하게 통과시킨다.
