@@ -79,10 +79,14 @@ datasources:
         jsonData:
           # 로그 줄 → 그 트레이스. 두 서비스가 키 이름이 달라 하나의 정규식으로 받는다 —
           #   queue(slog) 는 trace_id, booking(logback MDC) 은 traceId 로 찍는다.
+          # url 의 $$ 는 이스케이프다. Grafana 는 프로비저닝 파일을 읽을 때 ${...} 를
+          #   환경변수 자리로 보고, 그런 변수가 없으면 빈 문자열로 바꿔서 저장한다.
+          #   $ 하나로 쓰면 url 이 "" 가 되어 링크가 trace ID 없이 열린다(파일에는 원문이
+          #   남아 있어 코드만 봐서는 안 보인다 — /api/datasources/uid/loki 로 확인한다).
           derivedFields:
             - name: TraceID
               matcherRegex: '"trace_?[iI]d":"([a-f0-9]+)"'
-              url: '${__value.raw}'
+              url: '$${__value.raw}'
               datasourceUid: tempo
               urlDisplayLabel: 트레이스 열기
       - name: Tempo
@@ -95,12 +99,18 @@ datasources:
           #   (trace_id 를 라벨로 올리면 값이 무한해 카디널리티가 터진다).
           # 그래서 라벨 매칭 대신 customQuery 로 네임스페이스만 좁히고 줄 필터를 건다.
           # 시간창 ±5분 — span 시각 그대로 자르면 경계에 걸린 줄이 빠진다.
+          # query 의 $$ 는 위 derivedFields 와 같은 이스케이프다. $ 하나면 필터가 |= "" 로
+          #   저장되어 네임스페이스 전체 로그가 나온다 — 그 요청과 무관한 줄이 뜨는데
+          #   화면에는 정상으로 보인다.
+          # 여는 것은 span 하나가 아니라 그 trace 전체의 로그다. connection·query·redis span 은
+          #   라이브러리가 만들어 앱 로그가 없고, 로그가 있는 자리는 Kafka 를 넘는 소비 쪽이라
+          #   span 단위로 좁히면 대부분의 span 에서 0건이 된다.
           tracesToLogsV2:
             datasourceUid: loki
             spanStartTimeShift: '-5m'
             spanEndTimeShift: '5m'
             customQuery: true
-            query: '{namespace="app"} |= "${__span.traceId}"'
+            query: '{namespace="app"} |= "$${__span.traceId}"'
 
 # self-metric: Grafana 자신의 상태(데이터소스 응답·로그인·대시보드 렌더).
 serviceMonitor:
