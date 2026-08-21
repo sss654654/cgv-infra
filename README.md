@@ -282,6 +282,18 @@ booking OTLP HTTP 4318┴─ (앱이 직접) ───────────�
 - **Prometheus 오퍼레이터 없이** Alloy가 수집을 전담한다. 3파드 clustering으로 대상을 샤딩해 중복 수집을 막는다.
 - 메트릭=**Mimir(distributed 11파드**, ingester 3·RF3 노드당 1), 로그=**Loki monolithic**, 트레이스=**Tempo monolithic**, 시각화=Grafana. 백엔드는 전부 **MinIO S3**.
 
+**세 축은 서로 건너갈 수 있게 이어져 있다.** 지표에서 그 요청으로, 그 요청에서 그 로그로 간다.
+
+| 방향 | 설정 | 실제로 하는 일 |
+|---|---|---|
+| 지표 → 트레이스 | Mimir `exemplarTraceIdDestinations` + `max_global_exemplars_per_user` | p99 그래프의 점을 누르면 그 요청의 트레이스가 열린다 |
+| 트레이스 → 로그 | Tempo `tracesToLogsV2` (customQuery) | span 아래 버튼으로 그 트레이스가 남긴 로그만 본다 |
+| 로그 → 트레이스 | Loki `derivedFields` (정규식) | 로그 줄의 trace ID를 눌러 되돌아간다 |
+
+**이 배선은 끊겨도 증상이 없다.** 앱·지표·화면이 각각 정상으로 보이고 연결만 사라진다. 실제로 `${__span.traceId}` 가 Grafana 프로비저닝의 환경변수 치환에 먹혀 빈 문자열로 저장된 적이 있는데(파일에는 원문이 남아 코드로는 안 보인다), 그동안 화면에는 그 요청과 무관한 로그가 정상처럼 떴다. 리터럴 `$` 는 `$$` 로 escape 한다. **확인은 파일이 아니라 저장된 값으로 한다** — `GET /api/datasources/uid/{tempo,loki}`.
+
+**표본은 경로마다 다르다.** booking 전부 · queue 폴링 1% · 프로브 0. 폴링이 요청의 97%라 같은 비율을 전 경로에 걸면 서비스 경계를 넘는 트레이스가 안 남는다. 비율을 5%로 올려 본 판에서는 exemplar 가 늘지 않고(스크레이프마다 버킷당 하나가 한도다) Tempo 의 `max_traces_per_user`(기본 10,000)만 오픈 순간에 넘겨 스팬을 버렸다.
+
 **Alloy가 긁는 대상 — 두 갈래다.**
 
 | 갈래 | 대상 | 방식 |
