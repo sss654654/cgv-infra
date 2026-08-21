@@ -29,14 +29,14 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
       데스크탑(별도, 192.168.0.167)
         ├─ GitLab CE — ArgoCD가 읽는 GitOps 원본            [구축됨]
         ├─ CI 러너(docker executor) · Container Registry     [구축됨]
-        └─ 부하생성기(k6)                                    [미구축]
+        └─ 전용 부하생성기 — 25,000명 이상 실측용            [미구축]
 ```
 
 - **하이퍼바이저 = Proxmox VE**, 외장 SSD에 설치(노트북 부팅 디스크와 분리).
 - **k3s 노드 3 = VM**, 각 4 vCPU / 8GB / 40GB 부팅 + 용도별 LV(아래 스토리지).
 - **OPNsense = 별도 VM**(k3s 노드 아님) — 외부노출 단계의 라우터·방화벽·VPN. 아직 만들지 않았다.
 - **GitLab = 데스크탑**(클러스터 밖, Docker). ArgoCD가 읽는 저장소가 여기다 — 아래 [GitOps 원본](#gitops-원본--gitlab). GitHub에는 push 미러로 공개 사본만 나간다.
-- **CI 러너·Container Registry = 같은 데스크탑 GitLab.** 파이프라인이 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) 이미지를 레지스트리에 올리고, 각 노드의 `registries.yaml`이 그 레지스트리를 신뢰한다. 부하생성기(k6)만 아직 없다 — 부하 실측 단계에서 세운다.
+- **CI 러너·Container Registry = 같은 데스크탑 GitLab.** 파이프라인이 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) 이미지를 레지스트리에 올리고, 각 노드의 `registries.yaml`이 그 레지스트리를 신뢰한다. 부하 실측(k6, 판 21회·사용자 10,000명)은 클러스터 호스트인 노트북에서 했다 — 그 위 인원은 생성기가 클러스터와 CPU를 나눠 쓰지 않는 자리가 필요해 전용 생성기 칸을 남겨 뒀다.
 
 ---
 
@@ -56,7 +56,7 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
    │   └ Kafka broker      └ Kafka broker      └ Kafka broker        │
    │                                                                 │
    │   노드당 1씩 강제(hard anti-affinity):                          │
-   │     Kafka 브로커 3 · Mimir ingester 3 · Redis 3 · Traefik 2      │
+   │     Kafka 브로커 3 · Mimir ingester 3 · Redis 3 · Traefik 3      │
    │   float(스케줄러 배치): 앱 3종 · ArgoCD · Grafana ·             │
    │     Mimir 나머지 8파드 / DaemonSet: alloy · node-exporter        │
    │                                                                 │
@@ -76,7 +76,7 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
   | `metallb-system` / `traefik` | privileged / restricted | Argo가 만드는 ns라 라벨도 ApplicationSet에서 건다 |
   | `kube-system` · `calico-system` · `tigera-operator` | 없음 | k3s·tigera-operator가 소유한다. 집행을 걸면 클러스터 기동이 막힌다 |
 
-  경계는 **PodSecurity 라벨**과 **data 계층 ingress NetworkPolicy**다. 후자는 mysql·redis 차트가 만드는 넓은 정책이 남아 있는 동안 절반만 적용된다(아래 [보안](#보안) 참조). ResourceQuota는 없다.
+  경계는 **PodSecurity 라벨**과 **data 계층 ingress NetworkPolicy**(기본 차단 + 지정 출처만 — 아래 [보안](#보안))다. ResourceQuota는 없다.
 
 ---
 
@@ -90,8 +90,8 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
 
 - **stateful 싱글턴은 nodeSelector로 핀** — 전용 LV가 그 노드에 있어서: MySQL→`db`, Loki/Tempo→`obs`, MinIO→`obj`. (miniodata가 100G인 건 MinIO가 LGTM의 S3 데이터 몸통이기 때문.)
 - **Kafka 3브로커·Mimir ingester 3 = hard podAntiAffinity로 노드당 1개**(각 노드 kafkadata·ingesterwal LV 사용, 각각 RF3 성립).
-- **Redis 3파드·Traefik 2파드도 노드당 1개로 강제**(hard podAntiAffinity). 근거는 워크로드마다 다르다:
-  - **Traefik**(파드 2 < 노드 3) — 몰린 노드가 죽으면 MetalLB LB IP는 살아 있는데 백엔드가 0이 되어 전 Ingress가 502다. 여유 노드가 한 대 있어 장애 시에도 재배치되므로 Pending이 안 생긴다.
+- **Redis 3파드·Traefik 3파드도 노드당 1개로 강제**(hard podAntiAffinity). 근거는 워크로드마다 다르다:
+  - **Traefik**(파드 3 = 노드 3) — 몰린 노드가 죽으면 MetalLB LB IP는 살아 있는데 백엔드가 0이 되어 전 Ingress가 502다. 2파드로 시작했다가 부하 실측(사용자 10,000명)에서 연결 메모리가 limit에 닿아 3파드×2Gi로 늘렸다(근거 수치는 [traefik values](workloads/charts/platform/traefik/values.yaml) 주석). 노드가 빠지면 파드 하나는 Pending이 되고 남은 두 대가 트래픽을 받는다.
   - **Redis**(파드 3 = 노드 3) — sentinel이 각 파드 안의 사이드카라 파드가 몰리면 투표권도 몰린다. 2파드가 한 노드에 있으면 그 노드 정지 시 sentinel 3 중 2가 동시에 사라져 quorum 2를 못 채우고 failover가 아예 일어나지 않는다. 노드 한 대가 빠지면 파드 하나는 Pending이 되지만, **quorum이 2라 남은 2파드로 정족수가 채워져 failover는 동작한다**(quorum을 3으로 올리면 이 근거가 무너진다).
 - **Mimir stateless(distributor/querier/…)·store_gateway·compactor·grafana·앱·ArgoCD = float**(스케줄러가 배치). store_gateway·compactor는 emptyDir이라 노드 죽어도 재스케줄.
 - **alloy·node-exporter는 DaemonSet** — float이 아니라 전 노드에 1개씩.
@@ -156,8 +156,8 @@ cgv-infra/
 │   ├── charts/             apps/(cgv-app 틀 + queue·booking·frontend) · data/(cgv-mysql·cgv-redis 래퍼)
 │   │                       · observability/(loki·mimir·tempo·grafana·alloy·minio·ksm·node-exporter) · platform/(metallb·traefik)
 │   ├── environments/       dev(실물)·stg·prd(골격)
-│   └── manifests/          kafka/(CR) · metallb/(pool CR) · secrets/(SealedSecret 봉인 14종)
-│                           · dashboards/(Grafana 대시보드 ConfigMap)
+│   └── manifests/          kafka/(CR) · metallb/(pool CR) · secrets/(SealedSecret 봉인 15종)
+│                           · netpol/(data 계층 ingress 출처 제한) · dashboards/(Grafana 대시보드 ConfigMap)
 └── docs/               시크릿-계약 · 코드-반영사항
 ```
 
@@ -225,7 +225,7 @@ syncPolicy:
 ① cluster/ 스크립트 (SSH, 노드에서)   → k3s 3노드 조인 (CNI 없어 NotReady)
 ② bootstrap/install.sh (9단계)        → Calico(→Ready)→namespaces→storage→cert-manager→sealed-secrets
                                           →CRD→control-plane 수집→Strimzi→argocd
-③ SealedSecret 14종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
+③ SealedSecret 15종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
                                           그중 ArgoCD 저장소 자격 한 장은 apply까지 (없으면 ⑤ 이후가 안 돈다)
 ④ bootstrap/root-app.sh               → 봉인본 개수 확인 후 root-app apply. 여기서 손 끝
 ⑤ root-app → argocd/ recurse          → AppProject·ApplicationSet·Application 생성
@@ -255,7 +255,7 @@ syncPolicy:
 | CNI | **Calico** | install.sh (순환) | 파드 네트워크 (flannel 대체). NetworkPolicy 집행 주체 — 정책 객체를 노드 iptables 규칙으로 옮긴다 |
 | LB | **MetalLB** | **GitOps** (wave -4) | 온프렘 LoadBalancer IP 할당 |
 | Ingress | **Traefik** | **GitOps** (wave -2) | L7 라우팅 (번들 traefik 대체) — OTel 튜닝을 수동 upgrade 없이 |
-| TLS | **cert-manager** | install.sh | 인증서 발급(DNS-01). **현재 소비자가 없다** — 외부노출 단계에 대비해 설치만 해두고, 파드 3개가 자원을 점유한다 |
+| TLS | **cert-manager** | install.sh | 인증서 발급(DNS-01). **현재 소비자가 없다** — CRD·차트는 유지하되 파드 3개는 0대로 내려 뒀다. 발급 대상이 생기는 외부노출 단계에 replicaCount 세 줄만 지워 되살린다 |
 | 시크릿 | **sealed-secrets** | install.sh(컨트롤러, 순환) + GitOps(봉인본 배달) | 암호를 Git에 안전하게(암호문만) |
 | 관측 CRD | **prometheus-operator-crds** | install.sh (CRD 예외) | ServiceMonitor/PodMonitor(Alloy가 소비, 오퍼레이터 없음) |
 | 미들웨어 오퍼레이터 | **Strimzi** | install.sh (operator 예외) | Kafka CR 감시 |
@@ -280,7 +280,7 @@ booking OTLP HTTP 4318┴─ (앱이 직접) ───────────�
 ```
 
 - **Prometheus 오퍼레이터 없이** Alloy가 수집을 전담한다. 3파드 clustering으로 대상을 샤딩해 중복 수집을 막는다.
-- 메트릭=**Mimir(distributed 11파드**, ingester 3·RF3 노드당 1), 로그=**Loki monolithic**, 트레이스=**Tempo monolithic**, 시각화=Grafana. 백엔드는 전부 **MinIO S3**.
+- 메트릭=**Mimir(distributed 10파드**, ingester 3·RF3 노드당 1 — 사용처 0건인 ruler·alertmanager·overrides_exporter는 끔), 로그=**Loki monolithic**, 트레이스=**Tempo monolithic**, 시각화=Grafana. 백엔드는 전부 **MinIO S3**.
 
 **세 축은 서로 건너갈 수 있게 이어져 있다.** 지표에서 그 요청으로, 그 요청에서 그 로그로 간다.
 
@@ -292,7 +292,7 @@ booking OTLP HTTP 4318┴─ (앱이 직접) ───────────�
 
 **이 배선은 끊겨도 증상이 없다.** 앱·지표·화면이 각각 정상으로 보이고 연결만 사라진다. 실제로 `${__span.traceId}` 가 Grafana 프로비저닝의 환경변수 치환에 먹혀 빈 문자열로 저장된 적이 있는데(파일에는 원문이 남아 코드로는 안 보인다), 그동안 화면에는 그 요청과 무관한 로그가 정상처럼 떴다. 리터럴 `$` 는 `$$` 로 escape 한다. **확인은 파일이 아니라 저장된 값으로 한다** — `GET /api/datasources/uid/{tempo,loki}`.
 
-**표본은 경로마다 다르다.** booking 전부 · queue 폴링 1% · 프로브 0. 폴링이 요청의 97%라 같은 비율을 전 경로에 걸면 서비스 경계를 넘는 트레이스가 안 남는다. 비율을 5%로 올려 본 판에서는 exemplar 가 늘지 않고(스크레이프마다 버킷당 하나가 한도다) Tempo 의 `max_traces_per_user`(기본 10,000)만 오픈 순간에 넘겨 스팬을 버렸다.
+**표본은 경로마다 다르다.** booking 전부 · queue 폴링 1% · 프로브 0. 폴링이 요청의 97%라 같은 비율을 전 경로에 걸면 서비스 경계를 넘는 트레이스가 안 남는다. 비율을 5%로 올려 본 판에서는 exemplar 가 늘지 않고(스크레이프마다 버킷당 하나가 한도다) Tempo 의 `max_traces_per_user`(기본 10,000)만 오픈 순간에 넘겨 스팬을 버렸다. **표본과 무관하게 오픈 직후 1분이 8,000대**라 여유가 크지 않다.
 
 **Alloy가 긁는 대상 — 두 갈래다.**
 
@@ -323,12 +323,14 @@ Mimir 기본값 150000으로는 이 클러스터의 수집량을 못 받는다. 
             KSM · node-exporter · LGTM 자기지표 약 3.2만
 사본 제거 후  약 22만.  가동 시간에 따라 더 는다(verb × resource × scope 조합이 쌓임)
 상한 300000  22만에 여유 36%.  25만은 여유 13%뿐이라 앱 3종이 붙으면 곧 다시 찬다
-정착값       보유 182,397(61%) · 거절 0/s · ingester RSS 약 470-490MiB
+정착 1차     보유 182,397(61%) · 거절 0/s · ingester RSS 약 470-490MiB
+버킷 컷 후   대시보드 사용 0건인 제어면 히스토그램 버킷 drop(전체의 52%)
+            → 보유 약 8.1만(27%) · ingester RSS peak 422MiB(6시간) · request 512Mi로 재조정
 ```
 
 - **상한은 천장이지 메모리 소비가 아니다.** ingester RAM은 상한값이 아니라 실제로 든 시리즈 수(`cortex_ingester_memory_series`)로 정해진다.
-- RF3에 ingester도 3대라 **전역 상한이 곧 ingester 한 대가 지는 양**이다. 실측 시리즈당 약 4.2KiB이므로 30만이면 약 1.2GiB — `ingester` limit 2Gi가 그 짝이다.
-- 30만은 실험 천장이다. 앱 3종 투입 후 재측정해 관측 최댓값 + 버퍼로 다시 잡는다.
+- RF3에 ingester도 3대라 **전역 상한이 곧 ingester 한 대가 지는 양**이다. 시리즈당 용량은 고정분이 섞인 평균이라 규모에 따라 변한다 — 초기 산정 4.2KiB는 18.5만 시점 재실측 2,820B로 폐기했고, `ingester`는 request 512Mi(실측 RSS peak + 여유)·limit 2Gi다.
+- 앱 3종 투입 뒤 사용 0건인 제어면 버킷을 걷어내 보유가 절반 아래로 내려갔다. 상한 300000은 그대로 둔다 — 부하 때 앱 시리즈가 늘어도 여유가 크다.
 
 ### 대시보드 as-code
 
@@ -341,7 +343,11 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 - Grafana는 `persistence: false`다. 영속 저장소가 없으므로 **이 경로가 유일한 대시보드 공급원**이고, UI에서 손으로 만든 것은 재시작하면 사라진다. as-code를 강제하는 장치다.
 - `prune: true`라 파일을 지우면 대시보드도 사라지고, `selfHeal: true`라 UI에서 손댄 것은 다음 sync에 되돌아간다. **정본이 git이라는 뜻이다.**
 - `sidecar.searchNamespace`를 릴리스 네임스페이스로 한정한다. `ALL`로 두면 전역 ConfigMap을 감시하느라 RBAC이 전 네임스페이스로 넓어진다.
-- 현재 1장 — **관측 파이프라인 상세**(`obs-pipeline-detail`). Mimir 공식 관측 3축(쓰기=받아지는가 / 읽기=답하는가 / 저장 여정=내려가는가)을 행으로 두고 12패널. 패널 제목이 담당 컴포넌트를 명시한다(Alloy·distributor·ingester·query-frontend·shipper·compactor·ring).
+- 현재 4장. 각 파일 머리 주석이 화면의 설계 근거를 적는다.
+  - **관측 파이프라인 상세**(`observability-pipeline-detail`) — Mimir 공식 관측 3축(쓰기=받아지는가 / 읽기=답하는가 / 저장 여정=내려가는가)을 행으로 12패널.
+  - **클러스터 개요**(`infra-cluster-overview`) — 노드 생존·메모리·CPU·디스크·파드. 전 항목 나열이 아니라 이상만 뽑아 올리는 구성.
+  - **queue 상세**(`app-queue-detail`) — 대기열 판정 순서(줄 → 지연 → 뒷단 반응)로 펼침 9패널 + 원인 추적용 접힘 행.
+  - **booking 상세**(`app-booking-detail`) — 결론(여정 통과·판의 상태) → 사용자 체감 → 자원 순으로 펼침 5패널 + 접힘 행.
 
 ---
 
@@ -363,27 +369,26 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 **되어 있는 것**
 
 - **PodSecurity** — 위 [k3s 클러스터 아키텍처](#k3s-클러스터-아키텍처)의 ns별 표대로 집행한다. 호스트 접근이 필요한 node-exporter만 별도 ns로 격리해 나머지를 baseline 이상으로 유지한다.
-- **SealedSecret**: 암호는 kubeseal로 봉인, 암호문만 Git. 초기 10종([docs/시크릿-계약](docs/시크릿-계약.md), dev HA — redis auth·minio-lgtm-user 포함) + 나중에 낱개로 더한 넷(`argocd-repo-cgv-infra` 저장소 자격[읽기·쓰기 통합] · `argocd-secret` webhook 발신자 확인 · `gitlab-registry` 이미지 pull 자격 · `image-updater-registry` 레지스트리 폴링 자격) = **현재 14개**. `argocd-secret`은 기존 Secret에 키만 얹는 `patch` 방식이고, `gitlab-registry`는 타입이 `dockerconfigjson`이라 만드는 명령이 다르다. `root-app.sh`가 봉인본 개수를 세어 부족하면 GitOps 인계를 막는다.
+- **data 계층 ingress 출처 제한** — [`workloads/manifests/netpol/`](workloads/manifests/netpol/)의 기본 차단 위에 MySQL 3306·Redis 6379·Kafka 9092(리스너 `networkPolicyPeers`)를 지정 출처만 허용한다. mysql·redis 차트가 만들던 넓은 정책(`allowExternal: true`라 `from` 절 없이 렌더)은 껐다 — NetworkPolicy는 겹치면 허용의 합집합이라, 넓은 쪽이 남아 있으면 좁은 정책을 더해도 좁아지지 않는다. 라벨 없는 파드에서 접속이 막히는 것을 차단 실증으로 확인했다.
+- **SealedSecret**: 암호는 kubeseal로 봉인, 암호문만 Git. 초기 10종([docs/시크릿-계약](docs/시크릿-계약.md), dev HA — redis auth·minio-lgtm-user 포함) + 나중에 낱개로 더한 다섯(`argocd-repo-cgv-infra` 저장소 자격[읽기·쓰기 통합] · `argocd-secret` webhook 발신자 확인 · `gitlab-registry` 이미지 pull 자격 · `image-updater-registry` 레지스트리 폴링 자격 · `app-admin-token` 데이터 초기화 API 인증) = **현재 15개**. `argocd-secret`은 기존 Secret에 키만 얹는 `patch` 방식이고, `gitlab-registry`는 타입이 `dockerconfigjson`이라 만드는 명령이 다르다. `root-app.sh`가 봉인본 개수를 세어 부족하면 GitOps 인계를 막는다.
 - **저장소 자격도 평문으로 두지 않는다** — GitLab deploy token은 ArgoCD가 저장소를 읽는 데 필요한데, 그 값을 Git에 넣으면 저장소를 읽을 자격이 저장소 안에 있게 된다. 다른 암호와 같은 경로(SealedSecret)로 배달한다.
 - **etcd 저장 암호화**: `secrets-encryption: true` — 컨트롤러가 푼 Secret이 etcd에 평문으로 앉지 않게(외장 SSD 반출 대비).
 - **RBAC 축소**: loki·alloy는 차트 기본값이 SA에 전 네임스페이스 `secrets` 읽기 권한을 붙인다. loki는 룰 사이드카를 끄고, alloy는 기본 rules에서 `configmaps`·`secrets`를 뺀 목록을 명시해 그 경로를 닫았다.
 - **앱 SA 토큰 미마운트**: `automountServiceAccountToken: false`. queue·booking·frontend는 쿠버네티스 API를 쓰지 않아, 쓰지 않는 자격증명을 파드에 얹지 않는다.
 - **kubelet 자원 예약**: `system-reserved`·`kube-reserved`·`eviction-hard`를 노드 실측값 기준으로 설정. k3s는 apiserver·etcd를 파드가 아니라 systemd 프로세스로 돌려 kubelet이 그 사용량을 allocatable에서 빼지 않는다 — 예약이 없으면 워크로드가 제어면 메모리를 잠식한다. 같은 이유로 PriorityClass로는 제어면을 보호할 수 없다(파드가 아니라서 evict 대상이 아님).
-  - `kube-reserved`는 **1Gi → 2Gi**다. 파드 0개일 때 645Mi였는데 App 18개를 배포한 뒤 재측정하니 `k3s.service` anon이 노드별 1549–1783Mi였다. 초기 1Gi 추정은 실제의 절반이라 그만큼 파드 몫에서 빼 쓰이고 있었다. **노드 3대 반영 완료(2026-08-09, 순차 재시작)** — allocatable memory 5081Mi 실측. 부하 실측 후 재확정한다.
+  - `kube-reserved`는 **1Gi → 2Gi**다. 파드 0개일 때 645Mi였는데 App 18개를 배포한 뒤 재측정하니 `k3s.service` anon이 노드별 1549–1783Mi였다. 초기 1Gi 추정은 실제의 절반이라 그만큼 파드 몫에서 빼 쓰이고 있었다. **노드 3대 반영 완료(2026-08-09, 순차 재시작)** — allocatable memory 5081Mi 실측. 부하 판(사용자 10,000명)까지 2Gi를 유지했다.
   - `eviction-hard`는 **기본 목록을 통째로 교체한다**. k3s 기본은 `nodefs 5%`·`imagefs 5%` 둘뿐이라 메모리·inode 신호가 아예 없다 — 그 상태에서는 메모리가 말라도 kubelet이 개입하지 않고 곧장 커널 OOM으로 간다. `memory.available<300Mi`(약 7941Mi의 3.8%)를 신설한 근거는 kubelet 확인 주기가 10초라, 선이 낮으면 JVM 같은 큰 할당이 그 사이를 뚫고 지나가서다.
 - **이미지 nonroot**: queue distroless(65532)·booking(1001)·frontend nginx-unprivileged(101).
 
 **아직 없는 것** (선언과 실물을 구분해 적는다)
 
-- **MySQL·Redis는 아직 출처를 제한하지 않는다** — `workloads/manifests/netpol/`에 data 계층 ingress 정책을 넣었고 Kafka 리스너에도 출처를 지정했으나, mysql·redis 차트가 만드는 정책(`allowExternal: true`라 `from` 절 없이 렌더)이 아직 살아 있다. NetworkPolicy는 여러 개가 겹치면 허용의 합집합이라 넓은 쪽이 남는 동안은 좁혀지지 않는다. 두 차트 values의 `networkPolicy.enabled`를 끄는 것이 남은 단계다. 그때까지 클러스터 안 어느 파드에서든 MySQL 3306·Redis 6379에 도달한다.
 - **ResourceQuota·LimitRange 0건** — 한 파드가 노드 메모리를 다 먹어도 ns 차원에서 막는 장치가 없다. 지금은 kubelet 예약과 파드별 limit이 방어선이다.
-- **Kafka 무인증 평문** — `type: internal`은 클러스터 밖 노출만 막는다. 리스너의 `networkPolicyPeers`로 9092에 닿을 수 있는 파드를 queue·booking으로 좁혔지만 인증이 붙은 것은 아니다. 그 라벨을 단 파드는 인증 없이 토픽을 읽고 쓴다. queue→booking 입장 이벤트가 곧 예매 권한이라 라벨을 달 수 있는 사람은 그 권한을 얻는다. userOperator는 켜져 있어 SCRAM+ACL로 갈 재료는 준비돼 있다.
+- **Kafka 무인증 평문** — `type: internal`은 클러스터 밖 노출만 막는다. 리스너의 `networkPolicyPeers`로 9092에 닿을 수 있는 파드를 queue·booking으로 좁혔지만 인증이 붙은 것은 아니다. 그 라벨을 단 파드는 인증 없이 토픽을 읽고 쓴다. queue→booking 입장 이벤트가 곧 예매 권한이라 라벨을 달 수 있는 사람은 그 권한을 얻는다. SCRAM+ACL로 가려면 리스너에 authentication을 켜고 KafkaUser CR을 만들 userOperator를 되살리는 것부터다 — 발급할 자격증명이 0건이라 2026-08-15에 내렸다([kafka-cluster.yaml](workloads/manifests/kafka/kafka-cluster.yaml) 주석).
 - **booking이 MySQL에 root로 접속** — 앱 컨테이너가 DB 전권을 들고 있다. prd 경로는 스키마 한정 전용 계정이다.
 - **JDBC 평문** — `useSSL=false`가 앱의 URL에 리터럴로 있어 인프라에서 끌 수 없다. 바꾸려면 앱 이미지를 다시 구워야 한다.
 - **etcd 메트릭 포트(:2381) 무인증** — 같은 LAN에서 인증 없이 읽힌다. 방화벽(ufw)이 꺼져 있어 사설망 전체에 열려 있다.
 - **stg/prd 이미지 승격 경로 미구현** — dev는 CI가 만드는 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) + image-updater write-back으로 전환 완료. stg/prd로 이미지를 올리는 경로는 아직 없다.
 - **sealed-secrets 개인키 자동 백업 미구현** — 수동 반출 사본은 확보(2026-08-09). 재설치 절차에 반출 단계가 코드로 없어, 잊으면 Git의 봉인본 전체가 복호화 불가다.
-- **앱 초기화 API 토큰 미주입** — queue·booking의 데이터 초기화 API는 `ADMIN_TOKEN`이 있어야 라우트가 등록된다. 클러스터에는 아직 그 Secret을 넣지 않아 초기화 API가 비활성이다(로컬 compose에서만 사용). 주입하려면 SealedSecret 한 장 + 앱 차트 env 배선이 필요하다.
 
 ---
 
@@ -395,7 +400,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 | 2 | 각 노드 OS prep(정적 IP·SSH키·**데이터 디스크 10장 mkfs + `/mnt/disks/<용도>` 마운트·fstab**·[cluster/README](bootstrap/cluster/README.md)) | ✅ 완료 (재부팅 검증 통과) |
 | 3 | `cluster/01-server-init.sh`(k3s-1) → `02-server-join.sh`(k3s-2·3) | ✅ 완료 (v1.36.2, etcd 3-member, CNI 전이라 NotReady) |
 | 4 | `bootstrap/install.sh` — Calico부터 argocd까지. 여기까지는 몇 번을 다시 돌려도 안전하다(전부 멱등) | ✅ 완료 |
-| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](workloads/manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격 = 14종 | ✅ 완료 |
+| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](workloads/manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격·초기화 API 토큰 = 15종 | ✅ 완료 |
 | 6 | `bootstrap/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ✅ 완료 |
 | 7 | `kubectl -n argocd get applications -w` 로 sync 확인 | ✅ 완료 (플랫폼·관측·미들웨어 수렴. 자원값은 실측으로 재조정) |
 | 8 | **GitOps 원본을 GitLab으로** — 저장소 이전 · deploy token 봉인 · `repoURL` 전환 · AppProject 울타리 | ✅ 완료 |
@@ -420,7 +425,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 ---
 
-## 상태 (2026-08-10)
+## 상태 (2026-08-19)
 
 플랫폼·관측·미들웨어·앱이 전부 GitOps로 수렴했고, 그 GitOps 원본은 GitLab이다. ArgoCD는 자기 자신도 Application으로 관리한다.
 
@@ -431,13 +436,17 @@ Application 23 개 = Synced · Healthy   (플랫폼 · 관측 · 미들웨어 ·
 
 코드 push부터 롤아웃까지 자동이다: push → CI 5단 게이트(check·test·build·scan·publish) →
 불변 태그 이미지 → argocd-image-updater가 태그를 이 저장소에 write-back → ArgoCD 롤아웃.
-다음 단계는 mysql·redis 차트 정책 끄기(data 계층 출처 제한 완결) → 앱 관측 배선 → 부하 실측(k6)이다.
+
+**부하 실측이 끝났다** — k6 판 21회(사용자 10,000명 통과 · 정원 500 · 좌석 4,000 완판)로
+traefik·queue·booking·MySQL의 requests·limits와 대기열 정원을 추정값에서 실측 근거가 있는 값으로 바꿨다.
+각 값의 근거 수치는 해당 values 주석에 있다.
+다음 단계는 외부 접근·보안이다 — 엣지 · TLS(cert-manager 소비 시작) · 인증 · 관리면 분리.
 
 ---
 
 ## 만든 과정 — 편별 기록
 
-노트북 한 대를 열어 이 클러스터를 세우기까지를 편별로 남겼다. 각 편은 **그 단계에서 실제로 한 작업**과 **그때 짚은 개념**을 함께 적는다 — 아래 표에서 필요한 편으로 바로 들어갈 수 있다. (전체 목록: [블로그 Kubernetes 카테고리](https://zed6740.tistory.com/category/Kubernetes))
+노트북 한 대를 열어 이 클러스터를 세우기까지를 편별로 남겼다. 각 편은 **그 단계에서 실제로 한 작업**과 **그때 짚은 개념**을 함께 적는다 — 아래 표에서 필요한 편으로 바로 들어갈 수 있다. (전체 목록: [블로그 HomeLab 카테고리](https://zed6740.tistory.com/category/HomeLab))
 
 | 편 | 한 작업 | 다룬 개념 |
 |:--|:--|:--|
@@ -451,5 +460,10 @@ Application 23 개 = Synced · Healthy   (플랫폼 · 관측 · 미들웨어 ·
 | **[8부](https://zed6740.tistory.com/217)**<br>관측 파이프라인 | 사본 진단 — `:6443` = `:10250` 179,225줄<br>apiserver scrape 제거 · `job=k3s-server`<br>시리즈 상한 150k → 300k · ingester 2Gi<br>3축 12패널 대시보드 as-code<br>자원값 3건 교정(전부 `exit 137`) | 스크레이프 · 시리즈 · 카디널리티<br>Mimir 쓰기 / 읽기 경로<br>인제스터만 HA가 필요한 이유<br>head 절단 vs 블록 생성<br>상한 포화와 OOMKilled의 감별<br>실패 카운터 ≠ 고장 |
 | **[9부](https://zed6740.tistory.com/218)**<br>GitLab 세우기 | GitLab CE 기동 — 최소 4GB를 2.7GiB로<br>저장소 이전 · GitHub push 미러<br>보호 브랜치 · 스쿼시 + FF<br>deploy token 봉인 · `repoURL` 전환<br>AppProject 울타리 · ArgoCD self-managed | push형 vs pull형 CD<br>webhook은 설정 이전에 네트워크 문제<br>GitLab 부품 9개와 요청의 길<br>머지 3요소 — Merge commit · FF · 스쿼시<br>기계 자격 5종<br>부트스트랩 순환 |
 | **[10부](https://zed6740.tistory.com/221)**<br>CI 와 CD | 그룹 러너(docker executor) · Container Registry<br>5단 파이프라인 — check·test·build·scan·publish<br>불변 태그 `dev-<파이프라인>-<커밋>`<br>노드 `registries.yaml` · image-updater write-back<br>캐시 정비 — 파이프라인 6:06 → 0:46 | CI 게이트와 빈 단계의 값<br>불변 태그 vs latest — 무엇이 롤백을 만드나<br>러너 캐시 3층(볼륨·레이어·BuildKit)<br>write-back이 GitOps 정본을 지키는 방식 |
+| **[11부](https://zed6740.tistory.com/222)**<br>앱 검증과 시뮬레이터 | 앱 흐름 문서화 · E2E 전 분기 검증<br>프론트를 대기열 시뮬레이터로 재작성<br>정원·좌석 테스트 → CI test 게이트<br>NetworkPolicy — 기본 차단 + 지정 출처<br>`ADMIN_TOKEN` 초기화 API | 폴링 대기열의 상태 전이<br>API 계약을 게이트로 남기는 조건<br>NetworkPolicy는 겹치면 허용의 합집합<br>라벨 셀렉터가 못 막는 것 |
 | [번외](https://zed6740.tistory.com/216)<br>e1000e NIC hang | 반씩 좁히기로 업링크 구간 특정<br>`dmesg` — `Hardware Unit Hang` 34회<br>오프로드 off로 복구<br>udev 불발 규명 → `post-up`으로 교체 | carrier(링크) ≠ 데이터 흐름<br>ARP `FAILED`가 뜻하는 것<br>TSO/GSO/GRO와 Intel e1000e 결함<br>장치 개명이 udev 발화를 가름<br>검증의 층위 셋 |
 | [번외](https://zed6740.tistory.com/219)<br>WSL2와 커밋 한도 | 죽는 순간 기록 — `exit 137` · `0xc00000fd`<br>물리 여유 6.6GB → 물리 부족 가설 폐기<br>페이지파일 재설정 — 한도 17.9 → 28.0GB<br>`PeakUsage 1MB` → 램 증설 취소 | Windows 커밋 한도 vs 리눅스 오버커밋<br>`Vmmem`이 대표하는 것<br>`free -h`에서 봐야 할 칸<br>`exit 137`이 알려주지 않는 것<br>페이지파일의 역할 둘 |
+| [번외](https://zed6740.tistory.com/220)<br>CI 파이프라인 14판의 기록 | 5단 게이트가 굳기까지 판 14번<br>check 게이트 넷 · trivy 2단 스캔<br>러너·Dockerfile의 파일 밖 짝 정리 | 게이트 유예(allow_failure)를 걷는 순서<br>비어 있는 test 칸이 말하는 것<br>캐시 3층이 각각 자르는 시간 |
+| [번외](https://zed6740.tistory.com/223)<br>내가 세운 카프카를 읽는다 | 요청이 사라지는 지점에서 출발<br>오프셋 → 토픽 → 파티션 → RF·리더<br>컨슈머 그룹까지 실물 CR과 대조 | 읽고 지우지 않는 큐<br>파티션 — 순서가 보장되는 단위<br>RF3와 리더 선출이 지키는 것 |
+| [번외](https://zed6740.tistory.com/224)<br>노드 메모리와 쿠버네티스 메모리 | 리눅스 → cgroup → 쿠버네티스 세 층<br>같은 노드의 "여유"를 층별로 다시 읽기<br>클러스터 대시보드 메모리 행 설계 | 커널이 도로 가져갈 수 있는 메모리<br>cgroup 상한이 노드 물리보다 먼저 온다<br>allocatable과 예약<br>같은 기준 안에서만 뺀다 |
+| [번외](https://zed6740.tistory.com/225)<br>컨테이너 메모리와 런타임 메모리 | 힙·스택 → 런타임 → RSS → GC<br>Go(GOGC·GOMEMLIMIT)와 JVM(-Xmx)을 나란히<br>컨테이너 limit과 런타임 상한의 짝 | 런타임이 커널에서 가져와 쥐는 것<br>RSS가 세는 것과 안 세는 것<br>GC 목표·밸러스트<br>limit만 있고 런타임 상한이 없을 때 |
