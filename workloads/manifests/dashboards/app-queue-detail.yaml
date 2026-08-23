@@ -1,10 +1,104 @@
-# queue 서비스 대시보드 — 부하 실측용. 판정 순서가 행 순서다.
-#   행1 무슨 일이 → 행2 파드 CPU → 행3 커넥션 풀 → 행4 Redis 명령 → 행5 Redis 메모리 → 행6 배경 루프
-# 패널 제목 = "대상 — 신호" 형식. 설명(ⓘ) = 역할 / 패널 / 읽는 법 3줄.
-# rate 윈도우 1m — 부하 구간의 변화를 보는 화면이다(앱 지표 스크레이프 15s → 1m에 4점).
-#   단 cAdvisor 지표만 2m: 스크레이프 간격이 더 길어 1m 창에 점이 하나뿐이라 rate가 안 나온다.
-# 지표 출처: queue_* = 앱 코드(PodMonitor app/queue, 9091) / container_* = cAdvisor
-#            redis_* = Redis exporter(ServiceMonitor data/redis) / kube_* = kube-state-metrics
+# queue 서비스 대시보드 — 부하 계단을 굴리는 화면 (2026-08-18 계단 실측 반영)
+#
+# 용도는 하나다: 인원을 계단으로 올리면서 행마다 (예상 → 실측 → 스펙)을 굴린다.
+#   각 패널 설명의 "계단에서" 줄이 실측이고, 값은 전부 2026-08-18 판 다섯-일곱에서 왔다.
+#   그 값이 인원에 비례하면 식이 서고, 식이 서면 목표 인원에서 필요한 자원이 계산된다.
+#   비례하지 않는 값은 그 자리에서 다른 것이 정하고 있다는 뜻이라, 그 다른 것을 먼저 찾는다.
+#
+# 행 구성 — booking 화면과 같은 리듬이다. 판정이 흐르는 순서가 곧 행 순서다.
+#   행1 줄            판의 전제(파드·재시작·5xx·루프 멈춤) · 줄 상태 · 판이 유효한가 · 입장이 닿나
+#                     이 판의 결론이 나오는 자리. 정원이 상한인가, 판이 유효한가, 전달이 새나
+#   행2 사용자        지연 p99 — 통과선이 여기 걸린다
+#   행3 뒷단 반응     queue 파드 · Redis. 정원을 올려도 안 움직이면 그것이 결론이다 —
+#                     "병목은 booking 하나"의 근거가 이 행에서 나온다
+#   ▸ 접힌 행         인원이 정하는 것(요청·traefik·커넥션 풀)과 계수 산출용 상세.
+#                     정원 계단에서 여섯 판 내내 안 움직였다. 인원을 올리는 판에서 편다
+#
+# ── 계단 실측 (판5·6·7. SPREAD=3 JITTER=0.3 OPEN_AFTER=180, 판5 는 8m·판6·7 은 20m)
+#   봉우리를 뺀 정상 구간 평균이다. 봉우리 값은 따로 아래에 적는다.
+#
+#                        1,000명   3,000명   5,000명   사람당(기울기)
+#   요청/초                  201       528       874    0.17 건/초
+#   앞 연결 합             1,001     2,872     4,864    1.00 개
+#   traefik 고루틴 합      1,544     3,420     5,458    1.00 개
+#   traefik RSS 합 MiB       161       253       373    56 KB
+#   traefik CPU 합         0.087     0.210     0.375    0.075 mCPU
+#   queue 고루틴 합          103       110       127    0.006 개
+#   queue RSS 합 MiB          36        45        46    2.6 KB
+#   queue CPU 합           0.066     0.151     0.267    0.052 mCPU
+#   queue 파드 수              2         2         2
+#   Redis 명령/초          1,471     3,735     6,164    1.21 건
+#   Redis CPU master      0.0294    0.0636    0.1147   0.026 mCPU
+#   대기 인원                951     2,822     4,806    0.96 명
+#   회전 속도/초           0.267     0.278     0.278    변화 없음
+#   앱 5xx · traefik 5xx       0         0         0
+#
+#   봉우리 (판 전체 최댓값)
+#   traefik RSS 합 MiB       365       626       879    132 KB
+#   queue 파드 수              2         3         4    HPA max 4 도달
+#   queue 스로틀 %          1.24      9.62     10.94
+#   Redis CPU master      0.0299    0.0789    0.1579   0.0395 mCPU
+#   풀 총 커넥션 합             20        30        40    10 × 파드 수
+#   풀 대기 ms/건          117.9     209.7     272.9    포기 기준 1,500ms
+#   풀 타임아웃                 0         0         0
+#
+#   계단이 가른 것:
+#     비례하는 것    앞 연결 · traefik RSS · traefik CPU · queue CPU · Redis 명령 · 대기 인원
+#     안 비례하는 것  queue 고루틴 · queue RSS   — traefik 이 뒤 연결을 재사용해서다
+#                    회전 속도                   — 정원(MAX_SESSIONS)이 정한다.
+#                                                 이 계단은 정원을 2 로 고정하고 인원만 올린 판이다
+#     한도로 가는 것  traefik RSS 하나뿐이다. 봉우리식 235 MiB + 132 KB × 인원 으로
+#                    768Mi × 2파드 = 약 10,000명, 3파드면 약 16,000명이 상한이다.
+#                    그다음 한도는 Redis master 단일 스레드로 봉우리 기준 약 25,000명이다.
+#
+#   계단 뒤 판8-13(10,000명)에서 확정된 것 — 위 표는 그 전(traefik 2파드·768Mi·500m,
+#   queue 500m) 조건의 값이다:
+#     traefik 3파드 × CPU 1500m · memory 2Gi (request 320Mi)
+#     queue   4파드 × CPU 1000m · memory 256Mi — 스로틀 83% → 0%, 풀 포기 59/초 → 0
+#     OPEN_SPREAD 3초 → 입장 p99 2.39s → 486ms. 통과선 6개 전부 통과(판13).
+#
+# ── 도구를 실물에 맞춘 과정 (판1-4. 전부 1,000명. 스펙 값으로 쓰지 않는다)
+#     판1→판2  traefik limit 500m→1500m. traefik 스로틀 11.32 → 0%, queue 2.80 → 8.86%.
+#              앞이 막혀 있던 동안 뒤가 덜 받고 있었다.
+#     판2→판3  예매 여정 추가. 여정과 무관한 현황 조회 p99 가 5.5 → 74.3ms.
+#              같은 파드에서 무거운 경로가 가벼운 경로의 CPU·풀을 나눠 쓴다.
+#     판3→판4  지터만 추가(SPREAD=3 JITTER=0.3). queue 스로틀 6.45 → 0.86%,
+#              풀 대기 15,109 → 1,015건. 판2·3 값의 상당 부분은 도구가 만든 요청 정렬이었다.
+#     그래서 판1-4 는 부하 도구를 프론트와 같은 모양으로 맞춘 과정이고,
+#              스펙 근거는 그 뒤의 계단(판5·6·7)에서만 가져온다.
+#
+# 계측의 한계 — 화면을 읽기 전에 알아야 하는 것:
+#   지연 히스토그램의 첫 칸이 앱과 traefik 이 다르다. 앱은 1ms(0.001 부터), traefik 은
+#     5ms(0.005 부터)다. 각 분위수는 첫 칸 아래로는 값이 아니라 선형보간 상수로 굳으므로,
+#     앱 선의 평평한 1ms 와 traefik 선의 평평한 5ms 는 "빠르다"가 아니라 "못 쟀다"다.
+#     그래서 기준선을 둘 다 그린다.
+#   container_memory_working_set_bytes 에는 파일 캐시가 들어간다. 실측에서 같은
+#     Deployment 의 두 파드가 38.7 vs 12.1MiB 인데 RSS 는 둘 다 11.0MiB 였다.
+#     그래서 메모리 패널마다 RSS 를 같이 그린다 — limit 판정은 working_set,
+#     연결당 비용 산출은 RSS 로 한다.
+#   파드가 둘이라 세는 법이 갈린다. 스로틀·CPU 는 한도가 컨테이너마다 걸리므로 파드별로
+#     보고, 고루틴·연결·메모리는 쥔 자원의 총량이므로 합으로 본다. 두 기준을 섞어
+#     나누면 값이 틀어진다(파드 하나의 RSS 를 두 파드의 연결 수로 나누는 식).
+#
+# 원칙:
+#   기준선(limit·HPA 임계·풀 크기·정원)은 점선으로 같이 그린다.
+#   시리즈가 사라질 수 있는 쿼리에는 `or vector(0)` — 다만 그 경우 스크레이프 생존을
+#     같은 패널에서 보여 준다(0 과 못 읽음을 가르기 위해).
+#   rate 창은 스크레이프 간격에서 정한다 — 앱·traefik·cAdvisor 15초 → [1m],
+#     Redis exporter 30초 → [2m].
+#   traefik 자체의 service 라벨은 스크레이프 라벨에 밀려 exported_service 로 온다.
+#   범례 표는 mean·max 둘을 준다 — mean≈정상 구간, max=봉우리. Max 만 있으면 판 밖
+#     봉우리가 판의 값처럼 읽힌다(실측: MySQL 재시작 구간 92% 를 판의 값으로 오독).
+#   cAdvisor 시리즈는 up 조인으로 산 파드만 남긴다 — 파드 교체 구간에 옛 ReplicaSet 이
+#     범례에 쌓이는 것(실측 16줄)을 막는다
+#
+# booking 화면과의 연결 — 두 화면을 잇는 값은 정원 하나이고, 거기서 나머지가 파생된다.
+#   확정/초 = 정원 ÷ 체류        정원 계단 여섯 판에서 오차 5% 안으로 성립
+#   체류 < SESSION_TIMEOUT       넘으면 좌석을 고르는 중에 자리가 회수돼 판이 무효가 된다
+#   순환 두 방향                 각 화면이 자기가 발행한 다리를 지킨다 —
+#                               승격 → 입장 인증 (이 화면 행1 입장이 닿나 · 트레이스 루트 queue)
+#                               확정 → 자리 반환 (booking 행1 확정이 돌아오나 · 루트 booking)
+#   행2 가 그 셋을 전부 그린다. 자원(행3-6)은 이 값들이 흔들릴 때만 본다..
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,258 +113,2089 @@ data:
       "title": "queue 서비스",
       "editable": true,
       "timezone": "browser",
-      "time": { "from": "now-1h", "to": "now" },
+      "time": {
+        "from": "now-15m",
+        "to": "now"
+      },
       "refresh": "10s",
       "schemaVersion": 39,
-      "templating": { "list": [] },
+      "templating": {
+        "list": []
+      },
       "panels": [
         {
-          "type": "row", "title": "지금 무슨 일이 일어나는가", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": []
+          "type": "row",
+          "title": "1. 이 판의 전제와 결론 — 줄이 도나 · 승격이 닿나",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "panels": []
         },
         {
-          "type": "timeseries",
-          "title": "queue — 경로별 요청 (건/초)",
-          "description": "- **역할**: 부하의 크기 자체. 폴링이 셋(순번·전체 현황·실황 피드)이라 경로를 나눠야 어느 쪽이 무거운지 갈린다\n- **패널**: path 라벨은 라우트 패턴이라 원시 URL로 갈라지지 않는다. 히스토그램의 _count 증가율\n- **읽는 법**: position = 대기 인원에 비례. stats·events = 열린 화면 수에 비례하고 주기가 3초 고정",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+          "type": "stat",
+          "title": "판의 전제 — 넷 다 맞아야 아래를 읽는다",
+          "description": "**이 화면의 수치를 믿어도 되는 조건.** 하나라도 어긋나면 그 구간을 버린다.\n\n- **파드 수** HPA min·max 를 4 로 고정해 뒀다(판 목적). 4 가 아니면 그 구간을 버린다\n- **재시작** 0 이 아니면 연결·고루틴·메모리가 처음부터 다시 쌓인다\n- **5xx** queue 가 깨지면 booking 판도 같이 무효다\n- **루프 멈춤(초)** 승격·회수 배경 루프가 마지막으로 완주한 뒤 지난 시간. 주기가 승격 2초·회수 10초라 평시 10초 안이다. 30초를 넘으면 루프가 멈춘 것이고, 줄 자체가 서 있는 것이라 그 구간을 버린다\n\n정원 계단에서는 MAX_SESSIONS 를 바꿀 때마다 파드가 교체된다. 교체 직후 몇 분은 값이 안정되기를 기다린 뒤 읽는다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 4,
+            "x": 0,
+            "y": 1
+          },
           "targets": [
-            { "refId": "A", "expr": "sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/.*\"}[1m]))", "legendFormat": "{{path}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "queue — 경로별 응답 p99",
-          "description": "- **역할**: 사용자가 겪는 지연. 판정의 출발점이다\n- **패널**: 히스토그램 버킷에서 99분위. 경로마다 하는 일이 달라 합치면 뜻이 없다\n- **읽는 법**: 여기가 오르면 아래 행들로 내려가며 어디인지 가른다. 에러가 같이 나면 Redis 쪽(500ms 타임아웃), 안 나면 파드 CPU 쪽",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
-          "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (path, le) (rate(queue_http_request_duration_seconds_bucket{path=~\"/api/.*\"}[1m])))", "legendFormat": "{{path}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "queue — 경로별 에러율",
-          "description": "- **역할**: 파드 CPU가 상한일 때와 Redis가 상한일 때를 가르는 축. 앞은 느려지기만 하고 뒤는 실패한다\n- **패널**: status 5xx 건수 ÷ 전체 건수\n- **읽는 법**: 0이 아니면 Redis 응답이 클라이언트 타임아웃 500ms를 넘긴 것을 먼저 의심한다. 단 지금은 다른 5xx와 섞여 있어 원인이 확정되지 않는다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/.*\", status=~\"5..\"}[1m])) / sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/.*\"}[1m]))", "legendFormat": "{{path}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 20 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-
-        {
-          "type": "row", "title": "① 파드 CPU 가 상한인가", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "panels": []
-        },
-        {
-          "type": "timeseries",
-          "title": "queue 파드 — CPU 사용량 (코어)",
-          "description": "- **역할**: 파드가 요청을 받아 풀고 답을 만드는 데 쓰는 몫. Redis를 기다리는 시간은 여기 안 잡힌다\n- **패널**: 파드별 CPU 초/초 = 코어 수. requests 0.25 · limit 0.5 선을 함께 둔다\n- **읽는 법**: limit 0.5에 붙어서 평평하면 스로틀이 걸리는 중이다. requests 0.175(70%)를 넘으면 HPA가 파드를 늘린다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[2m]))", "legendFormat": "{{pod}}" },
-            { "refId": "B", "expr": "0.5", "legendFormat": "limit" },
-            { "refId": "C", "expr": "0.25", "legendFormat": "requests" }
+            {
+              "refId": "A",
+              "expr": "count(up{job=\"app/queue\"} == 1) or vector(0)",
+              "instant": true,
+              "legendFormat": "파드 수"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"app\", container=\"queue\"}[10m])) or vector(0)",
+              "instant": true,
+              "legendFormat": "재시작 (10분)"
+            },
+            {
+              "refId": "C",
+              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=~\"/api/.*\", status=~\"5..\"}[1m])) or vector(0)",
+              "legendFormat": "5xx (1분)"
+            },
+            {
+              "refId": "D",
+              "expr": "max(time() - max by (loop) (queue_loop_last_tick_timestamp_seconds)) or vector(0)",
+              "instant": true,
+              "legendFormat": "루프 멈춤 (초)"
+            }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "none", "decimals": 3, "custom": { "fillOpacity": 10 } },
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  }
+                ]
+              }
+            },
             "overrides": [
-              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] },
-              { "matcher": { "id": "byName", "options": "requests" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "재시작 (10분)"
+                },
+                "properties": [
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "red",
+                          "value": 1
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "5xx (1분)"
+                },
+                "properties": [
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "red",
+                          "value": 1
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "루프 멈춤 (초)"
+                },
+                "properties": [
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "orange",
+                          "value": 15
+                        },
+                        {
+                          "color": "red",
+                          "value": 30
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
             ]
           },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "queue 파드 — 스로틀 비율",
-          "description": "- **역할**: 커널이 100ms 구간마다 이 컨테이너의 몫을 채우고 세는데, 다 쓰면 남은 구간 동안 코어에 안 올린다. 그 구간의 비율\n- **패널**: 스로틀된 구간 수 ÷ 전체 구간 수\n- **읽는 법**: 0이 아니면 CPU limit이 좁다. 파드는 죽지 않고 늦어진다 — 지연은 오르고 에러는 안 난다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"queue\"}[2m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"queue\"}[2m]))", "legendFormat": "{{pod}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 20 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "queue — 파드 수 (HPA)",
-          "description": "- **역할**: ①은 파드를 늘리면 풀리는 자리다. HPA가 제때 늘렸는지를 본다\n- **패널**: HPA가 원하는 수와 실제 수. min 2 · max 4\n- **읽는 법**: 원하는 수가 4에 붙어 있으면 상한에 걸린 것이다. 그 위로는 파드로 못 푼다. 원하는 수와 실제 수가 벌어져 있으면 파드가 못 앉고 있다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
-          "targets": [
-            { "refId": "A", "expr": "kube_horizontalpodautoscaler_status_current_replicas{exported_namespace=\"app\", horizontalpodautoscaler=\"queue\"}", "legendFormat": "실제" },
-            { "refId": "B", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{exported_namespace=\"app\", horizontalpodautoscaler=\"queue\"}", "legendFormat": "HPA가 원하는 수" },
-            { "refId": "C", "expr": "kube_horizontalpodautoscaler_spec_max_replicas{exported_namespace=\"app\", horizontalpodautoscaler=\"queue\"}", "legendFormat": "max" }
-          ],
-          "fieldConfig": {
-            "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 0, "lineInterpolation": "stepAfter" } },
-            "overrides": [
-              { "matcher": { "id": "byName", "options": "max" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
-            ]
-          },
-          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-
-        {
-          "type": "row", "title": "② 커넥션 풀이 상한인가", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "panels": []
-        },
-        {
-          "type": "timeseries",
-          "title": "queue — Redis 커넥션 풀 (파드별 · 상태별)",
-          "description": "- **역할**: 파드에서 Redis로 나가는 통로 수. 풀 크기가 곧 그 파드가 같은 순간에 보낼 수 있는 명령 수다\n- **패널**: in_use 쓰는 중 · idle 노는 중 · waiting 커넥션을 기다리는 요청 수\n- **읽는 법**: idle이 0이고 waiting이 0보다 크면 통로가 다 찼다. 다만 Redis가 느려도 같은 모양이 되므로 아래 행의 Redis CPU를 먼저 본다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
-          "targets": [
-            { "refId": "A", "expr": "queue_redis_pool", "legendFormat": "{{pod}} {{state}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-        {
-          "type": "text",
-          "title": "풀 크기의 근거",
-          "description": "",
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
           "options": {
-            "mode": "markdown",
-            "content": "REDIS_POOL_SIZE 를 설정에 주지 않아 라이브러리 기본값이 쓰인다.\n\n```\n기본값       10 x GOMAXPROCS\nGOMAXPROCS   컨테이너 CPU limit 에서 정해진다\nCPU limit    500m = 코어 0.5개분 -> 1개 미만이라 최소값 1\n\n풀 크기      10 x 1 = 10\n```\n\n파드 하나가 같은 순간에 Redis 로 보낼 수 있는 명령이 10개다. HPA 상한 4대를 다 써도 40.\n\nCPU limit 을 1000m 으로 올려도 GOMAXPROCS 는 1 그대로라 풀도 10 그대로다. 2000m 이라야 20이 된다.\n\n**아직 없는 패널**: 풀을 기다린 시간. 지금 waiting 은 \"몇 건이 기다리는 중\"이라 순간값이고, 얼마나 기다렸는지는 코드에 계측을 넣어야 나온다."
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value_and_name",
+            "colorMode": "value",
+            "orientation": "auto"
           }
         },
-
-        {
-          "type": "row", "title": "③ Redis 명령 처리가 상한인가", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "panels": []
-        },
         {
           "type": "timeseries",
-          "title": "Redis — 프로세스 CPU (코어)",
-          "description": "- **역할**: Redis는 명령을 하나씩 순서대로 실행한다. 코어 하나가 천장이고 limit도 1이다\n- **패널**: 노드 3대의 사용자·시스템 CPU 합. Sentinel 구성이라 master 1 · replica 2\n- **읽는 법**: 한 선만 1에 붙는다면 그것이 master다. 쓰기와 읽기가 전부 master로 가고 replica는 놀고 있다는 뜻이기도 하다. 1에 닿으면 파드를 늘려도 안 풀린다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+          "title": "줄 — 대기 인원 · 정원 · 입장 중",
+          "description": "**줄이 얼마나 길고, 문이 몇 개고, 몇 개가 차 있나.**\n\n- **대기 인원** 줄에 선 사람. 인원이 정한다\n- **정원**(점선) 동시에 들여보내는 수. 이쪽에서 정하는 값(MAX_SESSIONS)\n- **입장 중** 실제로 자리를 쥔 사람\n\n읽는 법.\n- 입장 중이 정원 점선에 붙어 있다 → **정원이 상한이다.** 계단을 올려도 된다\n- 정원을 올렸는데 입장 중이 안 따라온다 → 승격이 못 따라가거나 줄이 말랐다\n- 대기가 0 에 가까워진다 → 사람이 부족하다. 그 구간의 측정은 못 쓴다\n\n오른쪽 두 패널이 이 상태에서 나오는 결과다 — 얼마나 빨리 도는가, 그리고 순환이 닫히는가.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 7,
+            "x": 4,
+            "y": 1
+          },
           "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(redis_cpu_user_seconds_total[1m]) + rate(redis_cpu_sys_seconds_total[1m]))", "legendFormat": "{{pod}}" },
-            { "refId": "B", "expr": "1", "legendFormat": "limit" }
+            {
+              "refId": "A",
+              "expr": "max(queue_waiting and on(pod) (up{job=\"app/queue\"} == 1)) or vector(0)",
+              "legendFormat": "대기 인원"
+            },
+            {
+              "refId": "B",
+              "expr": "max(queue_capacity and on(pod) (up{job=\"app/queue\"} == 1)) or vector(0)",
+              "legendFormat": "정원 (MAX_SESSIONS)"
+            },
+            {
+              "refId": "C",
+              "expr": "max(queue_active and on(pod) (up{job=\"app/queue\"} == 1)) or vector(0)",
+              "legendFormat": "입장 중"
+            }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "none", "decimals": 3, "custom": { "fillOpacity": 10 } },
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "min": 0,
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
             "overrides": [
-              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "정원 (MAX_SESSIONS)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        6
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "text"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "대기 인원"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "대기 인원"
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              }
             ]
           },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         },
         {
           "type": "timeseries",
-          "title": "Redis — 명령별 호출 (건/초)",
-          "description": "- **역할**: 명령 수를 줄이는 것이 이 자리의 유일한 수단이라, 어느 명령이 몇 번 오는지가 손댈 곳을 정한다\n- **패널**: 명령 종류별 초당 호출. 상위 10개\n- **읽는 법**: 순번 폴링은 evalsha(Lua)로 나가고, 전체 현황은 zcard·get, 실황 피드는 lrange다. 화면 둘을 캐시로 줄이면 zcard·get·lrange가 준다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
+          "title": "판이 유효한가 — 체류가 타임아웃 안인가",
+          "description": "**한 사람이 자리를 쥐고 있는 시간이 회수선 안에 있나.** 체류 = 입장 중 ÷ 승격/초 이고, 승격/초는 오른쪽 「입장이 닿나」에 있다.\n\n- **체류 시간** 입장해서 예매를 끝낼 때까지 자리를 쥔 시간\n- **세션 타임아웃**(점선) 60초. 이 시간이 지나면 queue 가 자리를 회수한다\n\n**체류가 점선을 넘으면 그 판은 무효다.** 좌석을 고르는 중에 자리가 회수돼 좌석 선택이 403 으로 막히고, 자원은 멀쩡한데 처리량만 무너진다 — 정원 200·체류 90초 판에서 확정이 12분의 1로 떨어졌다.\n\n체류가 정원과 함께 확정 속도를 정한다 — **확정/초 = 정원 ÷ 체류.** 여덟 판에서 오차 5% 안으로 성립했다.\n실제 서비스 스펙을 낼 때는 방향이 반대다 — 사용자가 걸리는 시간보다 타임아웃이 길어야 한다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 7,
+            "x": 11,
+            "y": 1
+          },
           "targets": [
-            { "refId": "A", "expr": "topk(10, sum by (cmd) (rate(redis_commands_total[1m])))", "legendFormat": "{{cmd}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "Redis — 명령별 소요 시간 (초/초)",
-          "description": "- **역할**: 호출 수가 적어도 하나가 무거우면 그 명령이 코어를 먹는다. 실황 피드가 매번 읽는 목록 조회가 그런 경우다\n- **패널**: 명령 종류별로 Redis가 그 명령에 쓴 시간의 초당 증가. 값이 1이면 그 명령 하나로 코어 하나를 다 쓴 것이다\n- **읽는 법**: 호출 수 패널과 나란히 본다. 호출은 적은데 시간이 큰 명령이 먼저 줄일 대상이다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 28 },
-          "targets": [
-            { "refId": "A", "expr": "topk(10, sum by (cmd) (rate(redis_commands_duration_seconds_total[1m])))", "legendFormat": "{{cmd}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "none", "decimals": 4, "custom": { "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-
-        {
-          "type": "row", "title": "④ Redis 메모리에 여유가 있는가", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 }, "panels": []
-        },
-        {
-          "type": "timeseries",
-          "title": "Redis — 사용 메모리",
-          "description": "- **역할**: 대기 명부를 담는 용량. 속도가 아니라 몇 명이 서 있을 수 있는가의 축이다\n- **패널**: 노드별 사용 메모리와 컨테이너 limit 512Mi 선\n- **읽는 법**: maxmemory가 설정되어 있지 않아(실측 0) Redis는 자기 한계를 모른다. 512Mi에 닿으면 거절이 아니라 컨테이너 종료로 끝나고, 디스크 저장도 꺼져 있어 대기열이 통째로 사라진다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 37 },
-          "targets": [
-            { "refId": "A", "expr": "redis_memory_used_bytes", "legendFormat": "{{pod}}" },
-            { "refId": "B", "expr": "536870912", "legendFormat": "컨테이너 limit" }
+            {
+              "refId": "A",
+              "expr": "max(queue_active and on(pod) (up{job=\"app/queue\"} == 1)) / (max(queue_promotion_rate and on(pod) (up{job=\"app/queue\"} == 1)) > 0)",
+              "legendFormat": "체류 시간"
+            },
+            {
+              "refId": "B",
+              "expr": "60",
+              "legendFormat": "세션 타임아웃 60초"
+            }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "bytes", "custom": { "fillOpacity": 10 } },
+            "defaults": {
+              "unit": "s",
+              "decimals": 1,
+              "min": 0,
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2
+              }
+            },
             "overrides": [
-              { "matcher": { "id": "byName", "options": "컨테이너 limit" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "세션 타임아웃 60초"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        6
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "체류 시간"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 3
+                  }
+                ]
+              }
             ]
           },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         },
         {
           "type": "timeseries",
-          "title": "queue — 대기 인원 · 입장 인원",
-          "description": "- **역할**: 메모리를 채우는 것이 이 숫자다. 대기자 한 명이 몇 바이트인지는 이 값과 사용 메모리를 나눠서 나온다\n- **패널**: 영화별 대기 인원과 입장 인원. 활성 큐가 없으면 시리즈 자체가 생기지 않는다\n- **읽는 법**: 유입이 없는데 대기 인원이 줄면 30초 넘게 폴링이 없는 사람이 지워진 것이다 — 응답이 밀려 살아 있는 사람이 지워지는 경우가 여기 섞인다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 37 },
+          "title": "입장이 닿나 — 승격 vs 입장 인증",
+          "description": "**queue 가 보낸 승격이 booking 에 닿아 입장 인증이 됐나.** 승격은 자리를 내준 것이고, 그 사람이 실제로 들어가려면 booking 쪽에 인증이 생겨야 한다. 이 사이가 늦으면 자리를 쥔 채 좌석 선택이 403 으로 막히다가 세션 타임아웃(60초)에 회수된다 — 왼쪽 「줄」에서 입장 중이 정원을 못 채우는 원인이 여기다.\n\n- **승격/초** queue 가 자리를 내준 수\n- **입장 인증/초** booking 이 인증을 만든 수. 승격과 겹쳐 있어야 정상이다\n- **인증 지연 p99**(왼쪽 축 — exemplar 점이 이 선 위에 얹힌다) 승격 발행부터 인증 생성까지. **점을 누르면 queue 가 시작한 트레이스**(promote cycle → Kafka → booking)가 열린다\n- **발행 실패 · DLT** 0 이라 안 보이는 것이 정상. 선이 서면 전달이 새는 중이다 — 발행 실패는 queue 에서 못 나간 것, DLT 는 닿았는데 booking 이 처리하지 못해 옆으로 뺀 것\n\n**이 지연은 booking 이 CPU 를 받고 있는지에 그대로 따라간다.** Kafka 소비가 booking 파드 안에서 도는 일이라, 2026-08-21 같은 부하 두 판에서 booking 스로틀 5.85% 일 때 p50 0.22초, 52.88% 일 때 10초를 넘었다. 이 선이 오르면 브로커가 아니라 booking 화면의 스로틀부터 본다.\n\n⚠ 지연은 발행 파드의 시계로 찍혀 노드 간 시계 차이가 오차로 섞이고, 버킷 상한 60초에 선이 평평하게 붙으면 측정값이 아니라 \"그보다 크다\" 는 뜻이다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
           "targets": [
-            { "refId": "A", "expr": "queue_waiting", "legendFormat": "대기 {{movie}}" },
-            { "refId": "B", "expr": "queue_active", "legendFormat": "입장 {{movie}}" }
+            {
+              "refId": "A",
+              "expr": "max(queue_promotion_rate and on(pod) (up{job=\"app/queue\"} == 1)) or vector(0)",
+              "legendFormat": "승격/초 — admissions 발행"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(booking_admissions_total{application=\"cgv-booking\", result=\"ok\"}[1m])) or vector(0)",
+              "legendFormat": "입장 인증/초 — admissions 소비"
+            },
+            {
+              "refId": "C",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(booking_admission_lag_seconds_bucket{application=\"cgv-booking\"}[1m])))",
+              "legendFormat": "인증 지연 p99 — admissions",
+              "exemplar": true
+            },
+            {
+              "refId": "D",
+              "expr": "sum(rate(queue_kafka_publish_failures_total[1m])) > 0",
+              "legendFormat": "발행 실패/초 — admissions"
+            },
+            {
+              "refId": "E",
+              "expr": "sum by (topic) (rate(booking_kafka_dlt_total[1m])) > 0",
+              "legendFormat": "DLT {{topic}}"
+            }
           ],
-          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "decimals": 3,
+              "min": 0,
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "인증 지연 p99 — admissions"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "지연"
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        6
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "승격/초.*|입장 인증/초.*|발행 실패.*|DLT.*"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "reqps"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  },
+                  {
+                    "id": "min",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "건/초"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "승격/초 — admissions 발행"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 3
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "발행 실패.*|DLT.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 40
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "2. 사용자가 겪는 것",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 11
+          },
+          "panels": []
         },
         {
           "type": "timeseries",
-          "title": "Redis — 키 개수",
-          "description": "- **역할**: 대기자 한 명이 키를 몇 개 차지하는지를 인원과 대조해 확인한다\n- **패널**: 노드별 키 개수\n- **읽는 법**: 대기자는 줄 자체와 마지막 폴링 시각 두 곳에 들어간다. 인원 대비 키가 그 배수로 늘어나는지 본다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 37 },
+          "title": "지연 p99 — 앱(경로별) · traefik",
+          "description": "**사용자가 받은 응답. queue 편 통과선이 여기 걸려 있다.**\n\n- **position**(순번 폴링) 대기자가 가장 자주 부르는 경로. 통과선 500ms\n- **stats·events**(현황판) 메인 화면에 있는 사람이 3초마다. 통과선 3초\n- **traefik** traefik 을 지나온 값. 앱 선과의 간격이 traefik·네트워크 몫이다\n\n화면에 그은 두 점선은 통과선이 아니라 히스토그램 첫 칸(앱 1ms · traefik 5ms)이다. 선이 그 값에 평평하게 붙어 있으면 \"빠르다\"가 아니라 **\"그보다 아래는 못 쟀다\"**는 뜻이라 둘 다 그린다.\n\n**y축이 로그 스케일이다.** 부하 중 position 이 1.5초까지 가는 동안 stats·events 는 6-9ms 라, 선형 축이면 나머지가 바닥에 붙어 구분이 안 된다. 대신 **눈금 간격이 일정하지 않으니 \"두 배 차이\"를 눈대중으로 읽지 말고 범례의 수치를 봐야 한다.**\n\n이 선들이 정원과 함께 움직이는지가 판정 지점이다. 안 움직이면 queue 응답은 인원이 정하고 정원과 무관하다는 뜻이고, 움직이기 시작하면 정원이 queue 에도 부담을 주는 것이라 아래 행을 본다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 16,
+            "x": 0,
+            "y": 12
+          },
           "targets": [
-            { "refId": "A", "expr": "sum by (pod) (redis_db_keys)", "legendFormat": "{{pod}}" }
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.99, sum by (path, le) (rate(queue_http_request_duration_seconds_bucket{path=~\"/api/admission/(stats|events|position)\"}[1m])))",
+              "legendFormat": "앱 {{path}}",
+              "exemplar": true
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{exported_service=\"app-queue-8090@kubernetes\"}[1m])))",
+              "legendFormat": "traefik (queue 전체)"
+            },
+            {
+              "refId": "C",
+              "expr": "0.001",
+              "legendFormat": "앱 첫 칸 1ms"
+            },
+            {
+              "refId": "D",
+              "expr": "0.005",
+              "legendFormat": "traefik 첫 칸 5ms"
+            }
           ],
-          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
-        },
-
-        {
-          "type": "row", "title": "배경 루프가 살아 있는가", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 }, "panels": []
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "min": 0.0005,
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "scaleDistribution": {
+                  "type": "log",
+                  "log": 10
+                }
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "traefik (queue 전체)"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "purple"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*첫 칸.*"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "text"
+                    }
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         },
         {
           "type": "timeseries",
-          "title": "queue — 루프별 마지막 완주 경과 (초)",
-          "description": "- **역할**: 승격·입장 만료·대기 만료·발행 저널 스윕 넷은 요청과 무관하게 파드 안에서 돈다. 멈춰도 응답 지연에는 안 나타난다\n- **패널**: 지금 시각에서 그 루프가 마지막으로 한 바퀴를 끝낸 시각을 뺀 값. 파드마다 따로 돈다\n- **읽는 법**: 각 루프의 주기(승격 2초 · 만료 10초 · 스윕 5초)보다 계속 크면 그 루프가 밀리는 중이다. 파드가 4대면 같은 루프가 4벌 돌아 Redis 부하도 4배가 된다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 46 },
+          "title": "실패 — traefik 이 돌려준 5xx vs 앱이 잰 5xx",
+          "description": "**느린 것과 깨진 것을 가른다. 지연 패널과 항상 같이 읽는다.**\n\n- 두 선의 차 → 앱에 닿지 못한 실패(파드 죽음·프로브 실패)\n- 노랑만 선다 → Redis 응답이 500ms 를 넘겼다\n- 회색이 0 → 빨강의 0 은 \"없음\"이 아니라 **\"못 읽음\"**\n\n`/health/*` 는 뺐다 — kubelet 이 부르고 traefik 을 안 거친다.\n\n4xx 는 안 잡힌다. 409 좌석충돌·403 입장전 재시도는 정상 흐름이고,\nk6 의 `http_req_failed` 는 그것까지 세서 숫자가 다르다.\n\n5,000명 — 세 판 모두 0",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 8,
+            "x": 16,
+            "y": 12
+          },
           "targets": [
-            { "refId": "A", "expr": "time() - queue_loop_last_tick_timestamp_seconds", "legendFormat": "{{loop}} · {{pod}}" }
+            {
+              "refId": "A",
+              "expr": "sum(rate(traefik_service_requests_total{exported_service=\"app-queue-8090@kubernetes\", code=~\"5..\"}[1m])) or vector(0)",
+              "legendFormat": "traefik 이 돌려준 5xx"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(queue_http_request_duration_seconds_count{path!~\"/health/.*\", status=~\"5..\"}[1m])) or vector(0)",
+              "legendFormat": "앱이 잰 5xx"
+            },
+            {
+              "refId": "C",
+              "expr": "min(up{job=\"traefik-metrics\"}) or vector(0)",
+              "legendFormat": "traefik 스크레이프 생존"
+            }
           ],
-          "fieldConfig": { "defaults": { "unit": "s", "decimals": 1, "custom": { "fillOpacity": 0 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "min": 0,
+              "custom": {
+                "fillOpacity": 30,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "traefik 이 돌려준 5xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "앱이 잰 5xx"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "yellow"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*생존"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "max",
+                    "value": 1
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "text"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": false,
+          "title": "3. 얼마나 드나 — 요청 수를 분모로, queue 파드와 Redis (스펙의 근거)",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 22
+          },
+          "panels": []
         },
         {
           "type": "timeseries",
-          "title": "queue — Kafka 최종 실패 (누적)",
-          "description": "- **역할**: 입장 알림 발행과 완료 소비가 재시도를 소진하고 최종 실패한 건수. 대기열이 도는데도 입장이 전달되지 않는 상태를 잡는다\n- **패널**: 두 카운터의 누적값\n- **읽는 법**: 올라가면 그 시점부터 정원이 비어도 승격자가 booking에 안 닿거나, 나간 자리가 반납되지 않는다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 46 },
+          "title": "요청 (건/초) — 폴링 셋 + enter",
+          "description": "**부하의 크기. 아래 모든 판정의 분모.**\n\n자원이 올랐을 때 요청이 늘어서인지\n요청은 그대로인데 무거워진 건지를 이걸로 가른다.\n\n- 왼쪽 축 — 폴링 셋, 초당 요청 수\n- 오른쪽 축 — `enter` **누적 인원**(초당이 아니다)\n\n**enter 만 단위가 다른 이유.** enter 는 사용자당 한 번이라 오픈 순간 몇 초 안에 전부 들어온다. 그 시리즈는 첫 요청이 올 때 처음 생기는데, `rate()` 는 이전 점과의 차이를 재므로 **시리즈가 생기는 그 증가를 못 잡는다** — 6,000명이 실제로 들어와도 선이 0 에 붙어 있었다. 그래서 누적값을 그대로 그린다. 계단이 서는 시각과 높이가 곧 오픈 시각과 인원이다.\n\n오픈 후 폴링 요청이 3분의 1로 준다 —\n메인은 3초마다 둘, 대기 화면은 5초마다 하나.\n\n요청 수가 같아도 도착 모양이 다르면 지연이 갈린다.\n판1-4 는 요청 수가 거의 같은데 스로틀이 19배 갈렸다.\n\n5,000명 — 정상 874/초 · 봉우리 2,998/초 · 사람당 0.17건/초",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 23
+          },
           "targets": [
-            { "refId": "A", "expr": "sum(queue_kafka_publish_failures_total)", "legendFormat": "발행 실패" },
-            { "refId": "B", "expr": "sum(queue_kafka_consume_failures_total)", "legendFormat": "소비 실패" }
+            {
+              "refId": "A",
+              "expr": "sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/admission/(stats|events|position)\"}[1m]))",
+              "legendFormat": "{{path}}"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}) or vector(0)",
+              "legendFormat": "enter 누적 (명)"
+            }
           ],
-          "fieldConfig": { "defaults": { "unit": "none", "decimals": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "min": 0,
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "enter 누적 (명)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "enter 누적 (명)"
+                  },
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "purple"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "CPU · 스로틀 / limit 1000m",
+          "description": "**queue 가 CPU 로 막히나.** queue 는 메모리가 아니라 이 축이 부하를 받는다.\n\nHPA 와 커널은 다른 것을 본다.\n- HPA — 그 1분의 **평균 하나**\n- 커널 — 그 1분을 **100ms 조각 600개**로 쪼개서\n\n같은 평균에서도 고르게 오면 안 잘리고 몰리면 3분의 1이 잘린다.\n그래서 \"스로틀 0% + 파드 늘어남\"도 \"스로틀 34% + 파드 안 늘어남\"도 가능하다.\n\n- 스로틀이 선다 → `limit` 자리\n- 평균이 175m 을 넘는다 → 파드 수 자리\n- 파드마다 스로틀이 갈린다 → 분산이 아니라 **파드가 뜬 시점** 차이일 수 있다\n\n5,000명 — 봉우리 스로틀 34.4 / 29.5 / 5.9 / 5.1%\n요청 비중은 27/27/23/22% 로 고르다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 33
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[1m])) and on(pod) (up{job=\"app/queue\"} == 1)",
+              "legendFormat": "CPU {{pod}}"
+            },
+            {
+              "refId": "B",
+              "expr": "max(sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"queue\"}[1m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"queue\"}[1m])))",
+              "legendFormat": "스로틀 (파드 중 최대)"
+            },
+            {
+              "refId": "C",
+              "expr": "0.175",
+              "legendFormat": "HPA 임계 175m"
+            },
+            {
+              "refId": "D",
+              "expr": "1",
+              "legendFormat": "limit 1000m"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 3,
+              "min": 0,
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "스로틀.*"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percentunit"
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "스로틀"
+                  },
+                  {
+                    "id": "max",
+                    "value": 1
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 30
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "HPA 임계 175m"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        6
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "yellow"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "limit 1000m"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "메모리 · 든 연결 / limit 256Mi",
+          "description": "**queue 메모리가 인원을 따라 오르나.** 순간값이 아니라 모양과 사후 판정을 본다.\n\n- 인원이 늘어도 안 는다 → 정상. queue 는 연결 축이 아니다\n- 갑자기 오른다 → 동시에 처리 중인 요청이 늘었다(힙)\n- 재시작 직전 값 → OOMKill 과 프로브 실패를 가른다\n\n실선 `working_set` 과 점선 `RSS` 의 차는 페이지 캐시다.\n\n계단 판(2파드) 5,000명 — 합 46MiB. 판13(4파드) 10,000명 — 파드당 128MiB(limit 의 50%)\n지터 없는 판3 은 90MiB, 넣은 판4 는 54MiB — 요청 수는 같았다.\n\n고루틴 = Go 의 경량 스레드(개당 스택 수 KB). 연결 하나가 읽기·쓰기 두 개를 든다.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 33
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "container_memory_working_set_bytes{namespace=\"app\", container=\"queue\"} and on(pod) (up{job=\"app/queue\"} == 1)",
+              "legendFormat": "working_set {{pod}}"
+            },
+            {
+              "refId": "B",
+              "expr": "max(container_memory_rss{namespace=\"app\", container=\"queue\"} and on(pod) (up{job=\"app/queue\"} == 1))",
+              "legendFormat": "RSS (파드 중 최대)"
+            },
+            {
+              "refId": "C",
+              "expr": "268435456",
+              "legendFormat": "limit 256Mi"
+            },
+            {
+              "refId": "D",
+              "expr": "sum(go_goroutines{job=\"app/queue\"}) or vector(0)",
+              "legendFormat": "든 연결 (고루틴 합)"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "decimals": 0,
+              "min": 0,
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "RSS.*"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        6
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "limit.*"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "든 연결.*"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.axisLabel",
+                    "value": "연결"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "yellow"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Redis 코어 — 노드별 사용량 / 상한 1 · 그중 명령 실행",
+          "description": "**Redis 가 병목인지 배제하는 자리.** 여기가 조용해야 위 풀 대기를 풀 문제로 읽는다.\n\n- 실선 셋 — 노드가 쓴 코어. **크게 오르는 하나가 master 다**(읽기가 전부 그리로 간다)\n- 점선 — 그중 명령을 실행한 시간\n\n**master 한 대의 1 코어가 절대 상한**이다. Redis 는 명령을 하나씩 실행한다.\n\n실선과 점선의 간격은 명령 실행이 아닌 시간이다 — 소켓 읽기·쓰기, 이벤트 루프, 복제 전송.\n`INFO commandstats` 는 명령을 실행한 시간만 재므로, **명령을 줄여도 그 간격은 안 준다.**\n점선은 EVALSHA 와 그 안의 명령이 겹쳐 세어져 실제보다 높다 — 상한으로 읽는다.\n\n유휴 바닥이 약 0.045 코어 있다(sentinel·복제·exporter).\n넘으면 파드 추가가 아니라 **샤딩**이다. 이 값을 정하는 건 연결 수가 아니라 초당 명령 수라,\n인원을 안 늘리고 폴링 주기만 줄여도 밀 수 있다.\n\nmaster 5,000명 0.111 · 10,000명 0.253(봉우리 0.337). 상한 1.0.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 43
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (pod) (rate(redis_cpu_user_seconds_total{job=\"redis-metrics\"}[2m]) + rate(redis_cpu_sys_seconds_total{job=\"redis-metrics\"}[2m]))",
+              "legendFormat": "{{pod}}"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(max by (cmd) (rate(redis_commands_duration_seconds_total{cmd!~\"ping|publish|replconf|auth|info|subscribe|psync|hello|client.*|slowlog.*|config.*|latency.*|memory.*|command.*\"}[2m])))",
+              "legendFormat": "명령 실행 (한 대분 · 상한)"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 4,
+              "min": 0,
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "명령 실행 (한 대분 · 상한)"
+                },
+                "properties": [
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        6
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "text"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "row",
+          "collapsed": true,
+          "title": "▸ 연결이 어디에 쌓이나 — traefik 과 queue (인원을 올리는 판에서 편다)",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 53
+          },
+          "panels": [
+            {
+              "type": "timeseries",
+              "title": "traefik 메모리 · 동시 연결 / limit 2Gi",
+              "description": "**이 클러스터가 몇 명까지 받는지를 정하는 패널.**\n계단에서 인원을 올릴 때 한도로 가는 값이 이것 하나였다.\n\n폴링하는 사용자는 요청을 안 보내는 순간에도 연결을 쥐고 있고,\ntraefik 은 그 연결을 앞뒤 두 벌 든다.\n**그래서 초당 요청 수가 아니라 동시 접속자 수가 정한다.**\n\n- 실선 `working_set` — limit 판정용(커널이 보는 값)\n- 점선 `RSS` — 연결당 비용 산출용\n- 오른쪽 축 — 지금 열린 사용자 연결 수\n\nworking_set = 커널이 회수하지 못하는 실사용 메모리(OOMKill 판정 기준).\nRSS = 프로세스가 쥔 물리 메모리. 둘의 간격은 커널 캐시다.\n\n사람당은 `(뒤 판 − 앞 판) ÷ (뒤 인원 − 앞 인원)`. 총합÷인원은 바닥값이 섞여 흔들린다.\n`limit` 은 **한 대가 빠졌을 때 남은 대가 받을 양**으로 잡는다.\n\n봉우리 = 235MiB + 132KB × 인원. 정적 파일(방문당 7건 118KB)은 이 식에 아직 안 들어갔다.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 0,
+              "y": 54
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "container_memory_working_set_bytes{namespace=\"traefik\", container=\"traefik\"} and on(pod) (up{job=\"traefik-metrics\"} == 1)",
+                  "legendFormat": "working_set {{pod}}"
+                },
+                {
+                  "refId": "B",
+                  "expr": "container_memory_rss{namespace=\"traefik\", container=\"traefik\"}",
+                  "legendFormat": "RSS {{pod}}"
+                },
+                {
+                  "refId": "C",
+                  "expr": "2147483648",
+                  "legendFormat": "limit 2Gi"
+                },
+                {
+                  "refId": "D",
+                  "expr": "sum(traefik_open_connections{entrypoint=\"web\"}) or vector(0)",
+                  "legendFormat": "동시 연결 (web)"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "bytes",
+                  "decimals": 0,
+                  "min": 0,
+                  "custom": {
+                    "fillOpacity": 10,
+                    "lineWidth": 2
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "RSS.*"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.lineStyle",
+                        "value": {
+                          "fill": "dash",
+                          "dash": [
+                            6,
+                            6
+                          ]
+                        }
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "limit.*"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.lineStyle",
+                        "value": {
+                          "fill": "dash",
+                          "dash": [
+                            10,
+                            10
+                          ]
+                        }
+                      },
+                      {
+                        "id": "color",
+                        "value": {
+                          "mode": "fixed",
+                          "fixedColor": "red"
+                        }
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      },
+                      {
+                        "id": "custom.lineWidth",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "동시 연결.*"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "none"
+                      },
+                      {
+                        "id": "custom.axisPlacement",
+                        "value": "right"
+                      },
+                      {
+                        "id": "custom.axisLabel",
+                        "value": "연결"
+                      },
+                      {
+                        "id": "color",
+                        "value": {
+                          "mode": "fixed",
+                          "fixedColor": "yellow"
+                        }
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "type": "timeseries",
+              "title": "traefik CPU · 스로틀 / limit 1500m",
+              "description": "**traefik 이 CPU 로 막히나.** 왼쪽 메모리가 여유인데 지연만 오를 때 온다.\n\n커널은 limit 을 100ms 주기마다의 배급으로 바꾼다(1500m → 150ms).\n한 주기에서 다 쓰면 남은 시간 코어에 안 올린다. 그 비율이 스로틀이다.\n\n- 사용률 낮은데 스로틀 높다 → 요청이 한 주기에 몰렸다(오픈 순간)\n- 스로틀이 0 이 됐다 → 병목이 뒤로 옮겨갔을 수 있다. `queue 파드 CPU` 를 본다\n\n`limit` 만 바꾼 효과는 못 잰다 — 차트가 `GOMAXPROCS` 를\nlimit 에서 계산해 넣어 같이 바뀐다.\n\n5,000명 — 정상 합 0.375 · 봉우리 1.034 (limit 3.0 의 34%)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 12,
+              "y": 54
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"traefik\", container=\"traefik\"}[1m]))",
+                  "legendFormat": "CPU {{pod}}"
+                },
+                {
+                  "refId": "B",
+                  "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"traefik\", container=\"traefik\"}[1m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"traefik\", container=\"traefik\"}[1m]))",
+                  "legendFormat": "스로틀 {{pod}}"
+                },
+                {
+                  "refId": "C",
+                  "expr": "1.5",
+                  "legendFormat": "limit 1500m"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 3,
+                  "min": 0,
+                  "custom": {
+                    "fillOpacity": 10,
+                    "lineWidth": 2
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "스로틀.*"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "percentunit"
+                      },
+                      {
+                        "id": "custom.axisPlacement",
+                        "value": "right"
+                      },
+                      {
+                        "id": "custom.axisLabel",
+                        "value": "스로틀"
+                      },
+                      {
+                        "id": "max",
+                        "value": 1
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 30
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "limit.*"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.lineStyle",
+                        "value": {
+                          "fill": "dash",
+                          "dash": [
+                            10,
+                            10
+                          ]
+                        }
+                      },
+                      {
+                        "id": "color",
+                        "value": {
+                          "mode": "fixed",
+                          "fixedColor": "red"
+                        }
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      },
+                      {
+                        "id": "custom.lineWidth",
+                        "value": 1
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "type": "timeseries",
+              "title": "traefik 연결당 비용 — 고루틴 · 스택 · 힙",
+              "description": "**왼쪽 메모리가 왜 그만큼인지를 쪼갠다.**\n\n고루틴 = 연결 수. Go 는 연결마다 고루틴을 붙이고\n그 연결이 닫혀야 끝낸다.\n\n- 스택 — 고루틴마다. 연결 수에 비례\n- 힙 — 연결 버퍼(연결당 약 8KB)와 요청 처리 쓰레기\n\n- 고루틴은 그대로인데 힙만 오른다 → GC 가 못 따라잡는다\n- 부하가 끝났는데 안 돌아온다 → 누수\n\n힙에서 연결 몫과 요청 몫은 못 가른다 —\n인원이 늘면 둘이 같이 늘어서다.\n\n5,000명 정상 — 고루틴 5,462 · 스택 77MiB · 힙 176MiB\n고루틴당 스택 약 14KB. 같은 인원에서 queue 고루틴은 127.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 0,
+              "y": 64
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "go_goroutines{job=\"traefik-metrics\"}",
+                  "legendFormat": "고루틴 {{pod}}"
+                },
+                {
+                  "refId": "B",
+                  "expr": "go_memstats_stack_inuse_bytes{job=\"traefik-metrics\"}",
+                  "legendFormat": "스택 {{pod}}"
+                },
+                {
+                  "refId": "C",
+                  "expr": "go_memstats_heap_inuse_bytes{job=\"traefik-metrics\"}",
+                  "legendFormat": "힙 {{pod}}"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 0,
+                  "min": 0,
+                  "custom": {
+                    "fillOpacity": 10,
+                    "lineWidth": 2
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "(스택|힙).*"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "bytes"
+                      },
+                      {
+                        "id": "custom.axisPlacement",
+                        "value": "right"
+                      },
+                      {
+                        "id": "custom.axisLabel",
+                        "value": "메모리"
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "힙.*"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.lineStyle",
+                        "value": {
+                          "fill": "dash",
+                          "dash": [
+                            6,
+                            6
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "type": "timeseries",
+              "title": "queue 연결당 비용 — 고루틴 · 스택 · 힙",
+              "description": "**\"queue 는 연결 축이 아니다\"를 확정하는 패널.**\n\n여기 고루틴은 사용자 연결이 아니라 `traefik ↔ queue` 업스트림이다.\ntraefik 이 재사용해서 사용자 수보다 훨씬 적다.\n\n인원이 5배인데 고루틴이 그대로면\n**메모리 스펙을 인원이 아니라 동시 처리 요청 수로 잡아야 한다**는 뜻이다.\n\n1,000명 103 → 5,000명 127.\n봉우리에는 합 1,386 까지 오른다(파드 4개라 파드당 약 347, 정상의 11배) —\n`limit` 은 봉우리로, `request` 는 정상으로.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 12,
+              "y": 64
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "go_goroutines{job=\"app/queue\"} and on(pod) (up{job=\"app/queue\"} == 1)",
+                  "legendFormat": "고루틴 {{pod}}"
+                },
+                {
+                  "refId": "B",
+                  "expr": "go_memstats_stack_inuse_bytes{job=\"app/queue\"} and on(pod) (up{job=\"app/queue\"} == 1)",
+                  "legendFormat": "스택 {{pod}}"
+                },
+                {
+                  "refId": "C",
+                  "expr": "go_memstats_heap_inuse_bytes{job=\"app/queue\"} and on(pod) (up{job=\"app/queue\"} == 1)",
+                  "legendFormat": "힙 {{pod}}"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 0,
+                  "min": 0,
+                  "custom": {
+                    "fillOpacity": 10,
+                    "lineWidth": 2
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "(스택|힙).*"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "bytes"
+                      },
+                      {
+                        "id": "custom.axisPlacement",
+                        "value": "right"
+                      },
+                      {
+                        "id": "custom.axisLabel",
+                        "value": "메모리"
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": "힙.*"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.lineStyle",
+                        "value": {
+                          "fill": "dash",
+                          "dash": [
+                            6,
+                            6
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "collapsed": true,
+          "title": "▸ Redis 커넥션 풀 — 풀 대기가 보이거나 queue CPU 가 오를 때 연다",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 54
+          },
+          "panels": [
+            {
+              "type": "timeseries",
+              "title": "풀을 얼마나 쓰나 — 동시에 쓰는 커넥션 / 풀 크기 10",
+              "description": "**Redis 로 나가는 문이 몇 개고 얼마나 쓰나.**\n\nRedis 로 명령을 보내려면 TCP 연결이 필요하다.\n미리 만들어 둔 묶음을 돌려 쓰는 것이 풀이고,\n**풀 크기 = 같은 순간에 보낼 수 있는 명령 수**다.\n넘치면 반납될 때까지 기다린다.\n\n풀 10 의 출처: `REDIS_POOL_SIZE` 미설정 →\n기본값 `10 × GOMAXPROCS` → CPU limit 1000m 이라 1 → 10.\n\n10 에 자주 붙으면 올릴 후보지만,\n**막혔는지는 `풀이 막혔나` 패널이 판정한다.**\n\n총 커넥션 선은 안 그린다 — go-redis 는 만든 연결을 안 버려서\n한 번 10 에 닿으면 계속 10 이라 아무것도 안 말한다.\n\n5,000명 — 봉우리 파드당 최대 8 / 10",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 0,
+              "y": 55
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "queue_redis_pool{state=\"in_use\"} and on(pod) (up{job=\"app/queue\"} == 1)",
+                  "legendFormat": "쓰는 중 {{pod}}"
+                },
+                {
+                  "refId": "B",
+                  "expr": "10",
+                  "legendFormat": "풀 크기 10"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 0,
+                  "min": 0,
+                  "max": 11,
+                  "custom": {
+                    "fillOpacity": 20,
+                    "lineWidth": 2
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "풀 크기 10"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.lineStyle",
+                        "value": {
+                          "fill": "dash",
+                          "dash": [
+                            10,
+                            10
+                          ]
+                        }
+                      },
+                      {
+                        "id": "color",
+                        "value": {
+                          "mode": "fixed",
+                          "fixedColor": "red"
+                        }
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 0
+                      },
+                      {
+                        "id": "custom.lineWidth",
+                        "value": 1
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "type": "timeseries",
+              "title": "풀이 막혔나 — 기다린 시간 / 포기 기준 1,500ms · 타임아웃",
+              "description": "**풀 때문에 실패가 났나.** 커넥션을 못 받아 포기한 요청이 있으면 여기서만 보인다.\n\n- **대기** — 줄을 섰다. 정상 동작\n- **포기** — 시간이 넘었다. 사용자가 실패를 받는다\n\n포기 기준 1,500ms 는 `PoolTimeout` 미설정 시\ngo-redis 기본값 `ReadTimeout(500ms) + 1초`다.\n\n기다린 시간이 올라도 포기가 0 이면 **지연이지 고장이 아니다.**\n\n전부 누적 카운터다. 순간값은 5초마다 찍는데\nRedis 왕복이 1ms 라 사건에 안 걸린다.\n\n대기의 원인은 셋이 섞인다 —\n풀이 좁다(여기) · 파드가 잘려 반납이 늦다(`queue 파드 CPU`) · Redis 가 느리다(`Redis 코어`).\n\n5,000명 — 봉우리 273ms · 정상 0.6ms · 포기 0건\n판3→판4 에서 지터만 넣었더니 누적 대기가 15,109 → 1,015건.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 12,
+              "y": 55
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "sum(rate(queue_redis_pool_wait_seconds_total[1m])) / sum(rate(queue_redis_pool_wait_count_total[1m])) * 1000",
+                  "legendFormat": "기다린 시간 (요청당 ms)"
+                },
+                {
+                  "refId": "B",
+                  "expr": "1500",
+                  "legendFormat": "포기 기준 1,500ms"
+                },
+                {
+                  "refId": "C",
+                  "expr": "sum(rate(queue_redis_pool_wait_count_total[1m])) or vector(0)",
+                  "legendFormat": "기다린 요청 (건/초)"
+                },
+                {
+                  "refId": "D",
+                  "expr": "sum(rate(queue_redis_pool_timeouts_total[1m])) or vector(0)",
+                  "legendFormat": "포기한 요청 (건/초)"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "ms",
+                  "decimals": 2,
+                  "min": 0.1,
+                  "custom": {
+                    "fillOpacity": 0,
+                    "lineWidth": 2,
+                    "scaleDistribution": {
+                      "type": "log",
+                      "log": 10
+                    }
+                  }
+                },
+                "overrides": [
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "포기 기준 1,500ms"
+                    },
+                    "properties": [
+                      {
+                        "id": "custom.lineStyle",
+                        "value": {
+                          "fill": "dash",
+                          "dash": [
+                            10,
+                            10
+                          ]
+                        }
+                      },
+                      {
+                        "id": "color",
+                        "value": {
+                          "mode": "fixed",
+                          "fixedColor": "red"
+                        }
+                      },
+                      {
+                        "id": "custom.lineWidth",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byRegexp",
+                      "options": ".*건/초"
+                    },
+                    "properties": [
+                      {
+                        "id": "unit",
+                        "value": "reqps"
+                      },
+                      {
+                        "id": "custom.axisPlacement",
+                        "value": "right"
+                      },
+                      {
+                        "id": "custom.axisLabel",
+                        "value": "건/초"
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 20
+                      }
+                    ]
+                  },
+                  {
+                    "matcher": {
+                      "id": "byName",
+                      "options": "포기한 요청 (건/초)"
+                    },
+                    "properties": [
+                      {
+                        "id": "color",
+                        "value": {
+                          "mode": "fixed",
+                          "fixedColor": "red"
+                        }
+                      },
+                      {
+                        "id": "custom.fillOpacity",
+                        "value": 40
+                      }
+                    ]
+                  }
+                ]
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "collapsed": true,
+          "title": "▸ Redis 명령 — Redis 코어가 오를 때 연다",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 55
+          },
+          "panels": [
+            {
+              "type": "timeseries",
+              "title": "명령별 초당 호출 수 — master 한 대분",
+              "description": "**Redis 가 무엇을 몇 번 하는가.** 사람당 명령 수 계수의 분자가 여기서 나온다.\n\n세 노드 중 **최댓값**을 쓴다. 읽기는 master 에만 있고, 쓰기는 복제본이 같은 명령을 재생해\n세 벌로 잡힌다 — 더하면 쓰기가 3배가 된다. 최댓값이 곧 한 대분이다.\n\n**합계를 내지 마라.** `EVALSHA` 한 번 안에서 `ZSCORE`·`ZRANK`·`ZCARD`·`ZADD` 가 실행되고\n그것들도 각각 따로 세어진다(실측 총합의 18% 가 이중).\n\n**줄일 자리를 정하는 건 이 패널이다.** 호출당 시간이 아니라 호출 수가 CPU 를 쓴다 —\n호출당 1us 인 명령을 초당 5,000번 부르면 호출당 500us 를 10번 부르는 것보다 코어를 더 쓴다.\n\n큐 경로가 실제로 부르는 10개 명령 고정 목록이다 — 상위 N 을 고르는 쿼리는\n순위가 바뀔 때마다 범례에 줄이 쌓여 못 읽게 된다.\n\nEVALSHA = 서버에 미리 저장한 Lua 스크립트를 해시로 부르는 명령. 폴링 한 번이 이걸로 들어간다.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 0,
+              "y": 56
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "max by (cmd) (rate(redis_commands_total{cmd=~\"evalsha|zadd|zcard|zrank|zscore|get|lrange|mget|exists|smembers\"}[2m]))",
+                  "legendFormat": "{{cmd}}"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "reqps",
+                  "decimals": 0,
+                  "min": 0,
+                  "custom": {
+                    "fillOpacity": 10,
+                    "lineWidth": 2
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            },
+            {
+              "type": "timeseries",
+              "title": "호출당 마이크로초 — 무거워지는 명령이 있나",
+              "description": "**포화 신호.** 인원이 늘 때 여기가 같이 오르면 그 명령이 무거워지고 있다는 뜻이다.\n\n큐 경로의 명령만 골랐다. **호출이 드문 명령은 호출당이 커도 비용이 0 이다** —\n`del` 은 호출당 657us 로 제일 무겁지만 10초에 한 번 부른다. 넣으면 1위로 올라와 눈을 속인다.\n\n`명령별 초당 호출 수` × 여기 = 그 명령이 먹는 코어.\n\n1,000 → 5,000명에서 `zrank` 만 올랐다(2.4 → 3.8us). 줄이 길어질수록 순위 계산이 무거워진다.\n나머지가 평평한 것은 자료구조가 커져도 명령 하나의 비용은 그대로라는 뜻이다.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+              "x": 12,
+              "y": 56
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "max by (cmd) (rate(redis_commands_duration_seconds_total{cmd=~\"evalsha|zadd|zrank|zscore|zcard|get\"}[2m])) / max by (cmd) (rate(redis_commands_total{cmd=~\"evalsha|zadd|zrank|zscore|zcard|get\"}[2m])) * 1000000",
+                  "legendFormat": "{{cmd}}"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "µs",
+                  "decimals": 1,
+                  "min": 0,
+                  "custom": {
+                    "fillOpacity": 0,
+                    "lineWidth": 2
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              }
+            }
+          ]
         }
       ]
     }

@@ -1,8 +1,27 @@
-# 관측 파이프라인 대시보드 — Mimir 공식 관측 3축(쓰기·읽기·저장 여정)에 이 환경의 사건 신호를 더한 구성.
-# 패널 제목 = "컴포넌트 — 신호" 형식. 설명(ⓘ) = 역할 / 패널 / 읽는 법 3줄 리스트.
-# 패널 12개로 유지한다 — 아쉬운 신호가 생기면 그날 추가(이전 26패널 판은 git 히스토리에 있다).
+# 관측 파이프라인 대시보드 — 이 화면이 답하는 질문은 하나다.
+#   "지금 다른 대시보드에 뜨는 값을 믿어도 되나"
+# 앱을 보는 화면이 아니라 앱을 보는 눈이 살아 있는지를 보는 화면이다.
+#
+# 구성은 Mimir mixin(operations/mimir-mixin)의 Writes 대시보드 패턴을 따른다.
+#   그쪽은 컴포넌트(distributor → ingester)마다 같은 세 패널을 반복한다.
+#   흐름 순서가 곧 행 순서이고, 행마다 형태가 같아 위치만 보고 읽는다.
+#   여기서는 컴포넌트 자리에 신호 셋(메트릭·로그·트레이스)을 넣는다 —
+#   Mimir 하나를 깊게 보는 것이 목적이 아니라 셋 중 무엇이 끊겼는지가 목적이라서다.
+#
+#   행0 한눈             지금 이 스택이 얼마나 받고 있나. instant 값
+#   행1 메트릭 → Mimir   보낸 양·실패 / 받는 데 걸린 시간 / 버려진 것
+#   행2 로그 → Loki      같은 셋
+#   행3 트레이스 → Tempo 같은 셋
+#   행4 수집 → Alloy     대상이 살아 있나 · 값이 갱신되고 있나 · 긁는 데 걸린 시간
+#   행5 저장소 자원·사건 메모리 / 재시작 / 죽음 기록
+#   행6 더 깊이          접어 둔다
+#
+# 행1·2·3 이 같은 모양이라 한 행만 빨간 것이 한눈에 보인다.
+# 각 행은 보내는 쪽(Alloy)과 받는 쪽(저장소)을 같이 둔다 — 저장소가 죽으면 받는 쪽
+#   지표가 통째로 비는데, 그때도 보내는 쪽은 남아 무엇이 버려지는지 보인다.
+#
+# 패널 설명(ⓘ)은 역할 / 패널 / 읽는 법 / 그래서 무엇을 하나 네 줄이다.
 # 쿼리는 저장소 전체를 훑지 않는 것만 쓴다(무거운 패널 쿼리가 30초마다 돌며 querier를 OOM시킨 전례).
-# 시리즈 상한(300000)을 바꾸면: 생산 시리즈 bargauge의 max, 보유·활성 패널의 threshold 두 곳을 같이 고친다.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,217 +36,1806 @@ data:
       "title": "관측 파이프라인",
       "editable": true,
       "timezone": "browser",
-      "time": { "from": "now-3h", "to": "now" },
-      "refresh": "",
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "refresh": "30s",
       "schemaVersion": 39,
-      "templating": { "list": [] },
+      "templating": {
+        "list": []
+      },
       "panels": [
         {
-          "type": "row", "title": "쓰기 — 받아지는가: Alloy → distributor → ingester", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "panels": []
+          "type": "row",
+          "title": "0. 한눈 — 셋이 다 흐르고 있나",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "panels": []
         },
         {
-          "type": "state-timeline",
-          "title": "Alloy 수집 — job별 생존 이력",
-          "description": "- **역할**: Alloy는 노드마다 하나(DaemonSet)로 타깃을 나눠 긁는 수집기. up은 수집기가 스크레이프 성공(1)·실패(0)를 판정해 직접 만드는 값 — 대상이 죽어도 남는 유일한 신호\n- **패널**: min by (job)이라 그 job의 타깃이 하나라도 죽으면 줄이 빨강. 켜짐/꺼짐의 이산 상태 → 색 블록(state timeline)\n- **읽는 법**: 빨간 구간 = 그때 그 job을 못 긁었다. 어느 타깃인지는 Explore에서 up == 0",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 10, "x": 0, "y": 1 },
+          "type": "stat",
+          "title": "메트릭 (샘플/초)",
+          "description": "- **역할**: Alloy가 Mimir로 보내는 양. 이 스택이 지금 얼마나 큰지를 자릿수로 보여준다\n- **패널**: remote_write가 보낸 샘플의 초당 속도\n- **읽는 법**: 0이면 메트릭이 끊긴 것이다. 평소 값의 절반으로 떨어져도 어딘가 빠진 것이다\n- **그래서**: 아래 메트릭 행으로 내려간다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 5,
+            "x": 0,
+            "y": 1
+          },
           "targets": [
-            { "refId": "A", "expr": "min by (job) (up)", "legendFormat": "{{job}}" }
+            {
+              "refId": "A",
+              "expr": "sum(rate(prometheus_remote_storage_samples_total[5m]))"
+            }
           ],
           "fieldConfig": {
             "defaults": {
-              "custom": { "lineWidth": 0, "fillOpacity": 70 },
+              "unit": "none",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "로그 (줄/초)",
+          "description": "- **역할**: Alloy가 Loki로 보내는 양\n- **패널**: loki.write가 보낸 줄의 초당 속도\n- **읽는 법**: 0이면 로그가 끊긴 것이다\n- **그래서**: 아래 로그 행으로 내려간다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 5,
+            "x": 5,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(loki_write_sent_entries_total[5m]))"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "트레이스 (스팬/초)",
+          "description": "- **역할**: Alloy가 Tempo로 보내는 양\n- **패널**: OTLP exporter가 보낸 스팬의 초당 속도\n- **읽는 법**: 앱마다 샘플링 비율이 달라 요청 수에 그대로 비례하지는 않는다 — booking 은 전 요청(1.0), queue 폴링은 0.01 이다. 0이면 앱이 안 보내거나 Tempo가 죽은 것이다\n- **그래서**: 아래 트레이스 행에서 버림과 한도를 본다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 5,
+            "x": 10,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(otelcol_exporter_sent_spans_total[5m]))"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.01
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "고유 시리즈 / 300,000",
+          "description": "- **역할**: Mimir가 메모리에 들고 있는 시리즈 수. 상한에 닿으면 새 시리즈를 거절한다\n- **패널**: ingester 한 대가 보유한 수. 셋의 합이 아니다 — 복제 계수 3이라 합치면 세 배로 읽힌다\n- **읽는 법**: 240,000(80%)을 넘으면 대비할 시점이다\n- **그래서**: 접힌 행의 job별 막대에서 큰 것부터 줄인다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 5,
+            "x": 15,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max(cortex_ingester_memory_series)"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "max": 300000,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 240000
+                  },
+                  {
+                    "color": "red",
+                    "value": 285000
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "수집 실패",
+          "description": "- **역할**: Alloy 가 긁으러 갔다가 실패한 대상이 몇 개인가. 대상 수 자체(2026-08 기준 37)는 앱이 늘고 줄면 같이 바뀌어 판정 기준이 못 된다\n- **패널**: up == 0 인 job 의 개수. 0이면 초록, 1 이상이면 빨강\n- **읽는 법**: 0이 정상이다. 1이면 어딘가 한 곳을 못 긁고 있다는 뜻이고, 어느 것인지는 아래 수집 행의 표에서 up 열이 DOWN 인 줄을 찾으면 된다\n- **그래서**: 그 대상의 파드가 떠 있는지부터 본다. `kubectl get pods -n <ns>`",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 4,
+            "x": 20,
+            "y": 1
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "count(up == 0) or vector(0)"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "textMode": "value",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "justifyMode": "center"
+          }
+        },
+        {
+          "type": "row",
+          "title": "1. 메트릭 → Mimir",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 6
+          },
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "메트릭 — 보낸 양 · 실패 (초당)",
+          "description": "- **역할**: 보내는 쪽(Alloy)에서 본 그림. 저장소가 죽어도 이 패널은 남는다\n- **패널**: remote_write가 보낸 샘플과 실패한 샘플. 실패는 채워서 그린다\n- **읽는 법**: 보낸 양이 0으로 떨어지면 Alloy가 못 보내는 것이고, 실패가 오르면 저장소가 안 받는 것이다\n- **그래서**: 오른쪽 지연과 버려진 것을 같이 본다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 7
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(prometheus_remote_storage_samples_total[5m]))",
+              "legendFormat": "보냄"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(prometheus_remote_storage_samples_failed_total[5m]))",
+              "legendFormat": "실패"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "실패"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 40
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "메트릭 — 받는 데 걸린 시간",
+          "description": "- **역할**: Mimir가 쓰기 요청을 처리하는 데 걸리는 시간. 죽기 전에 여기가 먼저 오른다\n- **패널**: push 경로의 p99와 p50. 둘이 벌어지면 일부만 느린 것이다\n- **읽는 법**: p99가 오르는데 p50이 그대로면 소수의 요청만 밀린다 — 대개 특정 ingester 하나다. 둘 다 오르면 전체가 밀린다\n- **그래서**: 자원 행에서 그 저장소의 메모리를 본다. 상한에 붙으면 GC가 돌아 응답이 늦어진다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 7
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(cortex_request_duration_seconds_bucket{route=~\".*push.*\"}[5m])))",
+              "legendFormat": "p99"
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(cortex_request_duration_seconds_bucket{route=~\".*push.*\"}[5m])))",
+              "legendFormat": "p50"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "메트릭 — 버려진 것 · 전송 대기",
+          "description": "- **역할**: 왼쪽 둘은 버려진 것이고 오른쪽 축 하나는 아직 안 보낸 것이다. 성격이 달라 축을 나눴다\n- **패널**: 사유별 초당 거절 수(왼쪽 축, 0이면 안 그림) + 전송 대기 샘플 수(오른쪽 축, 점선)\n- **읽는 법**: **전송 대기는 오류가 아니다.** Alloy 가 WAL 에서 읽어 아직 안 보낸 양이라 정상 동작에서도 수천 건이 늘 있다. 이 값이 계속 커지기만 하면 보내는 속도가 들어오는 속도를 못 따라가는 것이고, 일정하게 유지되면 정상이다. 거절은 0이 정상이다 — 거절 선이 하나라도 보이면 그만큼이 화면에서 사라진다\n- **그래서**: 거절이 있으면 사유를 본다. `per_user_series_limit` = 시리즈 상한 · `sample-out-of-order` = 같은 시리즈에 과거 시각 값 도착 · `rate_limited` = 초당 유입 상한",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 7
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (reason) (rate(cortex_discarded_samples_total[5m])) > 0",
+              "legendFormat": "거절 · {{reason}}"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(prometheus_remote_storage_samples_pending)",
+              "legendFormat": "전송 대기"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "min": 0,
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "전송 대기"
+                },
+                "properties": [
+                  {
+                    "id": "custom.axisPlacement",
+                    "value": "right"
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        8,
+                        8
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "row",
+          "title": "2. 로그 → Loki",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 15
+          },
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "로그 — 보낸 양 · 버린 양 (초당)",
+          "description": "- **역할**: 보내는 쪽(Alloy)에서 본 그림. 저장소가 죽어도 이 패널은 남는다\n- **패널**: loki.write가 보낸 줄과 버린 줄\n- **읽는 법**: 버린 양이 0이 아니면 재시도해도 안 되어 포기한 것이다\n- **그래서**: 오른쪽 지연과 버려진 것을 같이 본다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 16
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(loki_write_sent_entries_total[5m]))",
+              "legendFormat": "보냄"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(loki_write_dropped_entries_total[5m]))",
+              "legendFormat": "버림"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "버림"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 40
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "로그 — 받는 데 걸린 시간",
+          "description": "- **역할**: Loki가 쓰기 요청을 처리하는 데 걸리는 시간\n- **패널**: push 경로의 p99와 p50\n- **읽는 법**: 메트릭 행의 같은 자리와 나란히 읽는다. 한쪽만 오르면 그 저장소 문제이고 둘 다 오르면 노드나 디스크 쪽이다\n- **그래서**: 자원 행에서 Loki 메모리를 본다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 16
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(loki_request_duration_seconds_bucket{route=~\".*push.*\"}[5m])))",
+              "legendFormat": "p99"
+            },
+            {
+              "refId": "B",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(loki_request_duration_seconds_bucket{route=~\".*push.*\"}[5m])))",
+              "legendFormat": "p50"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 2
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "로그 — 버려진 것 (사유별)",
+          "description": "- **역할**: Loki가 받고도 버린 것\n- **패널**: 사유별 초당 거절 수. 0인 사유는 안 그린다\n- **읽는 법**: `too_far_behind` = 보관 창보다 오래된 로그 · `rate_limited` = 테넌트 유입 상한 · `stream_limit` = 스트림 수 상한\n- **그래서**: 오래된 로그면 수집이 밀린 것이라 수집 행을 본다. 상한이면 Loki 설정을 본다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 16
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (reason) (rate(loki_discarded_samples_total[5m])) > 0",
+              "legendFormat": "거절 · {{reason}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "min": 0,
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "row",
+          "title": "3. 트레이스 → Tempo",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 24
+          },
+          "panels": []
+        },
+        {
+          "type": "timeseries",
+          "title": "트레이스 — 지금 잃고 있나 (초당)",
+          "description": "- **역할**: 이 행에서 제일 먼저 본다. 버림이 0이 아니면 그 구간의 트레이스가 영영 없다\n- **패널**: Tempo distributor가 받은 스팬과 버린 스팬. 버린 것은 사유별로 나뉜다\n- **읽는 법**: 사유가 다음에 볼 패널을 정한다. `live_traces_exceeded`는 가운데(한도), `trace_too_large`는 한 트레이스의 스팬 수, 그 밖은 오른쪽(앱에서 여기까지 오는 전송 경로)\n- **그래서**: 2026-08-21 판에서 폴링 표본을 0.01→0.05로 올렸더니 오픈 직후 1분에 `live_traces_exceeded`로 4,527건이 버려졌다. 표본을 되돌려 닫았다 — 그때도 전송 경로(오른쪽)는 정상이었다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 25
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(tempo_distributor_spans_received_total[5m]))",
+              "legendFormat": "받음"
+            },
+            {
+              "refId": "B",
+              "expr": "sum by (reason) (rate(tempo_discarded_spans_total[5m])) > 0",
+              "legendFormat": "버림 · {{reason}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "버림.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 40
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "트레이스 — 한도까지 얼마나 남았나 (live traces / 10,000)",
+          "description": "- **역할**: 왼쪽에서 버리기 시작하기 **전에** 보는 값. 왼쪽이 결과라면 여기가 원인이다\n- **패널**: ingester가 지금 메모리에 들고 있는 트레이스 수와 그 상한. 상한은 Tempo의 `max_traces_per_user`이고 지금은 차트 기본값 10,000이다(이 저장소 설정에 명시가 없다)\n- **읽는 법**: 실측 범위는 부하 없이 10 안팎, 부하 중 평상 700-1,600이다. 오픈 순간에만 치솟는다 — k6가 가상 사용자를 같은 순간에 풀어 폴링 타이머가 정렬되기 때문이다. 8,000을 넘으면 곧 왼쪽에서 버린다\n- **그래서**: 상한을 올리면 Tempo 메모리가 따라 오른다. monolithic 단일 파드이고 WAL PV가 k3s-2에 묶여 노드를 못 옮기며(nodeSelector cgv.io/data=obs) 그 노드의 memory request가 91%다. 그래서 지금은 표본을 낮춰 들어오는 양을 줄이는 쪽으로 맞춘다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 25
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max(tempo_ingester_live_traces)",
+              "legendFormat": "live traces"
+            },
+            {
+              "refId": "C",
+              "expr": "vector(10000)",
+              "legendFormat": "상한 10,000"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "min": 0,
+              "max": 10000,
+              "custom": {
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "상한 10,000"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        8,
+                        6
+                      ],
+                      "fill": "dash"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "트레이스 — 앱에서 여기까지 오는 길 (Alloy)",
+          "description": "- **역할**: 왼쪽 \"받음\"이 0인데 앱은 보내고 있을 때 본다. 전송 경로가 막혔는지 앱이 안 보내는지를 가른다\n- **패널**: Alloy OTLP exporter가 보낸 양·실패, 그리고 재시도 큐와 그 상한\n- **읽는 법**: 보냄 0 + 실패 상승이면 Tempo가 없는 것이고, 둘 다 0이면 앱이 안 보내는 것이다. 큐가 차오르면 아직 안 버렸지만 곧 버린다는 뜻이다\n- **그래서**: **이 패널이 전부 정상이어도 트레이스는 사라질 수 있다.** 2026-08-21 판이 그랬다 — 실패 0, 큐 0.16/8955로 전송 경로는 멀쩡했고 손실은 Tempo 안에서 한도에 걸려 났다(왼쪽·가운데)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 25
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(otelcol_exporter_sent_spans_total[5m]))",
+              "legendFormat": "보냄 (초당)"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(rate(otelcol_exporter_send_failed_spans_total[5m])) or vector(0)",
+              "legendFormat": "실패 (초당)"
+            },
+            {
+              "refId": "C",
+              "expr": "sum(otelcol_exporter_queue_size)",
+              "legendFormat": "큐에 쌓인 양"
+            },
+            {
+              "refId": "D",
+              "expr": "sum(otelcol_exporter_queue_capacity)",
+              "legendFormat": "큐 상한"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "min": 0,
+              "custom": {
+                "fillOpacity": 20,
+                "lineWidth": 2
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "큐 상한"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        10,
+                        10
+                      ]
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 0
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "실패 (초당)"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  },
+                  {
+                    "id": "custom.fillOpacity",
+                    "value": 40
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "row",
+          "title": "4. 수집 → Alloy",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 33
+          },
+          "panels": []
+        },
+        {
+          "type": "state-timeline",
+          "title": "수집 — job별 생존 (up)",
+          "description": "- **역할**: 대상이 죽어도 남는 유일한 신호. Alloy가 스크레이프 성공(1)·실패(0)를 판정해 직접 만든다\n- **패널**: min by (job) 이라 그 job의 타깃이 하나라도 죽으면 줄이 빨강\n- **읽는 법**: 빨간 구간 = 그때 그 job을 못 긁었다. 오른쪽 신선도와 짝이다 — up이 0인데 신선도가 멀쩡할 수는 없고, 그 반대는 있다\n- **그래서**: `kubectl get pods -n <ns>` 로 그 대상이 떠 있는지부터 본다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 10,
+            "x": 0,
+            "y": 34
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "min by (job) (up)",
+              "legendFormat": "{{job}}"
+            }
+          ],
+          "interval": "1m",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 0,
+                "fillOpacity": 70
+              },
               "mappings": [
-                { "type": "value", "options": { "1": { "text": "OK", "color": "green" }, "0": { "text": "DOWN", "color": "red" } } }
+                {
+                  "type": "value",
+                  "options": {
+                    "1": {
+                      "text": "OK",
+                      "color": "green"
+                    },
+                    "0": {
+                      "text": "DOWN",
+                      "color": "red"
+                    }
+                  }
+                }
               ]
             },
             "overrides": []
           },
           "options": {
-            "mergeValues": true, "showValue": "never", "rowHeight": 0.8,
-            "legend": { "showLegend": false }, "tooltip": { "mode": "single" }
+            "mergeValues": true,
+            "showValue": "never",
+            "rowHeight": 0.85,
+            "legend": {
+              "showLegend": false
+            },
+            "tooltip": {
+              "mode": "single"
+            }
+          }
+        },
+        {
+          "type": "table",
+          "title": "수집 — 값이 갱신되고 있나 (up 실패는 빨강)",
+          "description": "- **역할**: up 은 \"긁는 데 성공했다\"만 말하고 \"값이 갱신되고 있다\"를 말하지 않는다. 둘 다 봐야 한다\n- **패널**: 마지막 샘플 이후 경과와 up 을 나란히. **스크레이프에 실패해도 up=0 이라는 값 자체는 기록되므로 경과 시간만 보면 실패한 대상이 정상으로 보인다** — 그래서 up 열을 같이 둔다\n- **읽는 법**: up 이 0인 줄이 먼저다. 그다음 경과가 큰 줄이다. 경과는 스크레이프마다 리셋되므로 추이가 아니라 지금 값만 본다. 주기가 job 마다 15초에서 60초로 달라 90초부터 주황으로 뒀다\n- **그래서**: up=0 이면 그 대상의 파드·Service·포트를 본다. 경과만 크면 앱이 값을 안 내는 것이라 파드 metrics 포트를 직접 curl 한다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 10,
+            "y": 34
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (job) (time() - timestamp(up))",
+              "format": "table",
+              "instant": true
+            },
+            {
+              "refId": "B",
+              "expr": "min by (job) (up)",
+              "format": "table",
+              "instant": true
+            }
+          ],
+          "transformations": [
+            {
+              "id": "joinByField",
+              "options": {
+                "byField": "job",
+                "mode": "outer"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time 1": true,
+                  "Time 2": true
+                },
+                "indexByName": {
+                  "job": 0,
+                  "Value #B": 1,
+                  "Value #A": 2
+                },
+                "renameByName": {
+                  "job": "job",
+                  "Value #A": "경과",
+                  "Value #B": "up"
+                }
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "left"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "경과"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background",
+                      "mode": "gradient"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "orange",
+                          "value": 90
+                        },
+                        {
+                          "color": "red",
+                          "value": 120
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 90
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "up"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background",
+                      "mode": "basic"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "green",
+                          "value": 1
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "0": {
+                            "text": "DOWN",
+                            "index": 0
+                          },
+                          "1": {
+                            "text": "OK",
+                            "index": 1
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.width",
+                    "value": 70
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "showHeader": true,
+            "sortBy": [
+              {
+                "displayName": "up",
+                "desc": false
+              }
+            ]
           }
         },
         {
           "type": "timeseries",
-          "title": "distributor·ingester — 거절 (샘플/초, 사유별)",
-          "description": "- **역할**: distributor는 쓰기의 관문, ingester는 최근 값을 메모리에 드는 저장부 — 둘이 한도·유효성 검사에서 샘플을 거절한다\n- **패널**: 거절된 샘플의 초당 속도를 reason(사유)별 선으로. 누적 카운터라 rate[5m]로 기울기\n- **읽는 법**: 0이 정상. per_user_series_limit = 시리즈 상한 도달 — 늦게 온 시리즈부터 선착순으로 밀린다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 7, "x": 10, "y": 1 },
+          "title": "수집 — 긁는 데 걸린 시간",
+          "description": "- **역할**: 대상이 지표를 내놓는 데 걸리는 시간. 이 값이 스크레이프 주기에 가까워지면 다음 스크레이프가 밀린다\n- **패널**: job별 스크레이프 소요. 상위 8개\n- **읽는 법**: 대개 수십 ms 다. 특정 job만 초 단위로 오르면 그 앱이 지표를 만드는 데 오래 걸리는 것이고, 대개 시리즈가 많아서다\n- **그래서**: 접힌 행의 job별 시리즈 막대에서 그 job을 확인한다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 6,
+            "x": 18,
+            "y": 34
+          },
           "targets": [
-            { "refId": "A", "expr": "sum by (reason) (rate(cortex_discarded_samples_total[5m]))", "legendFormat": "{{reason}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "Alloy remote_write — 전송 실패 · 재시도 (샘플/초)",
-          "description": "- **역할**: Alloy는 긁은 값을 자기 WAL에 적고 배치로 Mimir에 민다(remote_write) — 긁기와 보내기는 별개 단계\n- **패널**: 실패 = 재시도 없이 버려짐(4xx) = 곧 유실 / 재시도 = 일시 오류(5xx·네트워크)로 재전송 중\n- **읽는 법**: 둘 다 0이 정상. 옆 거절 패널과 같은 사건의 양면이고, Mimir가 통째로 죽어 거절 카운터가 침묵해도 여기는 뜬다 — 백업 신호",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 7, "x": 17, "y": 1 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_failed_total[5m]))", "legendFormat": "실패 {{pod}}" },
-            { "refId": "B", "expr": "sum by (pod) (rate(prometheus_remote_storage_samples_retried_total[5m]))", "legendFormat": "재시도 {{pod}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "distributor — 유입 (샘플/초)",
-          "description": "- **역할**: distributor는 모든 쓰기가 처음 닿는 관문 — 시리즈마다 해시를 내 해시 링에서 담당 인제스터를 찾아 RF3로 복제 전송\n- **패널**: 관문이 받은 초당 샘플의 경위(time series)\n- **읽는 법**: Alloy 전송 처리량 합과 같아야 정상 — 유실 0의 교차 증거. 꺼지면 상류(수집·전송)가 멈춘 것",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 7, "x": 0, "y": 9 },
-          "targets": [
-            { "refId": "A", "expr": "sum(rate(cortex_distributor_received_samples_total[5m]))", "legendFormat": "유입" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "ingester — 시리즈 보유·활성 vs 상한 300,000",
-          "description": "- **역할**: ingester는 최근 약 2시간을 메모리에 드는 유일한 지점 — 시리즈 상한이 이 메모리 보유량에 걸린다\n- **패널**: 보유(memory_series) 파드별 세 선 — RF3 복제라 셋이 같아야 한다. 활성(최근 샘플이 온 것)은 max 한 선. 빨간 선 = 상한\n- **읽는 법**: 보유−활성 간격 = 잔존(샘플이 끊겼는데 자리 차지 — 라벨 변경 뒤 최대 두 절단 주기 약 4시간까지 정상). 세 선이 갈라지면 복제 이상",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 10, "x": 7, "y": 9 },
-          "targets": [
-            { "refId": "A", "expr": "cortex_ingester_memory_series", "legendFormat": "보유 {{pod}}" },
-            { "refId": "B", "expr": "max(cortex_ingester_active_series)", "legendFormat": "활성 (최대)" }
+            {
+              "refId": "A",
+              "expr": "topk(8, max by (job) (scrape_duration_seconds))",
+              "legendFormat": "{{job}}"
+            }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "short", "min": 0,
-              "custom": { "fillOpacity": 5, "thresholdsStyle": { "mode": "line" } },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 300000 } ] }
+              "unit": "s",
+              "custom": {
+                "fillOpacity": 0,
+                "lineWidth": 1
+              }
             },
             "overrides": []
           },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": false
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "type": "row",
+          "title": "5. 저장소 자원과 사건",
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 43
+          },
+          "panels": []
         },
         {
           "type": "bargauge",
-          "title": "Alloy 수집 — job별 생산 시리즈 (막대 전체 = 상한 300,000)",
-          "description": "- **역할**: 타깃이 내놓는 시리즈 수를 수집기가 스크레이프마다 센다(scrape_samples_scraped) — 저장소를 훑지 않고 아는 방법\n- **패널**: 숫자 = 절대치, 막대 배경 전체 폭 = 상한 300,000 (bar gauge — 나란한 비교)\n- **읽는 법**: 누가 상한을 먹는지 — 상한 튜닝의 근거. k3s-server 하나가 절반 가까이",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 7, "x": 17, "y": 9 },
+          "title": "메모리 — 쓰는 양 / limit",
+          "description": "- **역할**: 넷 다 최근 데이터를 메모리에 들고 주기적으로 내리는 구조라, 들어오는 양이 늘면 메모리가 늘고 상한에 닿으면 죽는다. 이 스택에서 지금까지 문제가 된 것은 항상 메모리였다\n- **패널**: 막대 끝이 그 컨테이너의 limit 이고 숫자는 실제 사용량이다. 이름 옆 괄호가 limit. Alloy는 노드마다 한 대라 그중 최대를 본다\n- **읽는 법**: 100%에 닿기 전에도 영향이 난다 — 상한에 붙으면 GC가 계속 돌아 응답이 늦어지고, 죽기 전에 프로브가 먼저 실패한다\n- **그래서**: limit을 올리거나 들어오는 양을 줄인다. 트레이스 유입량은 앱 샘플링 비율이 정한다 — booking 1.0, queue 폴링 0.01. 2026-08-21 판에서 폴링을 0.05로 올렸을 때 Alloy 최대가 571→766MiB로 올랐다(한도 1Gi)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 0,
+            "y": 44
+          },
           "targets": [
-            { "refId": "A", "expr": "topk(12, sum by (job) (scrape_samples_scraped))", "instant": true, "legendFormat": "{{job}}" }
+            {
+              "refId": "A",
+              "expr": "container_memory_working_set_bytes{namespace=\"observability\", container=\"ingester\"}",
+              "legendFormat": "{{pod}} (2Gi)"
+            },
+            {
+              "refId": "B",
+              "expr": "max(container_memory_working_set_bytes{namespace=\"observability\", container=\"loki\"})",
+              "legendFormat": "Loki (512Mi)"
+            },
+            {
+              "refId": "C",
+              "expr": "max(container_memory_working_set_bytes{namespace=\"observability\", container=\"tempo\"})",
+              "legendFormat": "Tempo (1Gi)"
+            },
+            {
+              "refId": "D",
+              "expr": "max(container_memory_working_set_bytes{namespace=\"observability\", container=\"alloy\"})",
+              "legendFormat": "Alloy 최대 (1Gi)"
+            }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "locale", "decimals": 0, "min": 0, "max": 300000,
-              "color": { "mode": "fixed", "fixedColor": "blue" },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
+              "unit": "bytes",
+              "decimals": 0,
+              "min": 0,
+              "thresholds": {
+                "mode": "percentage",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 80
+                  },
+                  {
+                    "color": "red",
+                    "value": 95
+                  }
+                ]
+              }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "mimir-ingester.*"
+                },
+                "properties": [
+                  {
+                    "id": "max",
+                    "value": 2147483648
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "Loki.*"
+                },
+                "properties": [
+                  {
+                    "id": "max",
+                    "value": 536870912
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "Tempo.*"
+                },
+                "properties": [
+                  {
+                    "id": "max",
+                    "value": 1073741824
+                  }
+                ]
+              }
+            ]
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true }
-        },
-        {
-          "type": "row", "title": "읽기 — 답하는가: query-frontend → querier", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }, "panels": []
+          "options": {
+            "displayMode": "gradient",
+            "orientation": "horizontal",
+            "showUnfilled": true,
+            "valueMode": "color",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "minVizWidth": 8,
+            "minVizHeight": 14
+          }
         },
         {
           "type": "timeseries",
-          "title": "query-frontend — 조회 요청 (상태코드)",
-          "description": "- **역할**: query-frontend는 조회의 입구 — 쿼리를 쪼개고 줄 세워 querier에게 나눠 준다\n- **패널**: 조회 API(route=prometheus_api.*) 요청의 초당 속도를 상태코드별로\n- **읽는 법**: 499 = 기다리다 취소(느림의 증상), 5xx = 고장. 이 대시보드의 패널 쿼리도 여기로 들어온다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+          "title": "재시작 — 언제 몇 번 죽었나",
+          "description": "- **역할**: 저장소가 죽으면 그 신호가 통째로 끊긴다. 누적값은 총수만 말하고 언제인지를 말하지 않는다\n- **패널**: 5분 구간마다 늘어난 재시작 수. 죽지 않은 구간도 0으로 그린다 — 바닥에 0이 깔려 있으면 \"안 죽었다\", 화면이 비면 \"못 읽었다\"로 갈린다. 총수는 범례의 Sum\n- **읽는 법**: 1 이상이면 빨강. 막대가 계속 서 있으면 지금도 죽는 중이고, 오래전 한 번이면 그 시각에만 하나 서 있다\n- **그래서**: 막대가 선 시각을 오른쪽 기록에서 찾는다",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 7,
+            "x": 8,
+            "y": 44
+          },
+          "interval": "5m",
           "targets": [
-            { "refId": "A", "expr": "sum by (status_code) (rate(cortex_request_duration_seconds_count{job=\"observability/query-frontend\", route=~\"prometheus_api.*\"}[5m]))", "legendFormat": "{{status_code}}" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-        },
-        {
-          "type": "timeseries",
-          "title": "query-frontend — 조회 지연 p99",
-          "description": "- **역할**: 조회 지연 히스토그램(_bucket)에서 백분위를 역산 — 100건 중 99건이 이 시간 안에 끝났다는 값\n- **패널**: 체감 속도의 경위(time series)\n- **읽는 법**: 오르면 화면이 먼저 느려진다. 최근 조회만 느리면 ingester 쪽, 과거 구간 조회가 느리면 store-gateway(MinIO) 쪽",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
-          "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(cortex_request_duration_seconds_bucket{job=\"observability/query-frontend\", route=~\"prometheus_api.*\"}[5m])))", "legendFormat": "p99" }
-          ],
-          "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 10 } }, "overrides": [] },
-          "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } }
-        },
-        {
-          "type": "row", "title": "저장 여정·상태 — 내려가는가: ingester → MinIO / ring · 메모리", "collapsed": false,
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }, "panels": []
-        },
-        {
-          "type": "stat",
-          "title": "ingester shipper — 마지막 블록 업로드 후 경과",
-          "description": "- **역할**: ingester는 2시간마다 메모리 구간(head)을 블록으로 떠 MinIO에 올린다 — 그 업로드 담당이 shipper\n- **패널**: time() − 마지막 성공 시각 = 경과 초 (stat, 파드별)\n- **읽는 법**: 평시 2시간 미만. 4시간(빨강) = 공식 알림 기준 — 블록이 안 나가면 WAL 디스크만 차고, 끝은 쓰기 정지",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 5, "x": 0, "y": 27 },
-          "targets": [
-            { "refId": "A", "expr": "time() - cortex_ingester_shipper_last_successful_upload_timestamp_seconds", "legendFormat": "{{pod}}" }
+            {
+              "refId": "A",
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"observability\", container=\"ingester\"}[$__interval]))",
+              "legendFormat": "Mimir ingester"
+            },
+            {
+              "refId": "B",
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"observability\", container=\"loki\"}[$__interval]))",
+              "legendFormat": "Loki"
+            },
+            {
+              "refId": "C",
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"observability\", container=\"tempo\"}[$__interval]))",
+              "legendFormat": "Tempo"
+            }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "s",
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 10800 }, { "color": "red", "value": 14400 } ] }
+              "unit": "none",
+              "decimals": 0,
+              "min": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "text",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1,
+                "barAlignment": 0,
+                "barWidthFactor": 0.8,
+                "gradientMode": "none",
+                "stacking": {
+                  "mode": "none"
+                }
+              }
             },
             "overrides": []
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name" }
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "sum"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
         },
         {
-          "type": "stat",
-          "title": "compactor — 마지막 병합 성공 후 경과",
-          "description": "- **역할**: RF3라 같은 구간 블록이 3벌 올라간다 — compactor가 MinIO에서 하나로 병합한다\n- **패널**: time() − 마지막 성공 시각 = 경과 초 (stat)\n- **읽는 법**: 24시간(빨강) = 공식 알림 기준. 멈추면 같은 데이터가 세 벌씩 쌓여 저장·조회 비용이 계속 는다",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 5, "x": 5, "y": 27 },
-          "targets": [
-            { "refId": "A", "expr": "time() - cortex_compactor_last_successful_run_timestamp_seconds", "legendFormat": "{{pod}}" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s",
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 43200 }, { "color": "red", "value": 86400 } ] }
-            },
-            "overrides": []
+          "type": "logs",
+          "title": "죽음 기록 — 왜 죽었나",
+          "description": "- **역할**: 왼쪽 막대가 선 그 순간에 쿠버네티스가 남긴 기록. 왜 죽었는지는 여기에만 있다\n- **패널**: 원문은 objectRV 같은 내부 값이 줄의 대부분이라 필요한 넷만 남겨 다시 썼다 — 대상 · 왜 · 몇 번째 · 무슨 일\n- **읽는 법**: `OOMKilling` = 메모리 상한 초과, 커널이 죽였다 · `Killing` = 프로브 실패로 kubelet이 죽였다 · `Unhealthy` = 프로브가 실패했지만 아직 안 죽인 상태 · `BackOff` = 재시작이 반복돼 간격을 벌리는 중. x 뒤의 수가 크면 오래 반복된 것이다\n- **그래서**: OOMKilling이면 왼쪽 메모리를 보고 limit을 올린다. Killing이면 프로브가 왜 안 답하는지를 본다 — 메모리가 상한에 붙으면 GC가 계속 돌아 응답이 늦어지고, 죽기 전에 프로브가 먼저 실패한다. 종료 코드는 둘 다 137이라 코드만으로는 안 갈린다",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" }
+          "gridPos": {
+            "h": 9,
+            "w": 9,
+            "x": 15,
+            "y": 44
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "queryType": "range",
+              "expr": "{job=\"k8s-events\", namespace=\"observability\"} |~ \"name=(mimir-ingester|loki|tempo)-?[0-9]\" |~ \"reason=(OOMKilling|Killing|BackOff|Unhealthy|Failed|Evicted|FailedScheduling)\" | pattern \"name=<obj> <_> reason=<reason> <_> count=<count> msg=\\\"<msg>\\\"\" | line_format \"{{.obj}}   {{.reason}}   x{{.count}}   {{.msg}}\""
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": false,
+            "sortOrder": "Descending",
+            "enableLogDetails": false,
+            "dedupStrategy": "exact",
+            "showLabels": false,
+            "prettifyLogMessage": false,
+            "showControls": false,
+            "enableInfiniteScrolling": false
+          }
         },
         {
-          "type": "stat",
-          "title": "ingester ring — ACTIVE 수",
-          "description": "- **역할**: 해시 링은 인제스터들이 자기 위치를 등록한 원형 명단 — distributor가 여기서 담당자를 찾는다\n- **패널**: ACTIVE 상태 멤버 수. 링을 지켜보는 컴포넌트마다 각자 보고하므로 sum이 아니라 max로 센다\n- **읽는 법**: 3 = 초록. 하나 빠지면 쓰기 quorum(2/3)의 여유가 사라진 상태",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 4, "x": 10, "y": 27 },
-          "targets": [
-            { "refId": "A", "expr": "max(cortex_ring_members{name=\"ingester\", state=\"ACTIVE\"})", "legendFormat": "ACTIVE" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 3 } ] }
-            },
-            "overrides": []
+          "type": "row",
+          "title": "6. 더 깊이 — 위에서 원인이 안 나올 때만 편다",
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 53
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" }
-        },
-        {
-          "type": "timeseries",
-          "title": "ingester — 메모리 vs limit 2Gi",
-          "description": "- **역할**: 시리즈를 메모리에 드는 대가 — 시리즈당 실측 약 4.2KiB, 30만 만재 시 약 1.2GiB\n- **패널**: 실제 점유 메모리(RSS) 파드별 + limit 2Gi 빨간 선\n- **읽는 법**: 닿으면 OOMKilled — WAL 재생으로 복구되지만 그동안 조회가 빈다. 시리즈 상한(거절)이 이 OOM을 막는 가드레일",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 10, "x": 14, "y": 27 },
-          "targets": [
-            { "refId": "A", "expr": "process_resident_memory_bytes{job=\"observability/ingester\"}", "legendFormat": "{{pod}}" }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "bytes", "min": 0,
-              "custom": { "fillOpacity": 10, "thresholdsStyle": { "mode": "line" } },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 2147483648 } ] }
+          "panels": [
+            {
+              "type": "bargauge",
+              "title": "job별 생산 시리즈 (막대 전체 = 상한 300,000)",
+              "description": "- **역할**: 시리즈 상한이 가까워졌을 때 어디를 줄일지 정하는 근거\n- **패널**: job별로 한 번의 스크레이프에서 나오는 샘플 수. 상위 12개\n- **읽는 법**: k3s-server가 대개 가장 크다 — apiserver·etcd·scheduler·kubelet 지표가 한 프로세스에서 통째로 나온다. 앱 지표는 다 합쳐도 수천이라 여기서 줄일 대상이 아니다\n- **그래서**: Alloy 설정의 해당 스크레이프에 `metric_relabel_configs`로 안 쓰는 지표를 버린다",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+                "x": 0,
+                "y": 54
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "topk(12, sum by (job) (scrape_samples_scraped))",
+                  "legendFormat": "{{job}}"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 0,
+                  "max": 300000,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "blue",
+                        "value": null
+                      },
+                      {
+                        "color": "orange",
+                        "value": 100000
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "displayMode": "gradient",
+                "orientation": "horizontal",
+                "showUnfilled": true,
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
-            "overrides": []
-          },
-          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+            {
+              "type": "timeseries",
+              "title": "조회 — Mimir · Loki 지연 p99",
+              "description": "- **역할**: 화면이 값을 꺼내 오는 쪽. 쓰기와 완전히 별개 축이다\n- **패널**: 저장소별 조회 p99\n- **읽는 법**: 대시보드를 열어 두면 여기가 오른다 — 부하 실측과 무관한 값이다\n- **그래서**: 지연이 크면 조회 범위를 좁히거나 무거운 패널 쿼리를 찾는다",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 10,
+                "w": 12,
+                "x": 12,
+                "y": 54
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "histogram_quantile(0.99, sum by (le) (rate(cortex_request_duration_seconds_bucket{route=~\"prometheus_api_v1.*\"}[5m])))",
+                  "legendFormat": "Mimir"
+                },
+                {
+                  "refId": "B",
+                  "expr": "histogram_quantile(0.99, sum by (le) (rate(loki_request_duration_seconds_bucket{route=~\".*query.*\"}[5m])))",
+                  "legendFormat": "Loki"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "custom": {
+                    "fillOpacity": 10
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi"
+                }
+              }
+            },
+            {
+              "type": "timeseries",
+              "title": "저장소 CPU 스로틀",
+              "description": "- **역할**: 메모리가 멀쩡한데 느릴 때 볼 자리. 사용률이 아니라 스로틀을 본다 — 0이면 CPU는 문제가 아니다\n- **패널**: 저장소별 스로틀된 구간 비율\n- **읽는 법**: 0이 아니면 커널이 그 컨테이너를 코어에서 내리고 있다는 뜻이다\n- **그래서**: 해당 저장소의 CPU limit을 올린다",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 64
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"observability\", container=\"ingester\"}[5m])) / sum(rate(container_cpu_cfs_periods_total{namespace=\"observability\", container=\"ingester\"}[5m]))",
+                  "legendFormat": "Mimir ingester"
+                },
+                {
+                  "refId": "B",
+                  "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"observability\", container=\"loki\"}[5m])) / sum(rate(container_cpu_cfs_periods_total{namespace=\"observability\", container=\"loki\"}[5m]))",
+                  "legendFormat": "Loki"
+                },
+                {
+                  "refId": "C",
+                  "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"observability\", container=\"tempo\"}[5m])) / sum(rate(container_cpu_cfs_periods_total{namespace=\"observability\", container=\"tempo\"}[5m]))",
+                  "legendFormat": "Tempo"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "percentunit",
+                  "min": 0,
+                  "custom": {
+                    "fillOpacity": 10
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi"
+                }
+              }
+            },
+            {
+              "type": "stat",
+              "title": "ingester ring ACTIVE",
+              "description": "- **역할**: 쓰기를 받는 ingester 수. 복제 계수 3이라 셋이 살아 있어야 한다\n- **패널**: ring에서 ACTIVE 상태인 인스턴스 수\n- **읽는 법**: 3 미만이면 일부 시리즈가 복제 부족 상태다\n- **그래서**: `kubectl get pods -n observability -l app.kubernetes.io/component=ingester`",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 4,
+                "x": 12,
+                "y": 64
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "sum(cortex_ring_members{state=\"ACTIVE\", name=\"ingester\"})"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "red",
+                        "value": null
+                      },
+                      {
+                        "color": "green",
+                        "value": 3
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "stat",
+              "title": "블록 업로드 후 경과",
+              "description": "- **역할**: ingester가 메모리의 블록을 MinIO로 올린 마지막 시각. 올라가야 메모리가 비고 장기 조회가 된다\n- **패널**: 인스턴스별 경과 분\n- **읽는 법**: 블록 주기(기본 2시간)를 크게 넘기면 업로드가 막힌 것이다\n- **그래서**: `kubectl logs -n observability mimir-ingester-0 | grep -i upload`",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 4,
+                "x": 16,
+                "y": 64
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "(time() - max by (pod) (cortex_ingester_shipper_last_successful_upload_timestamp_seconds)) / 60",
+                  "legendFormat": "{{pod}}"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "m",
+                  "decimals": 1,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "orange",
+                        "value": 150
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "stat",
+              "title": "Alloy 클러스터 peer",
+              "description": "- **역할**: Alloy는 DaemonSet 3대이고 gossip으로 스크레이프 대상을 나눠 갖는다. 이게 깨지면 3대가 같은 대상을 각자 긁어 값이 3벌 들어온다\n- **패널**: participant 상태인 peer 수\n- **읽는 법**: 노드 수와 같아야 한다. 적으면 일부가 떨어진 것이고, 그때 메트릭 행에 out-of-order 거절이 같이 오른다\n- **그래서**: `kubectl logs -n observability -l app.kubernetes.io/name=alloy -c alloy | grep -i cluster`",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 4,
+                "x": 20,
+                "y": 64
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "expr": "max(cluster_node_peers{state=\"participant\"})"
+                }
+              ],
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "none",
+                  "decimals": 0,
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "red",
+                        "value": null
+                      },
+                      {
+                        "color": "green",
+                        "value": 3
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "colorMode": "value",
+                "graphMode": "none",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ]
+                }
+              }
+            }
+          ]
         }
       ]
     }
