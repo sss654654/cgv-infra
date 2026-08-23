@@ -9,7 +9,15 @@ image:
 replicaCount: 1 # DDL update 스키마 레이스 회피(단일). 마이그레이션 도구 생기면 증설.
 resources:
   requests: {cpu: 250m, memory: 512Mi}
-  limits: {cpu: "1000m", memory: 1Gi} # limit이 힙 크기의 분모(MaxRAMPercentage=75 → 힙 약 768Mi).
+  # cpu 1000m → 2000m: 재기 위한 상향이지 확정 스펙이 아니다.
+  #   2026-08-23 판(사용자 6,000 · 체류 18.6초 · 확정 22.7건/초)에서 CPU 가 0.999/1.0 코어로
+  #   상한에 붙고 스로틀이 99.7% 였다. 상한에 붙어 있으면 실제로 몇 코어를 원했는지 알 수 없다.
+  #   같은 창의 JIT 컴파일이 0.535-1.454 초/초라 요청 처리 몫과 예열 몫도 안 갈렸다.
+  #   여유를 준 상태에서 둘을 각각 재고, 그 값으로 limit 을 다시 정한다.
+  # ⚠ JVM 은 availableProcessors() 를 이 값에서 읽어 GC·ForkJoinPool·가상 스레드 캐리어 수를
+  #   정한다. 1코어 결과와 2코어 결과는 배수 관계가 아니다 — 2코어일 때의 수요만 나온다.
+  # requests 는 250m 그대로 둔다. 스케줄러 회계를 안 건드려야 파드 배치가 안 바뀐다.
+  limits: {cpu: "2000m", memory: 1Gi} # limit이 힙 크기의 분모(MaxRAMPercentage=75 → 힙 약 768Mi).
   # 측정 오염 방지용 초기 여유(DB풀·처리량 측정 전 OOM 방지) — 처리량 확정 후 768Mi로 조일 수 있으면 조임.
   # booking HPA는 켜지 않음: 대수는 처리량 실측 후 역산, DDL 레이스로 단일 replica 전제
 # 비밀번호(MYSQL_PASSWORD)는 여기 없음 → booking-secrets(SealedSecret)에서 envFrom. 서비스명은 미들웨어 배포 후 확정.
