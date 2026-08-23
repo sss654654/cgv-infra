@@ -687,7 +687,7 @@ data:
         {
           "type": "timeseries",
           "title": "자원 사용률 — 전부 상한 대비 %",
-          "description": "**이 정원이 자원을 얼마나 쓰나.** 스펙의 근거가 여기서 나온다.\n자원마다 단위가 달라 비교가 안 되니 전부 \"상한 대비 %\"로 바꿨다.\n\n- **booking CPU** limit 1코어 → ▸booking 파드\n- **booking 스로틀** 커널이 100ms 마다 주는 몫을 다 써서 잘린 비율. 평균 CPU 가 절반이어도 설 수 있다 → ▸booking 파드\n- **MySQL 풀 사용** 커넥션 10 → ▸MySQL 커넥션 풀\n- **MySQL CPU** limit 1코어 → ▸MySQL\n- **JVM 힙** 상한 768Mi (limit 1Gi 의 75%) → ▸booking 파드\n- **GC 멈춤** 1초 중 GC 로 정지한 비율 → ▸booking 파드\n\n**100% 를 향해 먼저 기어오르는 선이 다음에 막힐 자리다.** 그 선이 가리키는 접힌 행을 연다.\n\n정원 계단 여섯 판(정원 30-500)에서 어떤 선도 25% 를 안 넘었다. 정원 500 에서 좌석 4,000 을 6분에 파는데 자원의 4분의 1만 쓴다 — **병목은 자원이 아니라 좌석 재고였다.** 그 사실이 이 화면의 결론이다.",
+          "description": "**이 정원이 자원을 얼마나 쓰나.** 스펙의 근거가 여기서 나온다.\n자원마다 단위가 달라 비교가 안 되니 전부 \"상한 대비 %\"로 바꿨다.\n\n- **booking CPU** 컨테이너 CPU limit 대비 → ▸booking 파드\n- **booking 스로틀** 커널이 100ms 마다 주는 몫을 다 써서 잘린 비율. 평균 CPU 가 절반이어도 설 수 있다 → ▸booking 파드\n- **MySQL 풀 사용** 커넥션 10 → ▸MySQL 커넥션 풀\n- **MySQL CPU** 컨테이너 CPU limit 대비 → ▸MySQL\n- **JVM 힙** 상한 768Mi (limit 1Gi 의 75%) → ▸booking 파드\n- **GC 멈춤** 1초 중 GC 로 정지한 비율 → ▸booking 파드\n\n**100% 를 향해 먼저 기어오르는 선이 다음에 막힐 자리다.** 그 선이 가리키는 접힌 행을 연다.\n\n정원 계단 여섯 판(정원 30-500)에서는 어떤 선도 25% 를 안 넘었고, 판을 끝낸 것은 자원이 아니라 좌석 재고였다. 2026-08-23 판에서 그 결론이 바뀌었다 — 체류를 18.6초로 줄여 회전을 5.9배로 올리니 booking CPU 가 1코어에 붙었고(스로틀 99.7%), limit 을 2코어로 올려 다시 재니 1.358 코어를 썼다. **정원이 같아도 체류가 짧아지면 회전이 빨라지고, 그러면 재고보다 자원이 먼저 찬다.**",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -701,8 +701,8 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"booking\"}[1m]) and on(pod) (up{job=\"booking\"} == 1)) / 1",
-              "legendFormat": "booking CPU / 1코어"
+              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"booking\"}[1m]) and on(pod) (up{job=\"booking\"} == 1)) / max(kube_pod_container_resource_limits{namespace=\"app\", container=\"booking\", resource=\"cpu\"})",
+              "legendFormat": "booking CPU / limit"
             },
             {
               "refId": "B",
@@ -716,8 +716,8 @@ data:
             },
             {
               "refId": "D",
-              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"mysql\"}[1m])) / 1",
-              "legendFormat": "MySQL CPU / 1코어"
+              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"mysql\"}[1m])) / max(kube_pod_container_resource_limits{namespace=\"data\", container=\"mysql\", resource=\"cpu\"})",
+              "legendFormat": "MySQL CPU / limit"
             },
             {
               "refId": "E",
@@ -940,8 +940,8 @@ data:
           "panels": [
             {
               "type": "timeseries",
-              "title": "CPU · 스로틀 / limit 1코어",
-              "description": "**예상 병목.** 정원 80 부근에서 1코어를 채운다는 가설을 이 선이 확인한다.\n\n스로틀은 CPU 가 상한에 닿기 전에 먼저 선다 — 커널이 100ms 마다 몫을 나눠 주는데,\n평균이 몫에 가까울수록 창 안에서 다 쓰고 잘리는 일이 잦아진다.\n**평균 CPU 가 limit 의 절반이어도 스로틀은 설 수 있다.**\n\nqueue 는 스로틀 83% 에서 limit 을 두 배로 올려 풀었다. booking 은 1파드 고정이라\n여기가 차면 limit 를 올리는 것이 X 를 올리는 유일한 손잡이다.",
+              "title": "CPU · 스로틀 / limit",
+              "description": "**booking 의 CPU 상한을 이 선으로 판정한다.** 확정 22.7건/초(체류 18.6초 · 정원 500)에서 1코어가 찼고, 2코어에서 다시 재니 1.358 코어를 썼다.\n\n스로틀은 CPU 가 상한에 닿기 전에 먼저 선다 — 커널이 100ms 마다 몫을 나눠 주는데,\n평균이 몫에 가까울수록 창 안에서 다 쓰고 잘리는 일이 잦아진다.\n**평균 CPU 가 limit 의 절반이어도 스로틀은 설 수 있다.**\n\nqueue 는 스로틀 83% 에서 limit 을 두 배로 올려 풀었다. booking 은 1파드 고정이라\n여기가 차면 limit 를 올리는 것이 X 를 올리는 유일한 손잡이다.",
               "datasource": {
                 "type": "prometheus",
                 "uid": "mimir"
@@ -960,8 +960,8 @@ data:
                 },
                 {
                   "refId": "B",
-                  "expr": "1",
-                  "legendFormat": "limit 1코어"
+                  "expr": "max(kube_pod_container_resource_limits{namespace=\"app\", container=\"booking\", resource=\"cpu\"})",
+                  "legendFormat": "limit (코어)"
                 },
                 {
                   "refId": "C",
@@ -983,7 +983,7 @@ data:
                   {
                     "matcher": {
                       "id": "byName",
-                      "options": "limit 1코어"
+                      "options": "limit (코어)"
                     },
                     "properties": [
                       {
@@ -1340,7 +1340,7 @@ data:
           "panels": [
             {
               "type": "timeseries",
-              "title": "MySQL 컨테이너 — CPU · 메모리 / limit 1코어 · 1Gi",
+              "title": "MySQL 컨테이너 — CPU · 메모리 / limit",
               "description": "**MySQL 이 자원 상한에 닿았나.** 오른쪽 두 패널이 \"안에서 무엇 때문에\"를 답한다.\n\nMySQL 은 파드를 늘려도 안 풀린다 — 쓰기가 한 대로 모인다. 이 선이 상한에 붙으면\nlimit 를 올리거나 복제·샤딩이고, 그것이 dev 구성의 끝이다.\n\n단일 SSD 를 세 노드가 공유하는 구성이라 디스크가 붐비면 **CPU 는 낮은데 질의만 느려진다** —\n그 경우는 오른쪽의 질의 수는 그대로인데 p99 만 오르는 모양으로 나타난다.\n\n정원 2 판 — CPU 0.028. 메모리 봉우리 944MiB 는 판 밖(재시작 직후 로딩), 판 중 460MiB.",
               "datasource": {
                 "type": "prometheus",
@@ -1360,8 +1360,8 @@ data:
                 },
                 {
                   "refId": "B",
-                  "expr": "1",
-                  "legendFormat": "CPU limit 1코어"
+                  "expr": "max(kube_pod_container_resource_limits{namespace=\"data\", container=\"mysql\", resource=\"cpu\"})",
+                  "legendFormat": "CPU limit (코어)"
                 },
                 {
                   "refId": "C",
@@ -1388,7 +1388,7 @@ data:
                   {
                     "matcher": {
                       "id": "byName",
-                      "options": "CPU limit 1코어"
+                      "options": "CPU limit (코어)"
                     },
                     "properties": [
                       {
