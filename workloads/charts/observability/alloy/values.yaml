@@ -230,7 +230,16 @@ alloy:
         clustering { enabled = true }
       }
       prometheus.remote_write "mimir" {
-        endpoint { url = "http://mimir-gateway.observability.svc.cluster.local/api/v1/push" }
+        endpoint {
+          url = "http://mimir-gateway.observability.svc.cluster.local/api/v1/push"
+
+          // 히스토그램에 실려 온 exemplar(trace_id)를 Mimir로 같이 보낸다. 이게 빠지면
+          //   p99 그래프의 점이 사라져 "그 요청 하나"의 트레이스로 넘어갈 수 없다.
+          //   기본값이 true라 없어도 동작하지만, 기본값은 버전에 따라 바뀔 수 있고
+          //   끊겨도 지표와 트레이스가 각각 정상으로 보여 사람이 알아챌 경로가 없다.
+          // Mimir의 limits.max_global_exemplars_per_user와 한 쌍이다 — 한쪽만 있으면 저장되지 않는다.
+          send_exemplars = true
+        }
       }
 
       // TRACES (선택): OTLP 수신 -> Tempo. 앱이 Tempo 직접 전송이면 이 두 블록 삭제.
