@@ -181,7 +181,7 @@ data:
         {
           "type": "stat",
           "title": "판의 상태 — 넷은 0, 좌석은 남아 있어야 한다",
-          "description": "**이 판의 조건과, 판을 세우는 값들.** 그래프가 아니라 숫자로 둔다 — \"0인가 아닌가\"를 선에서 찾게 하지 않는다.\n\n- **정원** 이 계단의 값(MAX_SESSIONS). 판 내내 상수다\n- **5xx** 서버가 깨졌다\n- **풀 포기** 커넥션을 30초 기다리다 실패했다. 한 건이라도 있으면 이미 무너진 뒤다\n- **재시작** 그 구간의 모든 수치를 버린다 — 워밍업·풀이 처음부터 다시 시작된다\n- **인증 회수** 세션 타임아웃으로 자리를 뺏긴 수. **승격보다 크면 체류가 타임아웃(60초)을 넘고 있다** — queue 화면의 체류 패널과 짝이다\n- **남은 좌석** MySQL 이 직접 센다(전체 − 팔린 수). 0 이 되면 그 뒤 구간은 전원이 매진을 확인하고 퇴장하는 구간이라 측정에서 뺀다\n- **이 속도면 매진까지** 좌석 전체 ÷ 지금 확정/초. 이 정원이 내는 결과값이고, 스펙에서 M(매진 목표 시간)에 대응한다",
+          "description": "**이 판의 조건과, 판을 세우는 값들.** 그래프가 아니라 숫자로 둔다 — \"0인가 아닌가\"를 선에서 찾게 하지 않는다.\n\n- **정원** 이 계단의 값(MAX_SESSIONS). 판 내내 상수다\n- **5xx** 서버가 깨졌다\n- **풀 포기** 커넥션을 30초 기다리다 실패했다. 한 건이라도 있으면 이미 무너진 뒤다\n- **재시작** 그 구간의 모든 수치를 버린다 — 워밍업·풀이 처음부터 다시 시작된다\n- **인증 회수** 세션 타임아웃으로 자리를 뺏긴 수. **승격보다 크면 체류가 타임아웃(60초)을 넘고 있다** — queue 화면의 체류 패널과 짝이다\n- **남은 좌석** booking 이 5초마다 좌석 행을 직접 세어 낸 값이다(전체 − 팔린 수). 0 이 되면 그 뒤 구간은 전원이 매진을 확인하고 퇴장하는 구간이라 측정에서 뺀다\n- **이 속도면 매진까지** 남은 좌석 ÷ 지금 확정/초. 이 정원이 내는 결과값이고, 스펙에서 M(매진 목표 시간)에 대응한다",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -220,12 +220,12 @@ data:
             },
             {
               "refId": "E",
-              "expr": "max(mysql_info_schema_table_rows{schema=\"cgv\", table=\"seats\"}) - max(mysql_info_schema_table_rows{schema=\"cgv\", table=\"booking_seats\"})",
+              "expr": "max(booking_seats_remaining{application=\"cgv-booking\"})",
               "legendFormat": "남은 좌석"
             },
             {
               "refId": "F",
-              "expr": "max(mysql_info_schema_table_rows{schema=\"cgv\", table=\"seats\"}) / (sum(rate(booking_confirm_total{application=\"cgv-booking\", result=\"success\"}[1m])) > 0)",
+              "expr": "max(booking_seats_remaining{application=\"cgv-booking\"}) / (sum(rate(booking_confirm_total{application=\"cgv-booking\", result=\"success\"}[1m])) > 0)",
               "legendFormat": "이 속도면 매진까지"
             }
           ],
