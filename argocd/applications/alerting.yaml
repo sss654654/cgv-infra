@@ -1,0 +1,32 @@
+# alerting — Grafana 알림 프로비저닝(발송처·라우팅·룰)을 담은 ConfigMap.
+# dashboards Application 과 같은 자리다: 차트가 아니라 자체 매니페스트라 root 직속 Application.
+#
+# 왜 grafana 차트 values 가 아니라 여기인가 — 차트가 values 의 alerting 키에 Helm tpl 을 돌려,
+#   알림 템플릿의 {{ }} 를 Grafana 가 아니라 Helm 이 먼저 해석하려다 렌더가 실패한다.
+#   ConfigMap 은 Helm 을 거치지 않아 문자열 그대로 파드에 전달된다.
+#
+# grafana values 의 extraConfigmapMounts 가 이 ConfigMap 을 provisioning/alerting 에 마운트한다 —
+#   이름(grafana-alerting)이 양쪽에서 같아야 붙는다.
+# 마운트라 내용이 바뀌면 Grafana 파드가 다시 떠야 반영된다(deploymentStrategy: Recreate).
+# 알림 발송처는 grafana-discord-webhook SealedSecret 을 환경변수로 읽는다 —
+#   sealed-secrets App(wave -2)이 그 시크릿을 먼저 배달해야 Grafana 가 뜬다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alerting
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # 관측 스택(AppSet wave 0~1) 뒤. dashboards 와 같은 파도
+spec:
+  project: infra
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/alerting
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true       # 파일을 지우면 알림도 사라진다 — 정본이 git 이라는 뜻
+      selfHeal: true    # UI 에서 손댄 것은 다음 sync 에 되돌아간다
