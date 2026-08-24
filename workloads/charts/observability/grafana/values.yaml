@@ -158,8 +158,14 @@ imageRenderer:
   enabled: true
   replicas: 1
   resources:
+    # limit 384Mi 로 시작했다가 렌더 요청마다 OOMKilled(exit 137) 로 죽었다 —
+    #   대기 중에는 파드가 멀쩡히 살아 있고 헬스체크도 통과하는데, 화면을 그리는 순간
+    #   크로미움이 뜨면서 한 번에 튄다. Grafana 쪽에는 "요청 실패(EOF·connection refused)"
+    #   로만 보여서 원인이 렌더러 안에 있다는 것이 로그 밖에서는 안 드러난다.
+    # 지금 값은 실측 근거가 없다 — 죽는 파드는 사용량을 못 재서 넉넉히 열어 둔 것이다.
+    #   안정된 뒤 렌더 중 peak 를 재서 조인다.
     requests: { cpu: 50m, memory: 256Mi }
-    limits:   { memory: 384Mi }
+    limits:   { memory: 768Mi }
   # 렌더러가 Grafana 를 호출해 화면을 찍는다. 서비스명은 릴리스명 기준이다.
   renderingCallbackURL: http://grafana.observability.svc.cluster.local/
 

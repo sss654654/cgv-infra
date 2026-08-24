@@ -51,6 +51,7 @@ data:
 
                 조치 — {{ .Annotations.description }}
                 {{ if .PanelURL }}패널 — {{ .PanelURL }}
+                {{ end }}{{ if .DashboardURL }}대시보드 — {{ .DashboardURL }}
                 {{ end }}{{ end }}
 
   policies.yaml: |
