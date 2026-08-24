@@ -16,9 +16,10 @@ spec:
   project: infra
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
-    # 대시보드 정본은 main이다. workloads/manifests/dashboards를 고쳐 머지하면 반영된다.
-    #   구성을 잡는 동안 쓰던 전용 dashboards 브랜치는 main에 합치고 닫았다.
-    targetRevision: main
+    # 대시보드 작업 중에는 전용 dashboard 브랜치를 본다 — 매 수정을 main에 머지하지 않고
+    #   dashboard 브랜치에 푸시하면 root(selfHeal)가 곧바로 반영한다.
+    #   작업이 끝나면 dashboard 를 main에 합치고 이 값을 main 으로 되돌린다(정본은 main).
+    targetRevision: dashboard
     path: workloads/manifests/dashboards
   destination:
     server: https://kubernetes.default.svc
