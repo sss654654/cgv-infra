@@ -22,6 +22,10 @@ deploymentStrategy:
 grafana.ini:
   server:
     root_url: http://grafana.cgv.lan
+  # 렌더러가 떠 있어도 이 스위치가 꺼져 있으면 알림에 그림이 안 붙는다 —
+  #   Grafana 는 알림용 화면 캡처를 기본으로 하지 않는다.
+  unified_alerting.screenshots:
+    capture: true
 admin:
   existingSecret: grafana-admin
   userKey: admin-user
@@ -137,6 +141,8 @@ envValueFrom:
 #   차트가 values 의 alerting 키에 Helm tpl 을 돌려, 알림 템플릿의 {{ }} 를 Grafana 가 아니라
 #   Helm 이 먼저 해석하려다 렌더가 실패한다. ConfigMap 에 두면 문자열 그대로 전달된다.
 #   위 데이터소스의 $$ 이스케이프와 같은 종류의 함정이고, 이쪽은 이스케이프로 못 피한다.
+#   ⚠️ 마운트라 이 ConfigMap 이 없으면 파드가 FailedMount 로 안 뜬다 —
+#      alerting Application 이 관측 스택보다 앞 파도(-1)에 있어야 한다.
 extraConfigmapMounts:
   - name: alerting
     mountPath: /etc/grafana/provisioning/alerting

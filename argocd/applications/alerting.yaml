@@ -16,7 +16,10 @@ metadata:
   name: alerting
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "2"   # 관측 스택(AppSet wave 0~1) 뒤. dashboards 와 같은 파도
+    # ★관측 스택(AppSet wave 0~1)보다 앞. dashboards(wave 2)와 다르다 —
+    #   대시보드는 sidecar 가 뜬 뒤에 읽어가도 되지만, 이 ConfigMap 은 Grafana 파드에
+    #   마운트되므로 파드가 뜨기 전에 있어야 한다. 없으면 FailedMount 로 기동이 멈춘다.
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   project: infra
   source:

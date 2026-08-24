@@ -44,11 +44,13 @@ data:
               # 기본 형식은 라벨을 통째로 늘어놓고 링크를 네 줄 붙여 사람이 읽기 어렵다.
               #   폰 알림에서 필요한 것은 셋뿐이다 — 무슨 일이 났나 / 무엇을 하나 / 어디를 보나.
               title: '{{ if eq .Status "firing" }}발생{{ else }}해소{{ end }} · {{ .CommonLabels.alertname }}'
+              # 패널 주소는 __dashboardUid__ 로 조립하지 않는다 — Grafana 가 그 애노테이션을
+              #   내부용으로 걷어내 템플릿에서 안 보이고, 대신 완성된 .PanelURL 을 준다.
               message: |-
                 {{ range .Alerts }}{{ .Annotations.summary }}
 
                 조치 — {{ .Annotations.description }}
-                {{ if .Annotations.__dashboardUid__ }}패널 — {{ $.ExternalURL }}/d/{{ .Annotations.__dashboardUid__ }}?viewPanel={{ .Annotations.__panelId__ }}
+                {{ if .PanelURL }}패널 — {{ .PanelURL }}
                 {{ end }}{{ end }}
 
   policies.yaml: |
@@ -188,7 +190,7 @@ data:
               __dashboardUid__: hypervisor-overview
               __panelId__: "24"
               summary: 주 디스크(sda)가 자가진단에서 이상을 보고했다 — 홈랩 전부가 이 디스크 위에 있다
-              description: 홈랩 전부가 이 디스크 위에 있다. 봉인 키·백업·스냅샷을 다른 매체로 옮기고 교체를 준비한다.
+              description: 아직 읽히는 동안 봉인 키·백업·스냅샷을 다른 매체로 옮기고 교체를 준비한다. 어느 항목이 넘었는지는 읽기 오류율 점수로 본다.
             data:
               - refId: A
                 relativeTimeRange: { from: 600, to: 0 }
