@@ -16,10 +16,11 @@ spec:
   project: infra
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
-    # 대시보드 작업 중에는 전용 dashboard 브랜치를 본다 — 매 수정을 main에 머지하지 않고
-    #   dashboard 브랜치에 푸시하면 root(selfHeal)가 곧바로 반영한다.
-    #   작업이 끝나면 dashboard 를 main에 합치고 이 값을 main 으로 되돌린다(정본은 main).
-    targetRevision: dashboard
+    # 정본은 main. 대시보드를 여러 번 고치는 작업 기간에만 전용 브랜치로 잠시 돌린다
+    #   (그 브랜치에 푸시하면 root(selfHeal)가 곧바로 반영해 매 수정을 머지하지 않아도 된다).
+    #   돌릴 때는 브랜치 삭제 전에 이 값을 main 으로 되돌린다 — 순서가 바뀌면
+    #   이 Application 이 없는 리비전을 가리켜 sync 가 멈춘다.
+    targetRevision: main
     path: workloads/manifests/dashboards
   destination:
     server: https://kubernetes.default.svc

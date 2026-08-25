@@ -34,6 +34,7 @@ data:
     {
       "uid": "obs-pipeline-detail",
       "title": "관측 파이프라인",
+      "tags": ["cgv", "infra"],
       "editable": true,
       "timezone": "browser",
       "time": {

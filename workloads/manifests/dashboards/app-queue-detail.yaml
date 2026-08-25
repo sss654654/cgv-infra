@@ -111,6 +111,7 @@ data:
     {
       "uid": "app-queue-detail",
       "title": "queue 서비스",
+      "tags": ["cgv", "app"],
       "editable": true,
       "timezone": "browser",
       "time": {

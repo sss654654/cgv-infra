@@ -53,6 +53,7 @@ data:
     {
       "uid": "infra-cluster-overview",
       "title": "클러스터 인프라",
+      "tags": ["cgv", "infra"],
       "editable": true,
       "timezone": "browser",
       "time": {
@@ -80,7 +81,7 @@ data:
         {
           "type": "stat",
           "title": "노드 Ready",
-          "description": "#### 쿠버네티스가 이 노드를 쓸 수 있다고 보나\n\n3 대 중 몇 대인가. 옆의 `k3s 응답`과 **갈리는 순간이 신호**다.\n\n```\nReady 2 · k3s 응답 3   노드는 살았는데 못 쓴다고 본다\n                      DiskPressure · MemoryPressure · 네트워크 플러그인 미준비\n                      BestEffort 인 calico-node 가 evict 되면 이 모양이 된다\n```\n\n주의 — kubelet → apiserver → KSM 을 거쳐 오는 값이라 **셋 중 가장 늦게 바뀐다.** 노드 하나를 실제로 멈춰 재보니 직접 스크레이프가 0 이 된 뒤에도 한동안 정상으로 남아 있었다. 그 사이 이 노드의 다른 패널 값도 마지막 값 그대로 떠 있다.",
+          "description": "#### 쿠버네티스가 이 노드를 쓸 수 있다고 보나\n\n3 대 중 몇 대인가. 옆의 `k3s 응답`과 **갈리는 순간이 신호**다.\n\n```\nReady 2 · k3s 응답 3   노드는 살았는데 못 쓴다고 본다\n                      DiskPressure · MemoryPressure · 네트워크 플러그인 미준비\n                      BestEffort 인 calico-node 가 evict 되면 이 모양이 된다\n```\n\n주의 — kubelet → apiserver → KSM 을 거쳐 오는 값이라 **셋 중 가장 늦게 바뀐다.** 노드 하나를 실제로 멈춰 재보니 직접 스크레이프가 0 이 된 뒤에도 한동안 정상으로 남아 있었다. 그 사이 이 노드의 다른 패널 값도 마지막 값 그대로 떠 있다.\n\n**셋이 같이 이상하면 노드가 아니라 그 아래다** — VM 3대가 한 물리 노트북 위에 있어, 호스트 문제는 세 노드가 동시에 이상한 모양으로 나타난다. 그때는 호스트 하드웨어 판(온도·전원·디스크)을 본다.",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
