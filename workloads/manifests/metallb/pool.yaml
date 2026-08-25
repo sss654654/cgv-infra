@@ -6,7 +6,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-    - 192.168.0.240-192.168.0.250     # Phase1 LAN 대역. <TODO> Phase2(10.0.0.x) 재조정.
+    - 10.0.0.240-10.0.0.250     # 격리망(OPNsense LAN) 대역. 노드가 10.0.0.11-13 으로 재구성되면서 함께 이동.
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
