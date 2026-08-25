@@ -26,6 +26,10 @@ grafana.ini:
   #   Grafana 는 알림용 화면 캡처를 기본으로 하지 않는다.
   unified_alerting.screenshots:
     capture: true
+    # 렌더 제한시간. 기본 10초인데 부팅 직후처럼 노드가 붐비는 구간에서 초과해
+    #   그림 없이 텍스트만 나갔다. 평시 실측 5.4-7.7초의 약 4배로 잡는다.
+    #   초과해도 알림 자체는 텍스트로 발송된다 - 잃는 것은 그림이고 발송이 그만큼 늦어진다.
+    capture_timeout: 30s
 admin:
   existingSecret: grafana-admin
   userKey: admin-user
