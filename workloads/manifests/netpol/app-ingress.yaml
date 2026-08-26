@@ -1,0 +1,104 @@
+# app 네임스페이스로 들어오는 접속의 출처를 제한한다.
+#
+# NetworkPolicy는 정책이 고른 파드만 판정 대상으로 삼는다. 고르는 순간 그 파드로 들어오는
+#   접속이 전부 막히고 ingress에 적은 것만 통과한다. 거부 규칙은 문법에 없다.
+# 여러 정책이 같은 파드를 고르면 허용의 합집합이 된다.
+#
+# kubelet의 httpGet 프로브는 ipBlock으로 적지 않는다. 정책이 강제되는 상태에서 프로브가
+#   통과하는 것을 확인했다(frontend에 이 파일의 규칙만 걸고 70초 관찰 — 재시작·NotReady 없음,
+#   같은 시점에 data 네임스페이스 파드에서 frontend:8080 접속은 차단됨). CNI가 Calico다.
+#
+# 이 파일은 들어오는 방향만 다룬다. 나가는 방향(egress)을 걸 때는 CoreDNS 53을 반드시 함께
+#   열어야 한다 — frontend의 nginx는 업스트림을 요청 시점에 DNS로 해석한다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: app
+spec:
+  podSelector: {}          # app의 모든 파드를 판정 대상으로 만든다
+  policyTypes: [Ingress]
+  ingress: []              # 규칙 0개 = 이 정책만 놓고 보면 통과할 조건이 없다
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-ingress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  policyTypes: [Ingress]
+  ingress:
+    # Ingress "frontend"의 규칙 `/`와 `/api/movies`가 이 포트로 온다.
+    - from:
+        - namespaceSelector:                              # 한 원소 안의 셀렉터 둘 = AND
+            matchLabels: {kubernetes.io/metadata.name: traefik}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: traefik}
+      ports:
+        - port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: booking-ingress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: booking
+  policyTypes: [Ingress]
+  ingress:
+    # 8091은 앱 트래픽과 지표 노출이 같은 포트다. 스프링 액추에이터가 별도 포트를 열지 않는다.
+    #   Traefik  — Ingress "frontend"의 규칙 `/api`가 이 서비스로 온다.
+    #   frontend — Ingress가 `/api/movies`를 frontend로 보내고, frontend의 nginx가 그 응답을
+    #              캐시하며 booking으로 되보낸다(nginx.conf의 location /api/movies).
+    #   alloy    — ServiceMonitor "booking"이 /actuator/prometheus를 15초 간격으로 긁는다.
+    - from:                                               # 원소가 여럿 = OR
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: traefik}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: traefik}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: app}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: frontend}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - port: 8091
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: queue-ingress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: queue
+  policyTypes: [Ingress]
+  ingress:
+    # 8090은 앱 트래픽. Ingress "frontend"의 규칙 `/api/admission`이 이 서비스로 온다.
+    # frontend는 여기 없다. nginx.conf에 location /api/admission/ 이 있지만 Traefik이 그 경로를
+    #   queue로 직접 보내므로 frontend를 거치지 않는다. Ingress 규칙에서 `/api/admission`을
+    #   빼면 이 경로가 frontend를 타게 되고, 그때는 여기에 frontend를 추가해야 한다.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: traefik}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: traefik}
+      ports:
+        - port: 8090
+    # 9091은 지표 전용 포트다. PodMonitor "queue"가 파드에 직접 붙어 /metrics를 긁는다.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - port: 9091
