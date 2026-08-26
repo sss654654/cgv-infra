@@ -34,7 +34,7 @@ env:
   MYSQL_HOST: mysql.data.svc.cluster.local
   MYSQL_PORT: "3306"
   MYSQL_DB: cgv
-  MYSQL_USER: root # prd는 전용 유저 권장
+  MYSQL_USER: cgvapp # cgv 데이터베이스 안에서만 권한을 갖는 계정. root 는 전역 권한이라 안 쓴다
   KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
   # admissions 를 소비하는 리스너 스레드 수. Spring 기본값은 1이라 파티션 4개를 한 스레드가
   #   순서대로 처리했다. 판이 시작되면 정원(500)이 비어 있어 처음 도착한 사람들이 대기 없이
