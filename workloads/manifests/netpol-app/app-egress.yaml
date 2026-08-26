@@ -1,0 +1,141 @@
+# app 네임스페이스에서 나가는 접속의 목적지를 제한한다.
+#
+# ingress(app-ingress.yaml)는 "누가 나에게 닿나"를 정한다. 파드가 침해됐을 때 그 파드가
+#   어디로 나가는지는 막지 못한다. 이 파일이 그쪽이다.
+#
+# ports에 적는 것은 목적지 파드가 여는 포트다. Service 포트가 아니다.
+#   kube-proxy가 Service 주소를 파드 주소로 바꾼 뒤에 정책이 판정한다.
+#   mysql Service 3306 -> targetPort mysql(=3306), kafka 9092 -> tcp-clients(=9092)처럼
+#   이름으로 적힌 targetPort는 파드의 containerPort를 찾아 숫자로 옮겨 적었다.
+#
+# DNS를 먼저 연다. 안 열면 이름 해석이 막혀 나머지 규칙이 전부 무의미해진다 —
+#   목적지 주소를 못 구해서 접속 자체가 시작되지 않는다. frontend의 nginx는 업스트림을
+#   요청 시점에 해석하므로(resolver 10.43.0.10) 특히 그렇다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: app
+spec:
+  podSelector: {}          # app의 모든 파드를 판정 대상으로 만든다
+  policyTypes: [Egress]
+  egress: []               # 규칙 0개 = 이 정책만 놓고 보면 나갈 조건이 없다
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: app
+spec:
+  podSelector: {}          # 세 앱 모두 이름 해석이 필요하다
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}      # 응답이 512바이트를 넘으면 TCP로 재질의한다
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-egress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+  policyTypes: [Egress]
+  egress:
+    # nginx.conf의 location /api/movies가 응답을 캐시하며 booking으로 되보낸다.
+    # queue는 여기 없다. nginx.conf에 location /api/admission/이 있지만 Traefik이 그 경로를
+    #   queue로 직접 보내 frontend를 거치지 않는다. Ingress에서 그 규칙을 빼면 여기도 열어야 한다.
+    - to:
+        - podSelector:                                    # ns 지정 없음 = 같은 ns(app) 안
+            matchLabels: {app.kubernetes.io/name: booking}
+      ports:
+        - port: 8091
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: booking-egress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: booking
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:                              # 한 원소 안의 셀렉터 둘 = AND
+            matchLabels: {kubernetes.io/metadata.name: data}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: mysql}
+      ports:
+        - port: 3306
+    # 26379(Sentinel)로 마스터 주소를 받고 그 주소로 6379에 다시 접속한다.
+    #   26379만 열면 마스터 조회는 되고 다음 명령에서 멈춘다.
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: data}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: redis}
+      ports:
+        - port: 6379
+        - port: 26379
+    # bootstrap으로 붙은 뒤 개별 브로커 주소를 받아 다시 붙는다. 브로커 파드가 모두
+    #   app.kubernetes.io/name=kafka라 이 한 줄이 bootstrap과 브로커를 함께 덮는다.
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: data}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: kafka}
+      ports:
+        - port: 9092
+    # OTEL_EXPORTER_OTLP_ENDPOINT = http://alloy.observability...:4318/v1/traces (HTTP)
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - port: 4318
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: queue-egress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: queue
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: data}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: redis}
+      ports:
+        - port: 6379
+        - port: 26379
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: data}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: kafka}
+      ports:
+        - port: 9092
+    # OTLP_GRPC_ENDPOINT = alloy.observability...:4317 (gRPC)
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - port: 4317
