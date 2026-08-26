@@ -3,6 +3,40 @@
 # Alloy가 라벨셀렉터 없이 observability 전체 ServiceMonitor를 잡으면 그대로 발견. 라벨필터 쓰면 monitor.additionalLabels 추가.
 replicas: 1
 autosharding: { enabled: false }     # 단일 replica Deployment(StatefulSet 아님)
+# collectors를 명시하는 이유는 secrets를 빼기 위해서다. 차트 기본값은 secrets를 포함하고,
+#   그러면 ClusterRole에 secrets list/watch가 들어가 이 서비스어카운트가 전 네임스페이스의
+#   Secret을 읽을 수 있게 된다(mysql-secret·argocd-secret·node-password 포함).
+#   대시보드는 kube_secret_* 지표를 하나도 쓰지 않는다 — 쓰지 않는 것을 읽고 있었다.
+#   collectors에서 빼면 --resources 인자와 ClusterRole 규칙이 함께 빠진다(helm template로 확인).
+# 아래는 차트 기본 목록에서 secrets 하나만 뺀 것이다. 새 수집 대상이 필요하면 여기에 더한다.
+collectors:
+  - certificatesigningrequests
+  - configmaps
+  - cronjobs
+  - daemonsets
+  - deployments
+  - endpointslices
+  - horizontalpodautoscalers
+  - ingresses
+  - jobs
+  - leases
+  - limitranges
+  - mutatingwebhookconfigurations
+  - namespaces
+  - networkpolicies
+  - nodes
+  - persistentvolumeclaims
+  - persistentvolumes
+  - poddisruptionbudgets
+  - pods
+  - replicasets
+  - replicationcontrollers
+  - resourcequotas
+  - services
+  - statefulsets
+  - storageclasses
+  - validatingwebhookconfigurations
+  - volumeattachments
 resources:
   # request 96Mi: 평시 실측 71Mi(2026-08-17)가 이전 request 64Mi의 110% — 발행 시리즈가
   #   클러스터 오브젝트 수에 비례해 늘며 넘었다. limit 128Mi 유지.

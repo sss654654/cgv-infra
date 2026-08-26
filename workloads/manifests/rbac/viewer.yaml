@@ -1,0 +1,79 @@
+# 사람이 쓰는 읽기 전용 자격.
+#
+# 지금 클러스터에서 cluster-admin은 Group "system:masters" 하나에만 묶여 있다. 그 그룹은
+#   오브젝트로 존재하지 않는다 — 관리자 kubeconfig의 클라이언트 인증서에 O=system:masters가
+#   들어 있고, API 서버가 인증서의 CN을 사용자 이름으로, O를 그룹으로 읽는다.
+#   그래서 조회만 하려 해도 전권 자격을 쓰게 된다.
+# 같은 구조로 O=cgv:viewers 인증서를 만들고 그 그룹에 읽기 권한만 묶는다.
+#   ServiceAccount를 쓰지 않는 이유: 서비스어카운트는 파드가 쓰는 신원이고, 사람은
+#   인증서(또는 외부 IdP)로 들어오는 것이 쿠버네티스의 기본 구분이다.
+#
+# 인증서 발급(노드에서 직접, 1회):
+#   openssl genrsa -out viewer.key 2048
+#   openssl req -new -key viewer.key -out viewer.csr -subj "/CN=viewer/O=cgv:viewers"
+#   openssl x509 -req -in viewer.csr -days 365 -CAcreateserial -out viewer.crt \
+#     -CA    /var/lib/rancher/k3s/server/tls/client-ca.crt \
+#     -CAkey /var/lib/rancher/k3s/server/tls/client-ca.key
+#   발급된 인증서는 폐기 목록이 없다. 만료(-days)가 유일한 회수 수단이라 짧게 잡는다.
+---
+# 네임스페이스 안의 리소스는 쿠버네티스 내장 ClusterRole "view"를 그대로 쓴다.
+#   view는 secrets와 roles/rolebindings를 의도적으로 제외한다 — Secret을 읽으면 그 안의
+#   자격으로 다른 권한을 얻고, RBAC 오브젝트를 읽으면 어디를 노려야 권한이 올라가는지 알 수 있다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cgv-viewer
+subjects:
+  - kind: Group
+    name: cgv:viewers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: rbac.authorization.k8s.io
+---
+# view에 없는 것을 따로 준다. view는 네임스페이스 안의 리소스만 다뤄 노드·PV·CRD가 빠져 있고,
+#   이 클러스터가 쓰는 커스텀 리소스(ArgoCD Application, ServiceMonitor, Kafka)도 없다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cgv-viewer-cluster-scope
+rules:
+  - apiGroups: [""]
+    resources: [nodes, persistentvolumes, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, volumeattachments]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+  # kubectl top 이 읽는 곳. metrics-server가 제공한다.
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies, ingresses, ingressclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [applications, applicationsets, appprojects]
+    verbs: [get, list, watch]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [servicemonitors, podmonitors, prometheusrules]
+    verbs: [get, list, watch]
+  - apiGroups: [kafka.strimzi.io]
+    resources: [kafkas, kafkatopics, kafkanodepools]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cgv-viewer-cluster-scope
+subjects:
+  - kind: Group
+    name: cgv:viewers
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cgv-viewer-cluster-scope
+  apiGroup: rbac.authorization.k8s.io

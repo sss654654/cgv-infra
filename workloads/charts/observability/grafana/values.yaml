@@ -53,8 +53,23 @@ persistence:
 # 대시보드 배달: grafana_dashboard 라벨이 붙은 ConfigMap을 sidecar가 파일로 떨어뜨리고 Grafana가 읽는다.
 #   대시보드 정본 = workloads/manifests/dashboards/ (argocd/applications/dashboards.yaml 이 배달).
 #   비영속과 짝이다 — 영속 저장소가 없으므로 이 경로가 유일한 대시보드 공급원이다.
-# searchNamespace를 릴리스 네임스페이스로 한정한다. ALL로 두면 클러스터 전역 ConfigMap을 감시하느라
-#   RBAC이 전 네임스페이스로 넓어진다(대시보드는 observability에만 둔다).
+# RBAC 범위. 차트 기본값(namespaced: false)은 ClusterRole+ClusterRoleBinding을 만들어
+#   grafana 서비스어카운트가 전 네임스페이스의 configmaps·secrets를 읽게 된다
+#   (kubectl auth can-i list secrets --as=system:serviceaccount:observability:grafana -A 로 확인).
+#   sidecar.dashboards.searchNamespace를 좁혀도 이 범위는 안 좁아진다 — 서로 다른 값이다.
+#   Grafana는 Ingress로 노출되는 컴포넌트라, 이 SA 토큰이 파드 안에 있는 상태에서
+#   클러스터 전역 Secret 열람 권한이 붙어 있으면 침해 시 mysql-secret·argocd-secret·
+#   node-password까지 함께 넘어간다.
+# namespaced: true는 ClusterRole 대신 이 네임스페이스의 Role을 만든다. 다만 그 Role의
+#   rules가 비어 있어 extraRoleRules로 sidecar가 실제로 쓰는 것만 채운다
+#   (RESOURCE=both — ConfigMap과 Secret 둘 다 감시한다).
+rbac:
+  namespaced: true
+  extraRoleRules:
+    - apiGroups: [""]
+      resources: ["configmaps", "secrets"]
+      verbs: ["get", "list", "watch"]
+# searchNamespace는 sidecar가 감시하는 네임스페이스를 정한다(대시보드는 observability에만 둔다).
 sidecar:
   dashboards:
     enabled: true

@@ -1,0 +1,23 @@
+# rbac — 사람이 쓰는 읽기 전용 자격(ClusterRole·ClusterRoleBinding).
+# 이 App이 배달하는 것은 전부 클러스터 범위 리소스라 destination.namespace는 쓰이지 않는다.
+#   Application 스펙이 namespace를 요구하므로, project infra가 허용하는 곳 중 하나를 적는다.
+# project infra인 이유: clusterResourceWhitelist가 */* 인 프로젝트가 infra와 argocd 둘인데,
+#   argocd 프로젝트는 ArgoCD 자신의 설치분 전용이다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rbac
+  namespace: argocd
+spec:
+  project: infra
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/rbac
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
