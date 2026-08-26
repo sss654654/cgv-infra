@@ -47,9 +47,9 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: observability}
           podSelector:
             matchLabels: {app.kubernetes.io/name: alloy}
-        - ipBlock: {cidr: 192.168.0.201/32}
-        - ipBlock: {cidr: 192.168.0.202/32}
-        - ipBlock: {cidr: 192.168.0.203/32}
+        - ipBlock: {cidr: 10.0.0.11/32}
+        - ipBlock: {cidr: 10.0.0.12/32}
+        - ipBlock: {cidr: 10.0.0.13/32}
       ports:
         - port: 9104
 ---
@@ -88,9 +88,9 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: observability}
           podSelector:
             matchLabels: {app.kubernetes.io/name: alloy}
-        - ipBlock: {cidr: 192.168.0.201/32}
-        - ipBlock: {cidr: 192.168.0.202/32}
-        - ipBlock: {cidr: 192.168.0.203/32}
+        - ipBlock: {cidr: 10.0.0.11/32}
+        - ipBlock: {cidr: 10.0.0.12/32}
+        - ipBlock: {cidr: 10.0.0.13/32}
       ports:
         - port: 9121
 ---
@@ -113,8 +113,8 @@ spec:
   policyTypes: [Ingress]
   ingress:
     - from:
-        - ipBlock: {cidr: 192.168.0.201/32}
-        - ipBlock: {cidr: 192.168.0.202/32}
-        - ipBlock: {cidr: 192.168.0.203/32}
+        - ipBlock: {cidr: 10.0.0.11/32}
+        - ipBlock: {cidr: 10.0.0.12/32}
+        - ipBlock: {cidr: 10.0.0.13/32}
       ports:
         - port: 8080
