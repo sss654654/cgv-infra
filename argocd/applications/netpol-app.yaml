@@ -1,0 +1,25 @@
+# netpol-app — app 네임스페이스로 들어오는 접속의 출처 규칙.
+# netpol App과 파일을 나눈 이유: AppProject가 Application이 쓸 수 있는 네임스페이스를 제한한다.
+#   netpol은 project infra 소속이고 infra는 app을 허용하지 않아, 같은 디렉터리에 두면
+#   "namespace app is not permitted in project 'infra'"로 동기화가 실패한다.
+#   app 네임스페이스를 허용하는 것은 apps 프로젝트뿐이라 App을 따로 둔다.
+# sync-wave 없음(0) — 앱 App(booking·frontend·queue)이 선 뒤에 정책이 얹힌다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: netpol-app
+  namespace: argocd
+spec:
+  project: apps
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/netpol-app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  syncPolicy:
+    automated:
+      # prune: 파일을 지우면 정책도 사라진다 — 통신이 열리는 방향이라 되돌리기가 즉시 된다.
+      prune: true
+      selfHeal: true

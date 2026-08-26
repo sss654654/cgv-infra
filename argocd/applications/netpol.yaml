@@ -1,7 +1,9 @@
-# netpol — 네임스페이스로 들어오는 접속의 출처 규칙(자체 매니페스트).
+# netpol — data 네임스페이스로 들어오는 접속의 출처 규칙(자체 매니페스트).
 # 차트가 만드는 정책은 각 차트 values에서 끄고, 출처 규칙은 이 App이 배달하는 파일에 모은다.
 #   NetworkPolicy는 여러 개가 겹치면 허용의 합집합이라, 출처를 한 곳에서만 관리해야
 #   "무엇이 무엇에 닿을 수 있나"를 파일 하나로 읽을 수 있다.
+# app 네임스페이스 규칙은 netpol-app App이 배달한다 — AppProject infra가 app을 허용하지 않아
+#   같은 App으로는 배달할 수 없다. 이유는 argocd/applications/netpol-app.yaml에 적었다.
 # sync-wave 없음(0) — 데이터 계층 App(wave -1)이 먼저 서고 그 뒤에 정책이 얹힌다.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
