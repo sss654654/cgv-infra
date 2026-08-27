@@ -43,6 +43,13 @@ service:
 ingress:
   enabled: true
   ingressClassName: traefik
+  # 이 라우터를 web(80) 에만 붙인다. websecure(443) 에는 붙지 않는다.
+  #   Traefik 은 요청의 Host 헤더로 대상을 가르는데 그 헤더는 보내는 쪽이 적는 값이라
+  #   검증할 수 없다. 공유기가 443 만 인터넷에 열므로, 이 라우터를 443 에서 빼면
+  #   Host 를 grafana.cgv.lan 으로 적어 보내도 매칭될 라우터가 없다.
+  #   관리 접근은 WireGuard 터널을 거쳐 80 으로 들어온다.
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
   path: /
   pathType: Prefix
   hosts:
