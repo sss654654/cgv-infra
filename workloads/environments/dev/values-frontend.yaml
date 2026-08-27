@@ -1,6 +1,6 @@
 # frontend dev 환경값. 정적 서빙 + /api/movies 캐시 프록시.
 image:
-  tag: dev-77-ff489cdc
+  tag: dev-79-b4ac6a13
   repository: 192.168.0.167:5050/cgv/cgv-onprem/frontend
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling).
 resources:
