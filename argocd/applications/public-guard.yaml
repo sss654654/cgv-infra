@@ -1,0 +1,21 @@
+# public-guard — 외부에 열린 포트 뒤에서 닿으면 안 되는 경로를 끊는 오브젝트들.
+# project를 apps로 둔다: AppProject가 Application이 쓸 수 있는 네임스페이스를 제한하고,
+#   app 네임스페이스를 허용하는 것은 apps 프로젝트뿐이다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: public-guard
+  namespace: argocd
+spec:
+  project: apps
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/public-guard
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

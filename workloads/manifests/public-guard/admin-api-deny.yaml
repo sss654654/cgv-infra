@@ -1,0 +1,58 @@
+# 초기화 API 두 개를 443(websecure)에서만 끊는다.
+#
+# 대상:
+#   POST /api/admin/reset        booking — 예매 기록·좌석을 지운다
+#   POST /api/admission/reset    queue   — 대기열을 비운다
+# 둘 다 X-Admin-Token을 검사하지만, frontend Ingress의 /api·/api/admission prefix가
+#   그 앞을 가르고 있어 443이 열리면 밖에서 이 주소에 요청이 닿는다.
+# 실제로 부르는 것은 reset-app CronJob 하나이고, 그것은 클러스터 안에서 Service를
+#   직접 부른다(Ingress를 지나지 않는다). 외부에서 이 경로가 살아 있을 이유가 없다.
+#
+# 80(web)에는 걸지 않는다 — LAN에서 손으로 초기화하는 경로를 남긴다.
+---
+# Traefik에는 거부 미들웨어가 없다. ipAllowList에 라우팅되지 않는 대역(RFC 5737 TEST-NET-1)만
+#   허용해 어떤 출발지도 통과하지 못하게 한다. 통과 못 하면 403.
+# externalTrafficPolicy: Cluster라 Traefik이 보는 출발지는 노드 IP(10.0.0.x)이고,
+#   그것도 이 대역에 없으므로 결과는 전부 거부다.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: deny-all
+  namespace: app
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.0.2.0/24
+---
+# 라우터 우선순위를 명시한다. Traefik의 기본 우선순위는 규칙 문자열 길이인데,
+#   Path(`/api/admission/reset`)와 PathPrefix(`/api/admission`)가 같은 길이라
+#   기본값에 맡기면 어느 쪽이 이길지 정해지지 않는다.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: admin-api-deny
+  namespace: app
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: app-deny-all@kubernetescrd
+    traefik.ingress.kubernetes.io/router.priority: "1000"
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          # backend는 미들웨어가 먼저 끊어 도달하지 않는다. Ingress 규격이 요구해서 적는다.
+          - path: /api/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: booking
+                port:
+                  number: 8091
+          - path: /api/admission/reset
+            pathType: Exact
+            backend:
+              service:
+                name: queue
+                port:
+                  number: 8090
