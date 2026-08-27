@@ -7,6 +7,13 @@ image:
   tag: dev-77-ff489cdc
   repository: 192.168.0.167:5050/cgv/cgv-onprem/booking
 replicaCount: 1 # DDL update 스키마 레이스 회피(단일). 마이그레이션 도구 생기면 증설.
+# 기본 RollingUpdate 는 새 파드가 Ready 가 된 뒤에 옛 파드를 내린다. replicas 가 1 이어도
+#   그 사이에는 파드가 둘이고, 둘 다 Hibernate 로 같은 스키마에 DDL 을 돌린다 —
+#   위 replicaCount: 1 로 막으려던 레이스가 배포할 때마다 열린다.
+#   Recreate 는 옛 파드를 먼저 내리므로 겹치는 순간이 없다. 대가는 그 사이의 다운타임인데,
+#   스키마가 깨지는 것보다 낫다. 마이그레이션 도구를 넣어 DDL_AUTO=none 이 되면 되돌린다.
+strategy:
+  type: Recreate
 resources:
   requests: {cpu: 250m, memory: 512Mi}
   # cpu 1000m → 2000m: 재기 위한 상향이지 확정 스펙이 아니다.

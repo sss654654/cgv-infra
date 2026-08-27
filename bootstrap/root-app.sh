@@ -34,7 +34,7 @@ kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
 #    바로 그 Secret이라 순환에 걸린다(docs/시크릿-계약.md 조건부 항목).
 SECRET_DIR="../workloads/manifests/secrets"
 COUNT=$(find "$SECRET_DIR" -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l)
-EXPECTED=14
+EXPECTED=16
 if [ "$COUNT" -lt "$EXPECTED" ]; then
   echo "SealedSecret 봉인본이 ${COUNT}개다(필요 ${EXPECTED}종). ${SECRET_DIR}/ 확인." >&2
   echo "계약: docs/시크릿-계약.md · 봉인법: workloads/manifests/secrets/README.md" >&2

@@ -13,7 +13,11 @@
    - k3s-3: kafkadata 30G · ingesterwal 5G · miniodata 100G
 2. **OS prep**: 정적 IP(Phase1 192.168.0.201-203), SSH키, unattended-upgrades.
    **데이터 디스크를 `/mnt/disks/<용도>`에 마운트** — 각 디스크를 `mkfs.ext4` 후 fstab UUID로 마운트(통마운트, 서브디렉터리 mkdir 없음). local-path는 config.yaml에서 disable — PVC는 정적 PV(`bootstrap/storage/`, install.sh [3/9]가 apply)에 바인딩된다.
-3. 세 노드에 `bootstrap/cluster/`의 세 파일(config.yaml·01·02)을 같은 디렉터리로 복사 — 스크립트가 옆의 config.yaml을 `/etc/rancher/k3s/`로 옮긴다.
+3. 세 노드에 `bootstrap/cluster/`의 네 파일(config.yaml·registries.yaml·01·02)을 같은 디렉터리로 복사 — 스크립트가 옆의 config.yaml을 `/etc/rancher/k3s/`로 옮긴다.
+   **`registries.yaml`은 손으로 옮긴다** — `sudo cp registries.yaml /etc/rancher/k3s/`.
+   k3s가 기동할 때만 읽으므로 이미 떠 있으면 `sudo systemctl restart k3s`까지 해야 반영된다.
+   이 파일이 없으면 GitLab 레지스트리가 평문(http)이라 kubelet이 `http: server gave HTTP
+   response to HTTPS client`로 거절하고, booking·queue·frontend가 전부 `ImagePullBackOff`에 걸린다.
 4. **k3s-1**: `./01-server-init.sh` → 출력된 명령으로 토큰 확인.
 5. **한 대씩 순차로** (동시에 조인하면 etcd 쿼럼이 흔들린다). 토큰은 인자가 아니라 실행 중 입력한다.
    **k3s-2**: `./02-server-join.sh <k3s-1_IP> obs` → `kubectl get nodes`로 2대 확인 후
