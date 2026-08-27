@@ -56,6 +56,8 @@ spec:
     #   frontend — Ingress가 `/api/movies`를 frontend로 보내고, frontend의 nginx가 그 응답을
     #              캐시하며 booking으로 되보낸다(nginx.conf의 location /api/movies).
     #   alloy    — ServiceMonitor "booking"이 /actuator/prometheus를 15초 간격으로 긁는다.
+    #   demo-reset — CronJob이 /api/admin/reset을 불러 예매 기록을 비운다. 좌석이 차면
+    #              다음 방문자가 매진 화면만 보게 되므로 주기적으로 되돌린다.
     - from:                                               # 원소가 여럿 = OR
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: traefik}
@@ -69,6 +71,10 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: observability}
           podSelector:
             matchLabels: {app.kubernetes.io/name: alloy}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: app}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: demo-reset}
       ports:
         - port: 8091
 ---
@@ -87,11 +93,17 @@ spec:
     # frontend는 여기 없다. nginx.conf에 location /api/admission/ 이 있지만 Traefik이 그 경로를
     #   queue로 직접 보내므로 frontend를 거치지 않는다. Ingress 규칙에서 `/api/admission`을
     #   빼면 이 경로가 frontend를 타게 되고, 그때는 여기에 frontend를 추가해야 한다.
+    # demo-reset은 CronJob이다. /api/admission/reset을 불러 대기열을 비운다 —
+    #   예매 기록보다 대기열을 먼저 비워야 지우는 동안 승격된 관객이 좌석을 잡지 않는다.
     - from:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: traefik}
           podSelector:
             matchLabels: {app.kubernetes.io/name: traefik}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: app}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: demo-reset}
       ports:
         - port: 8090
     # 9091은 지표 전용 포트다. PodMonitor "queue"가 파드에 직접 붙어 /metrics를 긁는다.

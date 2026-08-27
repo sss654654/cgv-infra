@@ -1,0 +1,76 @@
+# 데모 데이터 주기 초기화.
+#
+# 왜 필요한가: 이 화면은 방문자가 직접 예매해 보는 데모인데, 좌석과 대기열은 모든 방문자가
+#   공유한다. 인터넷에 공개하면 좌석이 차고, 그 뒤에 온 사람은 매진 화면만 본다.
+#   지금까지는 사람이 초기화 API 를 손으로 불렀다 — 공개 상태에서는 그 방식이 성립하지 않는다.
+#
+# 시각: 운영 시간이 07:30-23:30 이라 그 안에서만 돈다. 08:00 이 기동(07:30) 직후 첫 판이고
+#   23:00 이 종료 직전 마지막이다. */3 으로 두면 09:00 이 첫 판이 되어, 기동 후 한 시간 반이
+#   전날 밤 상태로 남는다.
+#
+# 순서: 대기열을 먼저 비운다. 예매를 지우는 동안 새로 승격된 관객이 좌석을 잡으면 잔재가 남는다.
+#   앞의 호출이 실패하면 뒤를 부르지 않고 Job 을 실패로 끝낸다 — 반만 지워진 상태가 더 나쁘다.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: demo-reset
+  namespace: app
+spec:
+  schedule: "0 8,11,14,17,20,23 * * *"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid          # 앞 판이 아직 돌면 건너뛴다. 겹치면 순서가 뒤집힌다
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3          # 실패는 남긴다 — 왜 초기화가 안 됐는지 볼 자리
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            # NetworkPolicy 가 이 라벨로 이 파드만 두 서비스에 닿게 허용한다.
+            app.kubernetes.io/name: demo-reset
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false   # API 서버를 부를 일이 없다
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: reset
+              image: curlimages/curl:8.11.1
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              resources:
+                requests: { cpu: 10m, memory: 16Mi }
+                limits:   { cpu: 100m, memory: 32Mi }
+              env:
+                - name: ADMIN_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: app-admin-token     # booking·queue 가 쓰는 것과 같은 시크릿
+                      key: ADMIN_TOKEN
+                # booking 의 cgv.movie-id 와 같아야 한다. 그 값이 바뀌면 여기도 바꾼다.
+                - name: MOVIE_ID
+                  value: kbo-allstar-2025
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  echo "대기열 비우기"
+                  curl -fsS --max-time 20 -X POST \
+                    -H "X-Admin-Token: ${ADMIN_TOKEN}" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"movieId\":\"${MOVIE_ID}\"}" \
+                    http://queue.app.svc.cluster.local:8090/api/admission/reset
+                  echo
+                  echo "예매 기록 비우기"
+                  curl -fsS --max-time 20 -X POST \
+                    -H "X-Admin-Token: ${ADMIN_TOKEN}" \
+                    http://booking.app.svc.cluster.local:8091/api/admin/reset
+                  echo

@@ -139,3 +139,29 @@ spec:
             matchLabels: {app.kubernetes.io/name: alloy}
       ports:
         - port: 4317
+---
+# demo-reset CronJob — 데모 데이터를 주기적으로 비운다.
+# 두 서비스를 순서대로 부른다: 대기열(queue 8090)을 먼저, 그다음 예매 기록(booking 8091).
+#   반대로 하면 예매를 지우는 동안 승격된 관객이 좌석을 잡아 잔재가 남는다.
+# DNS는 위 allow-dns-egress가 모든 파드에 걸려 있어 여기 다시 적지 않는다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: demo-reset-egress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: demo-reset
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:                                    # ns 지정 없음 = 같은 ns(app) 안
+            matchLabels: {app.kubernetes.io/name: queue}
+      ports:
+        - port: 8090
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: booking}
+      ports:
+        - port: 8091

@@ -1,0 +1,24 @@
+# reset-app — 데모 데이터를 주기적으로 비우는 CronJob.
+# netpol-app과 같은 이유로 project를 apps로 둔다: AppProject가 Application이 쓸 수 있는
+#   네임스페이스를 제한하고, app 네임스페이스를 허용하는 것은 apps 프로젝트뿐이다.
+#   infra 프로젝트에 두면 "namespace app is not permitted in project 'infra'"로 동기화가 실패한다.
+# sync-wave 없음(0) — 부르는 대상(queue·booking)이 없어도 CronJob 오브젝트 자체는 만들어진다.
+#   첫 실행 시각에 대상이 없으면 그 판만 실패하고 다음 판에 다시 시도한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reset-app
+  namespace: argocd
+spec:
+  project: apps
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/reset-app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
