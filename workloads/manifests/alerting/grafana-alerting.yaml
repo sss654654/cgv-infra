@@ -284,3 +284,85 @@ data:
                   expression: A
                   conditions:
                     - evaluator: { type: gt, params: [85] }
+
+      # ── 공개 서비스 ──────────────────────────────────────────────────────────
+      # 위 그룹은 물리(온도·전원·디스크)를 본다. 이 그룹은 밖에서 온 사람이 겪는 것을 본다.
+      # 층이 달라 그룹을 나눈다 — 알림 목록에서 어느 쪽이 울렸는지가 이름으로 갈린다.
+      - orgId: 1
+        name: public
+        folder: 알림
+        interval: 1m
+        rules:
+
+          # 7. 좌석 소진 — 공개 서비스가 제 노릇을 하나. 위 여섯과 층이 다르다.
+          #    앞의 여섯은 물리·저장을 보고, 이건 밖에서 온 사람이 겪는 것을 본다.
+          #    좌석과 대기열은 모든 방문자가 공유해서, 다 팔리면 뒤에 온 사람은 매진 화면만 본다.
+          #    CronJob이 세 시간마다 비우지만 그 사이는 못 받는다 — 그 구간을 알려 손으로 초기화한다.
+          #    3분: 좌석은 CronJob이 채울 때만 늘어나 잠깐 0이었다가 도로 차는 일이 없다.
+          #    지속을 길게 잡을 이유가 없고, 3분은 스크레이프(15초)와 평가 주기(1분)의 여유다.
+          - uid: public-seats-exhausted
+            title: 좌석 소진
+            condition: B
+            for: 3m
+            noDataState: OK
+            execErrState: Alerting
+            labels: { severity: warning }
+            annotations:
+              __dashboardUid__: app-public-service
+              __panelId__: "8"
+              summary: 좌석이 다 팔렸다 — 지금 들어오는 방문자는 매진 화면만 본다
+              description: 초기화 CronJob이 세 시간마다 비운다. 그 시각을 기다리거나 집 안에서 초기화 API를 손으로 부른다. 세 시간마다 4,000으로 튀는 계단이 대시보드에서 안 보이면 CronJob 자체가 안 도는 것이다.
+            data:
+              - refId: A
+                relativeTimeRange: { from: 300, to: 0 }
+                datasourceUid: mimir
+                model:
+                  refId: A
+                  instant: true
+                  expr: max(booking_seats_remaining)
+              - refId: B
+                relativeTimeRange: { from: 300, to: 0 }
+                datasourceUid: __expr__
+                model:
+                  refId: B
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator: { type: lt, params: [1] }
+
+          # 8. 밖에서 온 요청이 실패한다 — 밖에서 찌르는 프로브가 못 잡는 자리다.
+          #    프로브는 첫 화면이 200이면 정상으로 본다. "열리는데 예매가 다 실패한다"를 못 잡는다.
+          #    정상값이 0이라 임계에 근거를 댈 필요가 없다 — 그래서 부하 실측 전에도 걸 수 있다.
+          #    5분: booking이 배포 전략 Recreate라 옛 파드를 먼저 내린다. JVM 기동까지 30초 넘게
+          #    걸리고 그 사이 5xx가 난다. 이미지 갱신이 자동이라 코드를 푸시할 때마다 생긴다.
+          #    1분으로 잡으면 배포마다 울린다. 무중단으로 바꾸려면 마이그레이션 도구가 선행이다.
+          #    4xx는 안 본다 — 403은 정상 동작이다(입장 인증 전 회차 조회 → 프론트가 재시도).
+          - uid: public-5xx
+            title: 공개 경로 5xx
+            condition: B
+            for: 5m
+            noDataState: OK
+            execErrState: Alerting
+            labels: { severity: critical }
+            annotations:
+              __dashboardUid__: app-public-service
+              __panelId__: "7"
+              summary: 밖에서 온 요청이 5xx로 실패하고 있다 — 5분 넘게 이어졌으므로 배포 중이 아니다
+              description: 공개 서비스 대시보드에서 어느 코드인지 보고, queue 또는 booking 대시보드로 내려가 원인을 찾는다. 엣지가 돌려준 521·522·526은 여기 안 잡힌다 — 그건 Better Stack과 Cloudflare 화면에 있다.
+            data:
+              - refId: A
+                relativeTimeRange: { from: 300, to: 0 }
+                datasourceUid: mimir
+                model:
+                  refId: A
+                  instant: true
+                  expr: sum(rate(traefik_entrypoint_requests_total{entrypoint="websecure", code=~"5.."}[5m]))
+              - refId: B
+                relativeTimeRange: { from: 300, to: 0 }
+                datasourceUid: __expr__
+                model:
+                  refId: B
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator: { type: gt, params: [0] }

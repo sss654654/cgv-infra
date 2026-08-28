@@ -658,7 +658,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (path, le) (rate(queue_http_request_duration_seconds_bucket{path=~\"/api/admission/(stats|events|position)\"}[1m])))",
+              "expr": "histogram_quantile(0.99, sum by (path, le) (rate(queue_http_request_duration_seconds_bucket{path=~\"/api/admission/(events|position)\"}[1m])))",
               "legendFormat": "앱 {{path}}",
               "exemplar": true
             },
@@ -896,7 +896,7 @@ data:
         {
           "type": "timeseries",
           "title": "요청 (건/초) — 화면이 부르는 것 + enter",
-          "description": "**부하의 크기. 아래 모든 판정의 분모.**\n\n자원이 올랐을 때 요청이 늘어서인지\n요청은 그대로인데 무거워진 건지를 이걸로 가른다.\n\n- 왼쪽 축 — 화면이 부르는 경로들, 초당 요청 수\n- 오른쪽 축 — `enter` **누적 인원**(초당이 아니다)\n\n**인원에 비례하는 것은 셋이다** — 첫 화면의 `events`·`screenings/board` 가 3초마다, 대기 화면의 `position` 이 5초마다. `stats` 는 화면을 열 때 한 번이라 여기 선이 거의 바닥에 붙는다.\n\n**`screenings/board` 는 booking 이 답한다.** 게이트 앞 경로라 인원 전체가 부르므로 인원 축인 이 판에 둔다. booking 판의 요청 패널에도 같은 경로가 있는데, 그쪽은 booking 자원의 분모로 쓰는 것이라 목적이 다르다.\n\n**enter 만 단위가 다른 이유.** enter 는 사용자당 한 번이라 오픈 순간 몇 초 안에 전부 들어온다. 그 시리즈는 첫 요청이 올 때 처음 생기는데, `rate()` 는 이전 점과의 차이를 재므로 **시리즈가 생기는 그 증가를 못 잡는다** — 6,000명이 실제로 들어와도 선이 0 에 붙어 있었다. 그래서 누적값을 그대로 그린다. 계단이 서는 시각과 높이가 곧 오픈 시각과 인원이다.\n\n오픈 후 폴링 요청이 3분의 1로 준다 —\n메인은 3초마다 둘, 대기 화면은 5초마다 하나.\n\n요청 수가 같아도 도착 모양이 다르면 지연이 갈린다.\n판1-4 는 요청 수가 거의 같은데 스로틀이 19배 갈렸다.\n\n5,000명 — 정상 874/초 · 봉우리 2,998/초 · 사람당 0.17건/초",
+          "description": "**부하의 크기. 아래 모든 판정의 분모.**\n\n자원이 올랐을 때 요청이 늘어서인지\n요청은 그대로인데 무거워진 건지를 이걸로 가른다.\n\n- 왼쪽 축 — 화면이 부르는 경로들, 초당 요청 수\n- 오른쪽 축 — `enter` **누적 인원**(초당이 아니다)\n\n**인원에 비례하는 것은 셋이다** — 첫 화면의 `events`·`screenings/board` 가 3초마다, 대기 화면의 `position` 이 5초마다. `stats` 는 화면을 열 때 한 번만 부르는 값이라 이 판에서 뺐다.\n\n**`screenings/board` 는 booking 이 답한다.** 게이트 앞 경로라 인원 전체가 부르므로 인원 축인 이 판에 둔다. booking 판의 요청 패널에도 같은 경로가 있는데, 그쪽은 booking 자원의 분모로 쓰는 것이라 목적이 다르다.\n\n**enter 만 단위가 다른 이유.** enter 는 사용자당 한 번이라 오픈 순간 몇 초 안에 전부 들어온다. 그 시리즈는 첫 요청이 올 때 처음 생기는데, `rate()` 는 이전 점과의 차이를 재므로 **시리즈가 생기는 그 증가를 못 잡는다** — 6,000명이 실제로 들어와도 선이 0 에 붙어 있었다. 그래서 누적값을 그대로 그린다. 계단이 서는 시각과 높이가 곧 오픈 시각과 인원이다.\n\n오픈 후 폴링 요청이 3분의 1로 준다 —\n메인은 3초마다 둘, 대기 화면은 5초마다 하나.\n\n요청 수가 같아도 도착 모양이 다르면 지연이 갈린다.\n판1-4 는 요청 수가 거의 같은데 스로틀이 19배 갈렸다.\n\n5,000명 — 정상 874/초 · 봉우리 2,998/초 · 사람당 0.17건/초",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -910,7 +910,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/admission/(stats|events|position)\"}[1m]))",
+              "expr": "sum by (path) (rate(queue_http_request_duration_seconds_count{path=~\"/api/admission/(events|position)\"}[1m]))",
               "legendFormat": "{{path}}"
             },
             {
