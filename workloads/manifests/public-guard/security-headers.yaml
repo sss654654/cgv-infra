@@ -1,0 +1,14 @@
+# 공개 응답에 싣는 보안 헤더 — frontend Ingress의 미들웨어 애노테이션이 참조한다.
+# 브라우저 쪽 동작을 제한하는 값들이라, 서버가 안 실으면 브라우저는 기본(느슨한) 동작을 한다.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: app
+spec:
+  headers:
+    stsSeconds: 3600                  # HSTS 1시간 — 짧게 시작한다. 브라우저가 기간만큼 기억해
+                                      #   길게 걸면 HTTPS를 되돌릴 때 그 기간 동안 접속이 막힌다
+    contentTypeNosniff: true          # 선언된 Content-Type대로만 해석 — 응답 내용을 추측해
+                                      #   스크립트로 실행하는 브라우저 동작을 끈다
+    customFrameOptionsValue: DENY     # 다른 사이트의 iframe에 이 페이지를 못 넣는다(클릭재킹 차단)
