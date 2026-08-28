@@ -1,0 +1,18 @@
+# ticket.subinhong.dev 인증서.
+# Certificate는 Ingress와 같은 네임스페이스에 있어야 한다 —
+#   Ingress의 tls.secretName은 자기 네임스페이스의 Secret만 본다.
+# 발급이 여러 단계라 오브젝트가 사슬로 생긴다:
+#   Certificate → CertificateRequest → Order → Challenge
+#   막히면 어느 단계에서 멈췄는지가 이 사슬에 남는다.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ticket-subinhong-dev
+  namespace: app
+spec:
+  secretName: ticket-tls              # 발급된 인증서(tls.crt·tls.key)가 이 이름의 Secret으로 저장된다
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-staging         # 절차가 끝까지 도는 것을 확인한 뒤 letsencrypt-prod로 바꾼다
+  dnsNames:
+    - ticket.subinhong.dev

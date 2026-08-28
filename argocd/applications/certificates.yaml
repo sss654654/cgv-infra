@@ -1,0 +1,21 @@
+# certificates — 앱이 쓰는 인증서 요청(Certificate) 배달. 발급 자체는 cert-manager가 한다.
+# project: apps — Certificate는 app 네임스페이스의 네임스페이스 리소스라
+#   cluster-scoped 금지인 apps 프로젝트 규칙 안에 든다(발급자와 갈리는 지점).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: certificates
+  namespace: argocd
+spec:
+  project: apps
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/certificates
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
