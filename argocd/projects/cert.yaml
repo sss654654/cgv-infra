@@ -1,0 +1,22 @@
+# AppProject cert — 인증서 발급자(ClusterIssuer) 전용 울타리.
+# ClusterIssuer는 cluster-scoped라 apps 프로젝트(cluster-scoped 금지)로 못 가고,
+#   infra 프로젝트는 화이트리스트가 */*라 destinations에 cert-manager를 열면
+#   소속 App 전부에게 그 네임스페이스가 열린다. 한 종류만 허용하는 전용 프로젝트로 좁힌다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: cert
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"    # cert-issuers App보다 프로젝트가 먼저 존재해야 참조 가능
+spec:
+  description: 인증서 발급자 배달 (workloads/manifests/cert-issuers)
+  sourceRepos:
+    - http://192.168.0.167:8929/cgv/cgv-infra.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: cert-manager             # cluster-scoped만 만들지만 Application의 destination 선언이 여기를 가리킨다
+  clusterResourceWhitelist:
+    - group: cert-manager.io
+      kind: ClusterIssuer                 # 허용 목록 — 이것 말고는 전부 기본 거부
+  namespaceResourceWhitelist: []          # 네임스페이스 리소스는 만들지 않는다

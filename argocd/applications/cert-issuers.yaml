@@ -1,0 +1,20 @@
+# cert-issuers — Let's Encrypt 발급자(ClusterIssuer) 배달.
+# project: cert — ClusterIssuer 한 종류만 허용하는 전용 프로젝트(projects/cert.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-issuers
+  namespace: argocd
+spec:
+  project: cert
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: workloads/manifests/cert-issuers
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
