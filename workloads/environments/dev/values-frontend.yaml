@@ -1,6 +1,6 @@
 # frontend dev 환경값. 정적 서빙 + /api/movies 캐시 프록시.
 image:
-  tag: dev-79-b4ac6a13
+  tag: dev-81-b35379bb
   repository: 192.168.0.167:5050/cgv/cgv-onprem/frontend
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling).
 resources:
@@ -18,7 +18,6 @@ autoscaling: # PDB는 maxUnavailable:1로 호환(identity)
   minReplicas: 2
   maxReplicas: 3
   targetCPUUtilizationPercentage: 70
-
 # ingress.host 미지정 → dev는 path-only 라우팅(LB IP 접근). prd는 envs/prd에서 host 도메인 지정.
 #   외부 공개 후에도 host는 비워 둔다 — 적으면 그 이름의 Host 헤더로 온 것만 받아
 #   LB IP 직접 접근(부하 생성기가 쓰는 경로)이 끊긴다. 443 뒤 앱이 frontend 하나라
@@ -28,6 +27,6 @@ ingress:
     # 보안 헤더(manifests/public-guard/security-headers.yaml). 이 Ingress의 라우터 전부에 걸린다.
     traefik.ingress.kubernetes.io/router.middlewares: app-security-headers@kubernetescrd
   tls:
-    - secretName: ticket-tls          # cert-manager가 발급·갱신하는 인증서(tls.crt·tls.key)
-      hosts:
-        - ticket.subinhong.dev        # 이 SNI로 온 연결에 이 인증서를 내민다
+  - secretName: ticket-tls # cert-manager가 발급·갱신하는 인증서(tls.crt·tls.key)
+    hosts:
+    - ticket.subinhong.dev # 이 SNI로 온 연결에 이 인증서를 내민다
