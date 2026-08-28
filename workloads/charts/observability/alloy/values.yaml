@@ -244,6 +244,21 @@ alloy:
         forward_to = [prometheus.remote_write.mimir.receiver]
         clustering { enabled = true }
       }
+
+      // METRICS: cert-manager. certmanager_certificate_expiration_timestamp_seconds 가 목적이다.
+      // 인증서는 90일이고 만료 30일 전에 자동 갱신되는데, 그 갱신이 실패하면 다음 신호가
+      //   서비스 중단이다 — 실패한 시점부터 만료까지 30일간 아무 표시가 없다.
+      // 밖에서 찌르는 프로브로는 이걸 미리 못 잡는다. 방문자에게 보이는 인증서는 엣지 것이고,
+      //   이 인증서는 엣지와 Ingress 사이 구간에 있어 끊어진 뒤에만 드러난다.
+      // cert-manager 차트는 ServiceMonitor 를 안 만드는 설정이라 서비스를 직접 지목한다.
+      prometheus.scrape "cert_manager" {
+        targets = [{
+          __address__ = "cert-manager.cert-manager.svc.cluster.local:9402",
+          job         = "cert-manager",
+        }]
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
       prometheus.remote_write "mimir" {
         endpoint {
           url = "http://mimir-gateway.observability.svc.cluster.local/api/v1/push"
