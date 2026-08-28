@@ -260,7 +260,9 @@ data:
             execErrState: Alerting
             labels: { severity: warning }
             annotations:
-              __dashboardUid__: infra-cluster-overview
+              # 대시보드 링크를 걸지 않는다 — infra-cluster-overview 패널에는 고정 id가 없어
+              #   (가져올 때 Grafana가 부여) __panelId__를 지정할 수 없고, __dashboardUid__만
+              #   적으면 Grafana가 규칙 전체를 거부해 기동이 실패한다(둘은 짝으로만 유효).
               summary: 노드의 데이터 디스크 하나가 85%를 넘었다 — 차면 관측이 먼저 멈춘다
               description: 어느 노드의 어느 마운트인지는 인프라 대시보드의 디스크 사용률에서 본다. miniodata면 보존 기간(Mimir 15일·Loki 7일)을 줄이는 것이 첫 수단이고, kafkadata면 토픽 보존을, mysqldata면 데모 데이터 초기화를 본다.
             data:
