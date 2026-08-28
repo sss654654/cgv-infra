@@ -7,29 +7,41 @@
 #   ★ 이 판            내가 안 볼 때 밖에서 사람이 오고, 그 사람이 제대로 쓰는가
 #
 # 답하는 질문 넷 — 패널이 그 순서로 놓인다.
-#   ① 잘 쓰이고 있나        화면 연 횟수 · 예매 건수 · 시간대
-#   ② 들어와서 써 보고 나가나  예매 ÷ 화면 열림
+#   ① 잘 쓰이고 있나        화면 열림 · 대기열 입장 · 예매
+#   ② 어디서 떨어지나        같은 셋을 시간축에 겹쳐 그린다.  모양으로 본다
 #   ③ 문제없나             실패 코드 · 좌석 소진 · 인증서
 #   ④ 공격 들어왔었나        출발지.  평소엔 접어 두고 위가 이상할 때만 편다
+#
+# 모든 창을 $__range · $__interval 로 둔다 — 화면 오른쪽 위의 시간 범위를 그대로 따른다.
+#   [24h] 로 고정하면 3시간을 보고 있는데 24시간 값이 떠서 숫자와 화면이 어긋난다.
+#
+# 봇을 빼지 않는 이유
+#   가상 관객은 방문자가 콘솔에서 버튼을 눌러 만든 것이라 방문자 행동이다.
+#   빼면 "콘솔을 열고 만져 봤다"가 통째로 안 보이는데, 이 데모에서는 그것이 가장 깊게 써 본 경우다.
+#   다만 클릭 하나가 입장 수십 건이 되므로 비율로 계산하지 않는다 — 모양으로 본다.
 #
 # 여기 없는 것과 이유
 #   자원(CPU·메모리)   아래 판 넷에 있다.  여기 넣으면 역할이 겹치고, 이상이 보여도 어디로
 #                    내려갈지가 흐려진다.  이 판은 감지만 하고 진단은 아래에서 한다
 #   지연 p99          queue · booking 판에 경로별로 있다
-#   캐시 적중률        24시간 실측 0.43%.  /api 를 캐시에서 뺐고(순번·좌석이 사람마다 다르다)
-#                    index.html 도 no-cache 라, 이 서비스에서 엣지가 캐시로 덜어 줄 것이 없다
-#   체류 시간         queue_active 는 시뮬레이터 봇과 사람을 구분하지 않는다.
-#                    방문자가 "50명 러시" 를 누르면 봇 50이 섞여 사람 값이 묻힌다
-#   고유 방문자        지표가 없다.  requestId 를 세는 자리가 앱에 없다 — Cloudflare 화면에만
+#   캐시 적중률        엣지가 캐시로 답하는 비율이 0 이다.  /api 를 캐시에서 뺐고
+#                    (순번·좌석이 사람마다 다르다) 정적 파일도 no-cache 라 매번 재검증한다.
+#                    이 서비스에서 엣지가 하는 일은 캐시가 아니라 연결을 대신 받는 것이다
+#   체류 시간         queue_active 는 가상 관객과 사람을 구분하지 않는다.
+#                    "실사용자 체류" 로는 못 읽고, 자리 회전은 queue 판에 이미 있다
+#   고유 방문자        지표가 없다.  사람을 식별해 세는 자리가 앱에 없고,
+#                    Cloudflare 무료 플랜에도 Unique visitors 가 없다(요청 수와 국가별만)
 #
-# ── 화면 연 횟수를 stats 로 세는 근거
+# ── 화면 열림을 stats 로 세는 근거
 #   /api/admission/stats 는 화면을 열 때 한 번만 불린다(세션 수명 읽기).
 #   전에는 3초 폴링이었는데 첫 화면의 두 타일을 좌석 현황판으로 바꾸면서 그 근거가 사라졌다.
 #   그래서 이 경로의 호출 수 = 화면을 연 횟수다.  사람 수는 아니다 — 새로고침하면 또 센다.
+#   ⚠ 2026-08-28 은 그 변경 전 폴링분이 섞여 있다.  하루 지나야 이 값이 성립한다.
 #
-# ── 24시간 실측 (2026-08-28, 공개 첫날. 대부분 내가 만든 값이라 기준선이 아니다)
-#   전체 요청 44,913 · 화면 열림 3,669 · 예매 267건 · 내보낸 바이트 83.9 MB
+# ── 공개 첫 24시간 (2026-08-28. 대부분 내가 만든 값이라 기준선이 아니다)
+#   전체 요청 44,913 · 대기열 입장 1,156 · 예매 성공 267 · 내보낸 바이트 83.9 MB
 #   요청당 평균 응답 1,844 바이트.  ★ 이 값이 3절에서 회선 업로드 상한을 계산하는 입력이다
+#   Cloudflare 국가별: 한국 41,581 · 그 밖 1,161(밖에서 찌르는 프로브와 스캐너)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -65,14 +77,14 @@ data:
         {
           "id": 2,
           "type": "stat",
-          "title": "화면 연 횟수 (24시간)",
+          "title": "화면 연 횟수",
           "description": "**사람이 오나.**\n\n`/api/admission/stats` 는 화면을 열 때 한 번만 불린다 — 세션 수명을 읽는 용도다. 그래서 이 호출 수가 화면을 연 횟수다.\n\n**사람 수는 아니다.** 같은 사람이 새로고침하면 또 센다. 고유 방문자는 Cloudflare 화면에만 있다.\n\n0 이면 아무도 안 온 것이다 — 링크가 죽었거나 알려지지 않았거나.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[24h]))",
+              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[$__range]))",
               "instant": true
             }
           ],
@@ -85,14 +97,14 @@ data:
         {
           "id": 3,
           "type": "stat",
-          "title": "예매 (24시간)",
+          "title": "예매 성공",
           "description": "**들어와서 실제로 써 봤나.**\n\n확정 이벤트를 세는 카운터다. 데모 초기화 CronJob 이 예매 기록을 지워도 이 값은 안 줄어든다 — DB 행 수가 아니라 일어난 일을 세기 때문이다.\n\n화면은 열리는데 이 값이 0 이면 예매 흐름 어딘가가 막힌 것이다. 밖에서 찌르는 프로브는 200 만 보므로 이걸 못 잡는다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(increase(booking_confirm_total[24h]))",
+              "expr": "sum(increase(booking_confirm_total{result=\"success\"}[$__range]))",
               "instant": true
             }
           ],
@@ -105,19 +117,19 @@ data:
         {
           "id": 4,
           "type": "stat",
-          "title": "써 본 비율 (예매 ÷ 화면 열림)",
-          "description": "**들어와서 써 보고 나가나, 첫 화면만 보고 나가나.**\n\n한 사람이 여러 좌석을 잡거나 여러 번 예매하면 100% 를 넘을 수 있다. 절대값보다 **변화**를 본다 — 어제까지 20% 대이던 것이 갑자기 0 에 가까워지면 예매 흐름이 막힌 것이다.\n\n화면 열림이 0 이면 계산이 안 되므로 빈칸으로 나온다.",
+          "title": "대기열 입장",
+          "description": "**화면을 열고 만져 봤나.**\n\n`/api/admission/enter` 호출 수다. 콘솔에서 가상 관객을 투입하면 그 인원만큼, 직접 줄을 서면 한 번 는다.\n\n**가상 관객도 방문자가 버튼을 눌러 만든 것이라 여기 같이 센다.** 빼면 \"콘솔을 열고 만져 봤다\" 는 행동이 통째로 안 보이는데, 이 데모에서는 그것이 가장 깊게 써 본 경우다.\n\n화면 열림은 있는데 이 값이 바닥이면 첫 화면만 보고 나간 것이다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
           "targets": [
             {
               "refId": "A",
-              "expr": "100 * sum(increase(booking_confirm_total[24h])) / (sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[24h])) > 0)",
+              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__range]))",
               "instant": true
             }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "percent", "decimals": 1, "color": { "mode": "fixed", "fixedColor": "text" } },
+            "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
             "overrides": []
           },
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none" }
@@ -125,20 +137,25 @@ data:
         {
           "id": 5,
           "type": "timeseries",
-          "title": "언제 왔나 — 시간당 화면 열림 · 예매",
-          "description": "**두 선이 같이 움직이면 정상이다.**\n\n- 화면만 오르고 예매가 바닥이면 → 들어와서 아무것도 안 하고 나간다. 화면이 깨졌거나 첫 인상이 안 통한 것이다\n- 화면도 예매도 0 인 구간 → 아무도 안 왔거나, 그 시간에 노트북이 꺼져 있었다\n\n**★ 꺼진 시간대에 방문이 있는지가 이 패널의 숨은 값이다.** 노트북이 23:30 에 예약 종료되므로, 그 시간대에 사람이 오는 것이 확인되면 종료 시각을 바꿀 근거가 된다. 다만 꺼진 동안은 여기에 기록이 아예 안 남으므로 그 확인은 Cloudflare 화면에서 해야 한다.",
+          "title": "언제 왔나 — 화면 열림 · 대기열 입장 · 예매",
+          "description": "**세 선이 곧 여정이다 — 왔다 · 만졌다 · 끝까지 돌았다.**\n\n- 화면만 오르고 아래 둘이 바닥 → 첫 화면만 보고 나간다\n- 화면·입장은 오르는데 예매가 0 → 예매 흐름 어딘가가 막혔다. `booking` 판으로 내려간다\n- 셋 다 0 인 구간 → 아무도 안 왔거나, 그 시간에 노트북이 꺼져 있었다\n\n**입장이 화면 열림보다 클 수 있다.** 콘솔에서 가상 관객을 한 번에 여러 명 투입하면 클릭 하나가 입장 수십 건이 된다. 그래서 비율로 안 보고 **모양**으로 본다.\n\n**★ 꺼진 시간대에 방문이 있는지가 이 패널의 숨은 값이다.** 노트북이 23:30 에 예약 종료되므로, 그 시간대에 사람이 오는 것이 확인되면 종료 시각을 바꿀 근거가 된다. 다만 꺼진 동안은 여기에 기록이 아예 안 남으므로 그 확인은 Cloudflare 화면에서 해야 한다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 12, "x": 12, "y": 1 },
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[1h]))",
-              "legendFormat": "화면 열림 (시간당)"
+              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[$__interval]))",
+              "legendFormat": "화면 열림"
             },
             {
               "refId": "B",
-              "expr": "sum(increase(booking_confirm_total[1h]))",
-              "legendFormat": "예매 (시간당)"
+              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__interval]))",
+              "legendFormat": "대기열 입장"
+            },
+            {
+              "refId": "C",
+              "expr": "sum(increase(booking_confirm_total{result=\"success\"}[$__interval]))",
+              "legendFormat": "예매"
             }
           ],
           "fieldConfig": {
