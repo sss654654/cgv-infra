@@ -510,7 +510,7 @@ data:
         {
           "type": "timeseries",
           "title": "지연 p99 (엔드포인트별)",
-          "description": "**사용자가 겪은 지연. 여기가 오르면 아래 `자원 사용률` 로 내려간다.**\n\np99 = 100명 중 99번째로 느린 사람의 값. 평균은 느린 소수를 다수가 가리고,\n최댓값은 한 건이 전체를 대표해 둘 다 못 쓴다.\n\n경로 셋은 전부 Redis 인증 확인을 먼저 지나고 MySQL 을 읽는다 — 경로 하나가 자원\n하나에 대응하지 않으므로, **몇 개가 같이 올랐느냐**로 좁힌다.\n- 셋 다 오른다 → 공통 구간(Redis·traefik)이다. queue 대시보드에서 본다\n- `/api/bookings` 만 오른다 → 그 경로에만 있는 트랜잭션. ▸MySQL 커넥션 풀 행\n- 조회 둘만 오른다 → MySQL 읽기. ▸MySQL 행의 `MySQL 안쪽`\n\n⚠ 버킷 경계(…100·250·500ms·1s…) 사이는 직선 보간이라 값은 추정 폭을 갖는다.\n정원 2 판 — bookings 봉우리 482ms(MySQL 재시작 여파 포함) · seats 49ms.",
+          "description": "**사용자가 겪은 지연. 여기가 오르면 아래 `자원 사용률` 로 내려간다.**\n\np99 = 100명 중 99번째로 느린 사람의 값. 평균은 느린 소수를 다수가 가리고,\n최댓값은 한 건이 전체를 대표해 둘 다 못 쓴다.\n\n경로 셋은 전부 Redis 인증 확인을 먼저 지나고 MySQL 을 읽는다 — 경로 하나가 자원\n하나에 대응하지 않으므로, **몇 개가 같이 올랐느냐**로 좁힌다.\n- 셋 다 오른다 → 공통 구간(Redis·traefik)이다. queue 대시보드에서 본다\n- `/api/bookings` 만 오른다 → 그 경로에만 있는 트랜잭션. ▸MySQL 커넥션 풀 행\n- 조회 둘만 오른다 → MySQL 읽기. ▸MySQL 행의 `MySQL 안쪽`\n\n`/api/screenings/board` 는 여기서 뺐다. **이 판은 정원 안에서 예매하는 사람이 겪는 것을 보는데, 그 경로는 게이트 앞이라 로비 인원 전체가 부른다** — 섞으면 p99 가 누구 것인지 안 갈린다. 그 지연은 queue 판의 `사용자가 겪는 것` 에 있다. 다만 booking 이 답하는 것은 맞으므로 아래 `요청` 패널에는 남아 있다 — 그쪽은 자원의 분모다.\n\n⚠ 버킷 경계(…100·250·500ms·1s…) 사이는 직선 보간이라 값은 추정 폭을 갖는다.\n정원 2 판 — bookings 봉우리 482ms(MySQL 재시작 여파 포함) · seats 49ms.",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -524,7 +524,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri!~\"/actuator.*|/api/admin.*\"}[1m])))",
+              "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri!~\"/actuator.*|/api/admin.*|/api/screenings/board\"}[1m])))",
               "legendFormat": "{{uri}}",
               "exemplar": true
             }
