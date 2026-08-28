@@ -6,17 +6,20 @@
 #   호스트 하드웨어      물리적으로 뭐가 났나
 #   ★ 이 판            내가 안 볼 때 밖에서 사람이 오고, 그 사람이 제대로 쓰는가
 #
-# 답하는 질문 넷 — 패널이 그 순서로 놓인다.
-#   ① 잘 쓰이고 있나        화면 열림 · 대기열 입장 · 예매
-#   ② 어디서 떨어지나        같은 셋을 시간축에 겹쳐 그린다.  모양으로 본다
-#   ③ 문제없나             실패 코드 · 좌석 소진 · 인증서
-#   ④ 공격 들어왔었나        출발지.  평소엔 접어 두고 위가 이상할 때만 편다
+# 행 묶음 — 같이 읽어야 뜻이 통하는 것끼리 붙였다.
+#   행1 밖에서 오는 것    화면 열림 · 인증서 · 실패 코드.  엣지를 지나 들어온 것들
+#   행2 안에서 쓰이는 것  대기열 입장 · 예매 · 좌석.  ★ 셋을 같이 읽어야 한다 —
+#                       좌석이 세 시간마다 4,000 으로 초기화되므로 입장·예매도 그 판 단위다
+#   행3 언제 왔나        위 값들을 시간축에 겹친다
+#   ▸행4 누가 왔나       접어 둔다.  위가 이상할 때만
 #
 # 모든 창을 $__range · $__interval 로 둔다 — 화면 오른쪽 위의 시간 범위를 그대로 따른다.
 #   [24h] 로 고정하면 3시간을 보고 있는데 24시간 값이 떠서 숫자와 화면이 어긋난다.
+# 시계열 패널에는 interval 5m 을 명시한다. 안 두면 $__interval 이 스크레이프 주기(15초)
+#   아래로 내려가는 구간이 생기고, 그때 increase() 가 표본을 못 잡아 No data 가 뜬다.
 #
-# 봇을 빼지 않는 이유
-#   가상 관객은 방문자가 콘솔에서 버튼을 눌러 만든 것이라 방문자 행동이다.
+# 가상 관객을 빼지 않는 이유
+#   방문자가 콘솔에서 버튼을 눌러 만든 것이라 방문자 행동이다.
 #   빼면 "콘솔을 열고 만져 봤다"가 통째로 안 보이는데, 이 데모에서는 그것이 가장 깊게 써 본 경우다.
 #   다만 클릭 하나가 입장 수십 건이 되므로 비율로 계산하지 않는다 — 모양으로 본다.
 #
@@ -36,7 +39,7 @@
 #   /api/admission/stats 는 화면을 열 때 한 번만 불린다(세션 수명 읽기).
 #   전에는 3초 폴링이었는데 첫 화면의 두 타일을 좌석 현황판으로 바꾸면서 그 근거가 사라졌다.
 #   그래서 이 경로의 호출 수 = 화면을 연 횟수다.  사람 수는 아니다 — 새로고침하면 또 센다.
-#   ⚠ 2026-08-28 은 그 변경 전 폴링분이 섞여 있다.  하루 지나야 이 값이 성립한다.
+#   ⚠ 2026-08-28 은 그 변경 전 폴링분이 창 안에 섞여 있다.  하루 지나야 이 값이 성립한다.
 #
 # ── 공개 첫 24시간 (2026-08-28. 대부분 내가 만든 값이라 기준선이 아니다)
 #   전체 요청 44,913 · 대기열 입장 1,156 · 예매 성공 267 · 내보낸 바이트 83.9 MB
@@ -57,19 +60,14 @@ data:
       "tags": ["cgv", "app", "public"],
       "editable": true,
       "timezone": "browser",
-      "time": {
-        "from": "now-24h",
-        "to": "now"
-      },
+      "time": { "from": "now-24h", "to": "now" },
       "refresh": "1m",
       "schemaVersion": 39,
-      "templating": {
-        "list": []
-      },
+      "templating": { "list": [] },
       "panels": [
         {
           "type": "row",
-          "title": "1. 오늘 어땠나 — 사람이 오고, 써 보고 나가나",
+          "title": "1. 밖에서 오는 것",
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
           "collapsed": false,
           "panels": []
@@ -78,15 +76,71 @@ data:
           "id": 2,
           "type": "stat",
           "title": "화면 연 횟수",
-          "description": "**사람이 오나.**\n\n`/api/admission/stats` 는 화면을 열 때 한 번만 불린다 — 세션 수명을 읽는 용도다. 그래서 이 호출 수가 화면을 연 횟수다.\n\n**사람 수는 아니다.** 같은 사람이 새로고침하면 또 센다. 고유 방문자는 Cloudflare 화면에만 있다.\n\n0 이면 아무도 안 온 것이다 — 링크가 죽었거나 알려지지 않았거나.",
+          "description": "**사람이 오나.**\n\n`/api/admission/stats` 는 화면을 열 때 한 번만 불린다 — 세션 수명을 읽는 용도다. 그래서 이 호출 수가 화면을 연 횟수다.\n\n**사람 수는 아니다.** 같은 사람이 새로고침하면 또 센다. 고유 방문자는 앱에도 Cloudflare 무료 플랜에도 없다.\n\n0 이면 아무도 안 온 것이다 — 링크가 죽었거나 알려지지 않았거나.\n\n창은 화면 오른쪽 위의 시간 범위를 따른다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
           "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[$__range]))",
-              "instant": true
-            }
+            { "refId": "A", "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[$__range]))", "instant": true }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none" }
+        },
+        {
+          "id": 9,
+          "type": "stat",
+          "title": "인증서 만료까지",
+          "description": "**Traefik 이 지금 내밀고 있는 인증서**의 남은 날이다. 방문자가 보는 자물쇠는 Cloudflare 자기 인증서라 여기 안 나온다 — 이건 Cloudflare 가 받는 쪽이다.\n\n인증서는 90일이고 cert-manager 가 만료 30일 전에 다시 받는다. **갱신이 실패하면 그 시점부터 30일간 아무 표시가 없다가 서비스가 끊긴다** — 그때 방문자가 받는 것이 526 이다.\n\n30 아래로 내려간 채 멈춰 있으면 갱신이 실패한 것이다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "(min(traefik_tls_certs_not_after) - time()) / 86400", "instant": true }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "d",
+              "decimals": 0,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 14 }, { "color": "green", "value": 30 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none", "colorMode": "value" }
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "밖에서 온 요청의 실패 (코드별)",
+          "description": "**엔트리포인트 `websecure` = 443 으로 들어온 것**만 센다. 80(`web`)은 관리 UI 자리라 여기 안 들어온다.\n\n- **5xx** 정상값이 0 이다. 뜨면 `queue` 또는 `booking` 판으로 내려가 원인을 찾는다\n- **4xx** 403 은 정상 동작이다 — 입장 인증 전에 회차를 조회하면 403 이 나고 프론트가 재시도한다. 그래서 4xx 는 알림 대상이 아니다\n\n**⚠ 여기서 못 보는 실패가 있다.** 엣지가 돌려준 `521 · 522 · 526`(집에 못 붙었다 · 인증서 검증 실패)은 Traefik 이 기록조차 못 남긴다. 그 구간은 Better Stack 과 Cloudflare 화면에만 있다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 5, "w": 16, "x": 8, "y": 1 },
+          "interval": "5m",
+          "targets": [
+            { "refId": "A", "expr": "sum by (code) (rate(traefik_entrypoint_requests_total{entrypoint=\"websecure\", code=~\"4..|5..\"}[$__rate_interval]))", "legendFormat": "{{code}}" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "reqps", "decimals": 3, "min": 0, "custom": { "fillOpacity": 10, "lineWidth": 2 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+        },
+        {
+          "type": "row",
+          "title": "2. 안에서 쓰이는 것 — 좌석이 초기화되는 판 단위로 읽는다",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "대기열 입장",
+          "description": "**화면을 열고 만져 봤나.**\n\n`/api/admission/enter` 호출 수다. 콘솔에서 가상 관객을 투입하면 그 인원만큼, 직접 줄을 서면 한 번 는다.\n\n**가상 관객도 방문자가 버튼을 눌러 만든 것이라 같이 센다.** 빼면 \"콘솔을 열고 만져 봤다\" 는 행동이 통째로 안 보이는데, 이 데모에서는 그것이 가장 깊게 써 본 경우다.\n\n오른쪽 좌석 그래프와 같이 본다 — 좌석이 4,000 으로 튀는 자리가 판의 경계이고, 이 값도 그 판 안에서 읽어야 뜻이 통한다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 6, "w": 4, "x": 0, "y": 7 },
+          "targets": [
+            { "refId": "A", "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__range]))", "instant": true }
           ],
           "fieldConfig": {
             "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
@@ -98,169 +152,64 @@ data:
           "id": 3,
           "type": "stat",
           "title": "예매 성공",
-          "description": "**들어와서 실제로 써 봤나.**\n\n확정 이벤트를 세는 카운터다. 데모 초기화 CronJob 이 예매 기록을 지워도 이 값은 안 줄어든다 — DB 행 수가 아니라 일어난 일을 세기 때문이다.\n\n화면은 열리는데 이 값이 0 이면 예매 흐름 어딘가가 막힌 것이다. 밖에서 찌르는 프로브는 200 만 보므로 이걸 못 잡는다.",
+          "description": "**흐름이 끝까지 돌았나.**\n\n확정 이벤트를 세는 카운터이고 `result=\"success\"` 만 본다 — 같은 카운터에 `forbidden` 도 있어서 안 가르면 실패한 예매까지 섞인다.\n\n초기화 CronJob 이 예매 기록을 지워도 이 값은 안 줄어든다. DB 행 수가 아니라 일어난 일을 세기 때문이다.\n\n화면은 열리고 입장도 있는데 이 값이 0 이면 예매 흐름 어딘가가 막힌 것이다. 밖에서 찌르는 프로브는 200 만 보므로 이걸 못 잡는다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+          "gridPos": { "h": 6, "w": 4, "x": 4, "y": 7 },
           "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(increase(booking_confirm_total{result=\"success\"}[$__range]))",
-              "instant": true
-            }
+            { "refId": "A", "expr": "sum(increase(booking_confirm_total{result=\"success\"}[$__range]))", "instant": true }
           ],
           "fieldConfig": {
             "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
             "overrides": []
           },
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none" }
-        },
-        {
-          "id": 4,
-          "type": "stat",
-          "title": "대기열 입장",
-          "description": "**화면을 열고 만져 봤나.**\n\n`/api/admission/enter` 호출 수다. 콘솔에서 가상 관객을 투입하면 그 인원만큼, 직접 줄을 서면 한 번 는다.\n\n**가상 관객도 방문자가 버튼을 눌러 만든 것이라 여기 같이 센다.** 빼면 \"콘솔을 열고 만져 봤다\" 는 행동이 통째로 안 보이는데, 이 데모에서는 그것이 가장 깊게 써 본 경우다.\n\n화면 열림은 있는데 이 값이 바닥이면 첫 화면만 보고 나간 것이다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__range]))",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none" }
-        },
-        {
-          "id": 5,
-          "type": "timeseries",
-          "title": "언제 왔나 — 화면 열림 · 대기열 입장 · 예매",
-          "description": "**세 선이 곧 여정이다 — 왔다 · 만졌다 · 끝까지 돌았다.**\n\n- 화면만 오르고 아래 둘이 바닥 → 첫 화면만 보고 나간다\n- 화면·입장은 오르는데 예매가 0 → 예매 흐름 어딘가가 막혔다. `booking` 판으로 내려간다\n- 셋 다 0 인 구간 → 아무도 안 왔거나, 그 시간에 노트북이 꺼져 있었다\n\n**입장이 화면 열림보다 클 수 있다.** 콘솔에서 가상 관객을 한 번에 여러 명 투입하면 클릭 하나가 입장 수십 건이 된다. 그래서 비율로 안 보고 **모양**으로 본다.\n\n**★ 꺼진 시간대에 방문이 있는지가 이 패널의 숨은 값이다.** 노트북이 23:30 에 예약 종료되므로, 그 시간대에 사람이 오는 것이 확인되면 종료 시각을 바꿀 근거가 된다. 다만 꺼진 동안은 여기에 기록이 아예 안 남으므로 그 확인은 Cloudflare 화면에서 해야 한다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 5, "w": 12, "x": 12, "y": 1 },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[$__interval]))",
-              "legendFormat": "화면 열림"
-            },
-            {
-              "refId": "B",
-              "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__interval]))",
-              "legendFormat": "대기열 입장"
-            },
-            {
-              "refId": "C",
-              "expr": "sum(increase(booking_confirm_total{result=\"success\"}[$__interval]))",
-              "legendFormat": "예매"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "decimals": 0,
-              "min": 0,
-              "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" }
-            },
-            "overrides": []
-          },
-          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
-        },
-        {
-          "type": "row",
-          "title": "2. 문제 있었나 — 실패 · 좌석 · 인증서",
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
-          "collapsed": false,
-          "panels": []
-        },
-        {
-          "id": 7,
-          "type": "timeseries",
-          "title": "밖에서 온 요청의 실패 (코드별)",
-          "description": "**엔트리포인트 `websecure` = 443 으로 들어온 것**만 센다. 80(`web`)은 관리 UI 자리라 여기 안 들어온다.\n\n- **5xx** 정상값이 0 이다. 뜨면 `queue` 또는 `booking` 판으로 내려가 원인을 찾는다\n- **4xx** 403 은 정상 동작이다 — 입장 인증 전에 회차를 조회하면 403 이 나고 프론트가 재시도한다. 그래서 4xx 는 알림 대상이 아니다\n\n**⚠ 여기서 못 보는 실패가 있다.** 엣지가 돌려준 `521 · 522 · 526`(집에 못 붙었다 · 인증서 검증 실패)은 Traefik 이 기록조차 못 남긴다. 그 구간은 Better Stack 과 Cloudflare 화면에만 있다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 7, "w": 9, "x": 0, "y": 7 },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum by (code) (rate(traefik_entrypoint_requests_total{entrypoint=\"websecure\", code=~\"4..|5..\"}[5m]))",
-              "legendFormat": "{{code}}"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "reqps",
-              "decimals": 2,
-              "min": 0,
-              "custom": { "fillOpacity": 10, "lineWidth": 2 }
-            },
-            "overrides": []
-          },
-          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
         },
         {
           "id": 8,
           "type": "timeseries",
           "title": "좌석 소진 — 4,000 에서 내려가는 계단",
-          "description": "**데모가 스스로 살아 있나.**\n\n좌석과 대기열은 모든 방문자가 공유한다. 다 팔리면 그 뒤에 온 사람은 매진 화면만 본다. 그래서 CronJob 이 세 시간마다 비운다.\n\n- **4,000 으로 튀는 자리** 초기화가 돈 시각이다. 그 계단이 세 시간마다 안 보이면 CronJob 이 안 돈 것이다\n- **0 에 붙어 있는 구간** 그 시간 내내 방문자가 매진 화면만 봤다는 뜻이다\n- 내려가는 기울기가 곧 그 판에서 팔린 속도다\n\n알림: 0 이 3분 지속되면 발화한다. 좌석은 CronJob 이 채울 때만 늘어나므로 잠깐 0 이었다가 도로 차는 일이 없다 — 그래서 지속 시간을 길게 잡을 이유가 없다.",
+          "description": "**데모가 스스로 살아 있나. 그리고 왼쪽 두 값의 판 경계가 여기 있다.**\n\n좌석과 대기열은 모든 방문자가 공유한다. 다 팔리면 그 뒤에 온 사람은 매진 화면만 본다. 그래서 CronJob 이 세 시간마다 비운다.\n\n- **4,000 으로 튀는 자리** 초기화가 돈 시각이다. 그 계단이 세 시간마다 안 보이면 CronJob 이 안 돈 것이다\n- **0 에 붙어 있는 구간** 그 시간 내내 방문자가 매진 화면만 봤다\n- 내려가는 기울기가 곧 그 판에서 팔린 속도다\n\n알림: 0 이 3분 지속되면 발화한다. 좌석은 CronJob 이 채울 때만 늘어나 잠깐 0 이었다가 도로 차는 일이 없어서, 지속 시간을 길게 잡을 이유가 없다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 7, "w": 11, "x": 9, "y": 7 },
+          "gridPos": { "h": 6, "w": 16, "x": 8, "y": 7 },
           "targets": [
-            {
-              "refId": "A",
-              "expr": "max(booking_seats_remaining)",
-              "legendFormat": "남은 좌석"
-            }
+            { "refId": "A", "expr": "max(booking_seats_remaining)", "legendFormat": "남은 좌석" }
           ],
           "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "decimals": 0,
-              "min": 0,
-              "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" }
-            },
+            "defaults": { "unit": "short", "decimals": 0, "min": 0, "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" } },
             "overrides": []
           },
           "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["min", "max"] } }
         },
         {
-          "id": 9,
-          "type": "stat",
-          "title": "인증서 만료까지",
-          "description": "**Traefik 이 지금 내밀고 있는 인증서**의 남은 날이다. 방문자가 보는 것이 아니라 Cloudflare 가 받는 쪽 인증서다 — 방문자 자물쇠는 Cloudflare 자기 인증서라 여기 안 나온다.\n\n인증서는 90일이고 cert-manager 가 만료 30일 전에 다시 받는다. **갱신이 실패하면 그 시점부터 30일간 아무 표시가 없다가 서비스가 끊긴다** — 그때 방문자가 받는 것이 526 이다.\n\n30 아래로 내려간 채 멈춰 있으면 갱신이 실패한 것이다.",
+          "type": "row",
+          "title": "3. 언제 왔나 — 위 값들을 시간축에 겹친다",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "화면 열림 · 대기열 입장 · 예매",
+          "description": "**세 선이 곧 여정이다 — 왔다 · 만졌다 · 끝까지 돌았다.**\n\n- 화면만 오르고 아래 둘이 바닥 → 첫 화면만 보고 나간다\n- 화면·입장은 오르는데 예매가 0 → 예매 흐름 어딘가가 막혔다. `booking` 판으로 내려간다\n- 셋 다 0 인 구간 → 아무도 안 왔거나, 그 시간에 노트북이 꺼져 있었다\n\n**입장이 화면 열림보다 클 수 있다.** 콘솔에서 가상 관객을 한 번에 여러 명 투입하면 클릭 하나가 입장 수십 건이 된다. 그래서 비율로 안 보고 **모양**으로 본다.\n\n**★ 꺼진 시간대에 방문이 있는지가 이 패널의 숨은 값이다.** 노트북이 23:30 에 예약 종료되므로, 그 시간대에 사람이 오는 것이 확인되면 종료 시각을 바꿀 근거가 된다. 다만 꺼진 동안은 여기에 기록이 아예 안 남으므로 그 확인은 Cloudflare 화면에서 해야 한다.\n\n구간 최소값을 5분으로 둔다 — 더 짧으면 스크레이프 주기(15초) 아래로 내려가 표본을 못 잡는다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 7, "w": 4, "x": 20, "y": 7 },
+          "gridPos": { "h": 7, "w": 24, "x": 0, "y": 14 },
+          "interval": "5m",
           "targets": [
-            {
-              "refId": "A",
-              "expr": "(min(traefik_tls_certs_not_after) - time()) / 86400",
-              "instant": true
-            }
+            { "refId": "A", "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[$__interval]))", "legendFormat": "화면 열림" },
+            { "refId": "B", "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__interval]))", "legendFormat": "대기열 입장" },
+            { "refId": "C", "expr": "sum(increase(booking_confirm_total{result=\"success\"}[$__interval]))", "legendFormat": "예매" }
           ],
           "fieldConfig": {
-            "defaults": {
-              "unit": "d",
-              "decimals": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "red", "value": null },
-                  { "color": "orange", "value": 14 },
-                  { "color": "green", "value": 30 }
-                ]
-              }
-            },
+            "defaults": { "unit": "short", "decimals": 0, "min": 0, "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" } },
             "overrides": []
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none", "colorMode": "value" }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
         },
         {
           "type": "row",
-          "title": "▸ 3. 누가 왔나 — 위가 이상할 때만 편다",
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+          "title": "▸ 4. 누가 왔나 — 위가 이상할 때만 편다",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
           "collapsed": true,
           "panels": [
             {
@@ -269,12 +218,9 @@ data:
               "title": "요청 로그 — 출발지별",
               "description": "**요청만 늘고 예매가 0 일 때 여는 자리다.**\n\n`client_ip` 는 `CF-Connecting-IP` 에서 읽은 값이라 **엣지 뒤에서도 방문자의 실제 주소**다. 그 헤더가 없으면 접속 주소로 되돌아가는데, 엣지 뒤에서는 그것이 엣지 주소가 되어 전부 한 덩어리로 뭉친다.\n\n- 한 주소에서 몰린다 → 남용이다\n- 여러 주소가 나눠 온다 → 정상 사용이다\n\n`/health/` 는 kubelet 프로브라 뺐다 — 출발지가 노드 주소이고 방문자가 아니다.",
               "datasource": { "type": "loki", "uid": "loki" },
-              "gridPos": { "h": 12, "w": 24, "x": 0, "y": 15 },
+              "gridPos": { "h": 12, "w": 24, "x": 0, "y": 22 },
               "targets": [
-                {
-                  "refId": "A",
-                  "expr": "{namespace=\"app\"} | json | path !~ `/health/.*` | client_ip != `` | client_ip != `-` | line_format `{{.client_ip}}  {{.method}} {{.path}}  {{.status}}  {{.ms}}ms`"
-                }
+                { "refId": "A", "expr": "{namespace=\"app\"} | json | path !~ `/health/.*` | client_ip != `` | client_ip != `-` | line_format `{{.client_ip}}  {{.method}} {{.path}}  {{.status}}  {{.ms}}ms`" }
               ],
               "options": { "showTime": true, "wrapLogMessage": false, "sortOrder": "Descending" }
             },
@@ -282,10 +228,10 @@ data:
               "id": 12,
               "type": "text",
               "title": "클러스터 밖에만 있는 것",
-              "gridPos": { "h": 12, "w": 24, "x": 0, "y": 27 },
+              "gridPos": { "h": 10, "w": 24, "x": 0, "y": 34 },
               "options": {
                 "mode": "markdown",
-                "content": "**여기서 못 보는 것 셋.** 노트북이 꺼져 있으면 이 클러스터에는 기록 자체가 안 남는다.\n\n| 무엇 | 어디서 보나 |\n|---|---|\n| 밖에서 안 열린 시간 · 언제부터 언제까지 | Better Stack |\n| 엣지가 돌려준 `521 · 522 · 526` | Cloudflare · Better Stack |\n| 고유 방문자 · 지역 · 차단된 요청 | Cloudflare → Analytics & Logs · Security |\n\n**Cloudflare 의 `Mitigated %` 가 \"공격이 있었나\" 의 1차 답이다.** 엣지가 막은 것이 있으면 거기 숫자가 뜬다. 그것이 0 인데 위 로그에서 한 주소가 몰려 있으면, 막힐 만한 패턴은 아닌데 많이 부르고 있다는 뜻이다."
+                "content": "**여기서 못 보는 것 셋.** 노트북이 꺼져 있으면 이 클러스터에는 기록 자체가 안 남는다.\n\n| 무엇 | 어디서 보나 |\n|---|---|\n| 밖에서 안 열린 시간 · 언제부터 언제까지 | Better Stack |\n| 엣지가 돌려준 `521 · 522 · 526` | Cloudflare · Better Stack |\n| 국가별 요청 · 차단된 요청 | Cloudflare → Analytics & Logs · Security |\n\n**Cloudflare 의 `Mitigated %` 가 \"공격이 있었나\" 의 1차 답이다.** 엣지가 막은 것이 있으면 거기 숫자가 뜬다. 그것이 0 인데 위 로그에서 한 주소가 몰려 있으면, 막힐 만한 패턴은 아닌데 많이 부르고 있다는 뜻이다.\n\n**고유 방문자는 무료 플랜에 없다.** Cloudflare 가 주는 것은 요청 수와 국가별 분포까지다."
               }
             }
           ]
