@@ -13,6 +13,6 @@ spec:
   secretName: ticket-tls              # 발급된 인증서(tls.crt·tls.key)가 이 이름의 Secret으로 저장된다
   issuerRef:
     kind: ClusterIssuer
-    name: letsencrypt-staging         # 절차가 끝까지 도는 것을 확인한 뒤 letsencrypt-prod로 바꾼다
+    name: letsencrypt-prod            # staging으로 발급 사슬 완주 확인(82초) 후 전환
   dnsNames:
     - ticket.subinhong.dev
