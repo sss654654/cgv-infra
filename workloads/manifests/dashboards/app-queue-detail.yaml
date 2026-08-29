@@ -87,7 +87,13 @@ data:
             { "refId": "B", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"traefik\", container=\"traefik\"}[$__rate_interval])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"traefik\", container=\"traefik\"}[$__rate_interval]))", "legendFormat": "스로틀 {{pod}}" }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "percentunit", "decimals": 1, "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } },
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 1,
+              "min": 0,
+              "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+            },
             "overrides": [
               { "matcher": { "id": "byRegexp", "options": "스로틀.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 15 } ] }
             ]
@@ -151,7 +157,13 @@ data:
             { "refId": "B", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"queue\"}[$__rate_interval]))", "legendFormat": "스로틀 {{pod}}" }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "percentunit", "decimals": 1, "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } },
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 1,
+              "min": 0,
+              "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+            },
             "overrides": [
               { "matcher": { "id": "byRegexp", "options": "스로틀.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 15 } ] }
             ]
