@@ -20,7 +20,7 @@ spec:
     #   (그 브랜치에 푸시하면 root(selfHeal)가 곧바로 반영해 매 수정을 머지하지 않아도 된다).
     #   돌릴 때는 브랜치 삭제 전에 이 값을 main 으로 되돌린다 — 순서가 바뀌면
     #   이 Application 이 없는 리비전을 가리켜 sync 가 멈춘다.
-    targetRevision: main
+    targetRevision: dashboards   # 대시보드 재편 작업 기간 한정. 끝나면 main 으로 되돌린 뒤 브랜치를 지운다
     path: workloads/manifests/dashboards
   destination:
     server: https://kubernetes.default.svc
