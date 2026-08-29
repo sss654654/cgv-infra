@@ -18,6 +18,14 @@
 # 시계열 패널에는 interval 5m 을 명시한다. 안 두면 $__interval 이 스크레이프 주기(15초)
 #   아래로 내려가는 구간이 생기고, 그때 increase() 가 표본을 못 잡아 No data 가 뜬다.
 #
+# 숫자 셋(화면 열림 · 입장 · 예매)은 noValue 를 0 으로 두고 초록으로 칠한다.
+#   No data 가 뜨는 조건은 "그 경로가 파드 기동 뒤 한 번도 안 불렸다" 이다. 카운터는 파드
+#   수명 동안만 누적하므로 배포로 파드가 새로 뜨면 시계열 자체가 사라진다. 그 상태의 뜻이
+#   0 이라 0 으로 적는다.
+#   ⚠ 대신 지표 이름이나 라벨이 바뀌어도 같은 0 이 뜬다. 셋이 동시에 0 인데 좌석 그래프는
+#     살아 있으면 "아무도 안 왔다" 가 아니라 쿼리가 앱을 못 따라간 것부터 의심한다.
+#   ⚠ 초록은 판정이 아니라 색이다. 0 도 초록으로 뜬다.
+#
 # 가상 관객을 빼지 않는 이유
 #   방문자가 콘솔에서 버튼을 눌러 만든 것이라 방문자 행동이다.
 #   빼면 "콘솔을 열고 만져 봤다"가 통째로 안 보이는데, 이 데모에서는 그것이 가장 깊게 써 본 경우다.
@@ -83,10 +91,10 @@ data:
             { "refId": "A", "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/stats\"}[$__range]))", "instant": true }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
+            "defaults": { "unit": "short", "decimals": 0, "noValue": "0", "color": { "mode": "fixed", "fixedColor": "green" } },
             "overrides": []
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none" }
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none", "colorMode": "value" }
         },
         {
           "id": 9,
@@ -143,10 +151,10 @@ data:
             { "refId": "A", "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__range]))", "instant": true }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
+            "defaults": { "unit": "short", "decimals": 0, "noValue": "0", "color": { "mode": "fixed", "fixedColor": "green" } },
             "overrides": []
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none" }
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none", "colorMode": "value" }
         },
         {
           "id": 3,
@@ -159,10 +167,10 @@ data:
             { "refId": "A", "expr": "sum(increase(booking_confirm_total{result=\"success\"}[$__range]))", "instant": true }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
+            "defaults": { "unit": "short", "decimals": 0, "noValue": "0", "color": { "mode": "fixed", "fixedColor": "green" } },
             "overrides": []
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none" }
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "graphMode": "none", "colorMode": "value" }
         },
         {
           "id": 8,
