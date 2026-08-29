@@ -16,6 +16,11 @@ webhook:
     requests: { cpu: 50m, memory: 32Mi }
     limits:   { cpu: 100m, memory: 64Mi }
 cainjector:
+  # limit 64Mi → 192Mi (2026-08-29). 10분 peak 58MiB 로 limit 의 90.6% 였다.
+  #   cainjector 는 CA 번들을 주입할 대상(CRD·Secret·webhook 설정)을 전부 캐시로 들고 있어
+  #   메모리가 요청 수가 아니라 클러스터 오브젝트 수를 따라간다. 오브젝트가 늘면 같이 오르고,
+  #   limit 에 닿으면 OOMKill 된다 — 그러면 새 CRD 에 CA 번들이 안 박혀 webhook 검증이 실패한다.
+  # request 32Mi → 64Mi. 실사용이 그 위라 그대로 두면 노드 압박 시 퇴거 앞 순위가 된다.
   resources:
-    requests: { cpu: 50m, memory: 32Mi }
-    limits:   { cpu: 100m, memory: 64Mi }
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 100m, memory: 192Mi }
