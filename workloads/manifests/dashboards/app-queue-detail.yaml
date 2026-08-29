@@ -241,7 +241,7 @@ data:
           "id": 9,
           "type": "timeseries",
           "title": "p99 — 앱(position · events · board) vs traefik 전 구간",
-          "description": "**traefik 선과 앱 선의 간격이 관문+네트워크 몫이다.**\n\n- 앱 선만 오른다 → 앱·저장소 쪽. position/events 면 queue·Redis, board 면 booking\n- traefik 선만 오르고 간격이 벌어진다 → 행1(관문)로 — 연결·CPU·스로틀\n- 전부 같이 오른다 → 노드·네트워크\n\n통과선(부하 판): position 정상 구간 500ms · 현황판(events·board) 3초. y 축이 로그라 눈대중 말고 범례 수치를 읽는다. traefik 히스토그램 첫 칸이 5ms 라 그 아래 평평한 건 빠른 게 아니라 못 잰 것이다.\n\n점(exemplar)을 누르면 그 요청의 트레이스가 열린다.",
+          "description": "**traefik 선과 앱 선의 간격이 관문+네트워크 몫이다.**\n\n- 앱 선만 오른다 → 앱·저장소 쪽. position/events 면 queue·Redis, board 면 booking\n- traefik 선만 오르고 간격이 벌어진다 → 행1(관문)로 — 연결·CPU·스로틀\n- 전부 같이 오른다 → 노드·네트워크\n\n통과선(부하 판): position 정상 구간 500ms · 현황판(events·board) 3초. y 축이 로그라 눈대중 말고 범례 수치를 읽는다. traefik 히스토그램 첫 칸이 5ms 라 그 아래 평평한 건 빠른 게 아니라 못 잰 것이고, **상한 버킷에 평평하게 붙은 값(2026-08-29 판 실측: 10초 고정)은 측정값이 아니라 \"그보다 크다\"는 뜻이다.**\n\n점(exemplar)을 누르면 그 요청의 트레이스가 열린다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 9, "w": 24, "x": 0, "y": 19 },
           "targets": [
@@ -272,12 +272,12 @@ data:
           "id": 10,
           "type": "timeseries",
           "title": "줄서기(enter) · 승격 발행 · 인증 소비",
-          "description": "**queue 라는 서비스의 정의를 그린다 — 들어오는 속도 vs 빠져나가는 속도.**\n\n- **enter(오른쪽 축, 구간 누적)** 줄에 들어온 사람. 사용자당 한 번이라 rate 로는 오픈 순간 한 점에 묻혀 누적으로 그린다. 오픈에 벽처럼 솟는 것이 정상\n- **승격/초** queue 가 자리를 내준 속도 = 줄이 빠지는 속도. **대기자가 있는데 이 선이 0 이면 승격 루프가 선 것이다** (통과선: 회전 > 0)\n- **인증/초** booking 이 인증을 만든 속도. 승격과 겹쳐야 정상 — 벌어지면 다리가 새는 중이고, 위치는 Redis·Kafka 판이 지목한다\n\n승격 = 정원 ÷ 체류 (12부 항등식). 정원 500 · 체류 36초면 약 14/초.",
+          "description": "**queue 라는 서비스의 정의를 그린다 — 들어오는 속도 vs 빠져나가는 속도.**\n\n- **enter(오른쪽 축, 구간 누적)** 줄에 들어온 사람. 사용자당 한 번이라 rate 로는 오픈 순간 한 점에 묻혀 누적으로 그린다. 오픈에 벽처럼 솟는 것이 정상. increase() 외삽이 버스트를 부풀릴 수 있어 대략치다\n- **승격/초** promote 루프가 자리를 내준 속도 = 줄이 빠지는 속도. **대기자가 있는데 이 선이 0 이면 승격 루프가 선 것이다** (통과선: 회전 > 0)\n- **인증/초** booking 이 인증을 만든 속도\n\n**⚠ 오픈 직후에는 인증이 승격보다 큰 것이 정상이다.** 정원이 비어 있을 때 enter 로 들어온 사람은 승격 없이 직접 입장하고(2026-08-29 판 실측: 인증 13.9/s vs 승격 7.6/s), 그 몫도 admissions 발행·인증에는 잡힌다. 두 선의 겹침 판정은 **줄이 차 있는 정상 구간에서만** 한다 — 그 구간엔 입장이 전부 승격 경유라 겹쳐야 하고, 벌어지면 다리가 새는 중이다(위치는 Redis·Kafka 판).\n\n승격 = 정원 ÷ 체류 (12부 항등식). 정원 500 · 체류 36초면 약 14/초.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 9, "w": 24, "x": 0, "y": 29 },
           "interval": "1m",
           "targets": [
-            { "refId": "A", "expr": "max(queue_promotion_rate and on(pod) (up{job=\"app/queue\"} == 1)) or vector(0)", "legendFormat": "승격/초 — admissions 발행" },
+            { "refId": "A", "expr": "sum(rate(queue_promoted_total[1m])) or vector(0)", "legendFormat": "승격/초 — admissions 발행" },
             { "refId": "B", "expr": "sum(rate(booking_admissions_total{application=\"cgv-booking\", result=\"ok\"}[1m])) or vector(0)", "legendFormat": "인증/초 — admissions 소비" },
             { "refId": "C", "expr": "sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__interval]))", "legendFormat": "줄서기 — enter (구간 누적)" }
           ],
