@@ -70,6 +70,13 @@ env:
   DDL_AUTO: update # dev 단일: Hibernate 스키마 생성. (prd=none + 마이그레이션 Job)
   SEED_ON_START: "true" # dev 단일: DataSeeder 데모 시드. (prd=false)
   VIRTUAL_THREADS: "true"
-  DB_POOL_SIZE: "10" # 실측 후 튜닝
+  # 10 → 30 (2026-08-29 사용자 10,000 부하 실측).
+  #   오픈 버스트에서 풀 10개가 전부 차고 대기 397이 섰다. 그 시각 MySQL CPU 는 12%로
+  #   여유 — 병목이 원장이 아니라 풀 개수였다. 트레이스 실측: board 요청 5.28초 중
+  #   5.11초가 커넥션 획득 대기, 질의 자체는 10.68ms.
+  #   질의 약 10ms 기준 풀 30 = 초당 약 3,000질의. MySQL 1코어가 놀고 있어 받아낸다.
+  #   더 키우면 처리량은 안 늘고 대기 장소만 앱(풀 지표에 보임)에서 MySQL 안(안 보임)으로
+  #   옮겨간다 — 대기가 또 서는데 MySQL CPU 도 찼으면 그때는 풀이 아니라 코어를 올린다.
+  DB_POOL_SIZE: "30"
   JAVA_OPTS: "-XX:MaxRAMPercentage=75 -Djava.net.preferIPv4Stack=true"
   OTLP_HTTP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318/v1/traces
