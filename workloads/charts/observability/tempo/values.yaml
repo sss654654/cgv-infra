@@ -26,17 +26,27 @@ tempo:
     #   커널이 죽이는 선은 1Gi인데 런타임의 다음 GC 지점이 2.36GB라, 그 사이에서는 GC가 안 돈다.
     #   (앞서 이 자리에 "limit 근처에서 GC가 몰려 돌아 /ready가 늦는다"고 적혀 있었으나 근거가 없어 지운다 —
     #    Go 런타임은 cgroup을 읽지 않아 limit 근접을 감지할 수 없고, 그 시점의 GC 실측도 없다.)
-    # 800MiB는 limit 1Gi 아래로 정한 값이다. 나머지는 고루틴 스택·런타임 메타데이터·OS 버퍼 몫.
+    # limit 아래로 정한다. 나머지는 고루틴 스택·런타임 메타데이터·OS 버퍼 몫.
     - name: GOMEMLIMIT
-      value: "800MiB"
+      value: "2600MiB"
   resources:                          # [렌더 확인: 업스트림에 resources 2곳(tempo.resources/top-level) — 적용처 검증]
     # memory limit 512Mi에서 110회 재시작. 종료 코드는 137이지만 OOMKilled가 아니다 —
     #   이벤트는 Killing(사유: failed liveness probe)이고 OOMKilling은 0건. /ready가 답하지 못해 kubelet이 죽였다.
     #   재시작할 때마다 WAL replay로 힙이 부풀고(기동 직후 live_traces 1736 → 4분 뒤 13) 같은 자리에 다시 닿는 고리가 됐다.
     # request는 128Mi에서 256Mi로. 실측이 그보다 위라 그대로 두면 스케줄러가 이 파드를 과소 평가한다.
-    # 앱 샘플링이 전 요청(1.0)이라 부하를 걸면 유입이 다시 몇 배가 된다 — 그때 이 값을 다시 잰다.
+    #
+    # limit 1Gi → 3Gi. queue 표본을 1.0으로 올리면서 같이 올린다.
+    #   표본 0.01 · 유휴에서 이 파드는 129Mi · live traces 14 · 유입 3.3 span/초다.
+    #   1.0에서는 5,000명 판 기준 요청 874/초 × 요청당 span 약 3 = 약 2,600 span/초가 되고,
+    #   live traces는 초당 트레이스 수 × trace_idle_period(5초)라 만 단위로 올라간다.
+    #   2026-08-22 표본 0.05 판에서 live traces 10,000일 때 이 파드가 747MiB였다 — 아래
+    #   max_traces_per_user 50,000을 그 비율로 밀면 3GiB대다.
+    # request는 256Mi 그대로 둔다. k3s-2의 memory request가 allocatable의 90%라 올릴 자리가
+    #   없다(여유 약 480Mi). limit은 스케줄러 예산 밖이라 올려도 다른 파드 자리를 안 뺏는다.
+    #   ⚠ 대신 실사용이 request를 크게 넘는 동안 이 파드가 노드 퇴거 1순위가 된다. 부하 판에서
+    #     tempo_discarded_spans_total과 이 파드 메모리를 같이 보고, 서면 그때 다시 정한다.
     requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: 500m, memory: 1Gi }
+    limits: { cpu: 500m, memory: 3Gi }
   storage:
     trace:
       backend: s3
@@ -54,6 +64,22 @@ tempo:
       protocols:
         grpc: { endpoint: "0.0.0.0:4317" }
         http: { endpoint: "0.0.0.0:4318" }
+  # live traces 한도. 차트 기본은 비어 있어 Tempo 기본값 10,000이 적용된다.
+  #
+  # live traces = ingester가 지금 메모리에 들고 있는, 아직 끝나지 않은 트레이스 수다.
+  #   트레이스는 마지막 span이 온 뒤 trace_idle_period(기본 5초) 동안 새 span이 없으면 목록에서
+  #   빠지므로, 이 값은 대략 "초당 생기는 트레이스 수 × 5초"다. 초당 요청 수가 아니라 동시에
+  #   열려 있는 트레이스 수가 정하는 값이라, 요청이 제일 많은 순간과 이 값이 제일 큰 순간이 다르다
+  #   (2026-08-22 실측: 2,946 req/s일 때 live 1,649 · 그다음 분 1,296 req/s일 때 live 10,000).
+  # 넘으면 그 구간 span이 live_traces_exceeded로 버려진다 — 화면에서 exemplar를 눌러도 안 열린다.
+  #
+  # 10,000 → 50,000. queue 표본을 1.0으로 올리면서 같이 올린다. 표본 0.05만으로도 오픈 직후
+  #   1분에 한도에 닿아 4,527 span을 버렸고, 그 1분이 p99가 가장 높은 구간이었다.
+  # 버려지는지는 tempo_discarded_spans_total{reason="live_traces_exceeded"}로 확인한다.
+  overrides:
+    defaults:
+      ingestion:
+        max_traces_per_user: 50000
 nodeSelector:
   cgv.io/data: obs                  # tempo-wal 디스크가 있는 k3s-2에 핀(PV nodeAffinity와 이중 안전)
 persistence:
