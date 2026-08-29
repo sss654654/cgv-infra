@@ -11,8 +11,10 @@
 #                            RSS 는 계수(기울기) 추출용이라 판 사후 쿼리로 한다
 #
 # 행 구성 — 부하가 지나는 순서다.
-#   행1 traefik    관문.  파드별 게이지(메모리·CPU / limit %) + 스로틀 + ★동시 연결
-#   행2 queue      파드.  같은 게이지 + 스로틀 + Redis 풀
+#   행1 traefik    관문.  메모리 게이지(수위) + CPU·스로틀 타임시리즈(사건) + ★동시 연결
+#   행2 queue      파드.  같은 구성 + Redis 풀 포기 stat
+#   메모리=물리 한계라 게이지(지금 수위), CPU=시간의 사건이라 타임시리즈(언제 튀고 언제 잘렸나).
+#   CPU 를 limit 대비 % 로 두면 스로틀과 같은 축이라 이중축 없이 한 패널에 선다.
 #   행3 지연 p99   사용자가 겪는 것.  traefik 선과 앱 선의 간격 = 관문+네트워크 몫
 #   행4 흐름       줄서기(enter) · 승격 발행 · 인증 소비
 #
@@ -55,7 +57,7 @@ data:
           "id": 1,
           "type": "bargauge",
           "title": "traefik 메모리 — 파드별 / limit",
-          "description": "**어느 파드가 위험한가, 고르게 받고 있나.** working_set(커널이 OOMKill 을 판정하는 값) ÷ limit.\n\n- 한 막대만 높다 → 연결이 그 파드에 몰렸다 (MetalLB VIP 소유 노드 확인)\n- 전부 고르게 오른다 → 인원 축 부하. 12부 계수: 사람당 56KiB(평시)·132KiB(봉우리)\n- 빨강(80%) = 판 통과선. 100% 면 죽는다\n\nlimit 을 지표로 나눠서 limit 변경 시 판이 따라온다.",
+          "description": "파드별 working_set ÷ memory limit. working_set 은 커널이 OOMKill 을 판정할 때 보는 값이고, 100% 에 닿으면 그 파드는 죽는다.\n\n- traefik 은 클라이언트 소켓마다 메모리(고루틴 스택·버퍼, 연결당 약 56-132KiB)를 쥔다 — 이 값은 동시 연결 수(오른쪽 패널)를 따라 오른다\n- 막대 하나만 높으면 연결이 그 파드에 몰려 있는 것이다\n- 임계 80%. limit 은 지표로 읽으므로 limit 을 바꾸면 게이지가 따라온다",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 6, "x": 0, "y": 1 },
           "targets": [
@@ -75,52 +77,28 @@ data:
         },
         {
           "id": 2,
-          "type": "bargauge",
-          "title": "traefik CPU — 파드별 / limit",
-          "description": "**사용률이다 — 판정은 옆 스로틀이 한다.** CPU 는 limit 에 닿아도 죽지 않고 잘린다. 이 게이지가 낮은데 스로틀이 빨갛면, 총량이 아니라 배급 간격(100ms 조각의 몫)이 원인이다.",
+          "type": "timeseries",
+          "title": "traefik CPU · 스로틀 — limit 대비 % (빨강이 뜨면 잘리는 중)",
+          "description": "파드별 CPU 사용률(사용량 ÷ limit)과 스로틀 비율을 한 축(%)에 그린다.\n\n- **실선 — CPU 사용률.** limit 에 닿아도 파드는 죽지 않고 잘린다\n- **빨간 선 — 스로틀.** 커널은 CPU 를 100ms 조각 단위로 배급한다. 그 조각에서 몫을 다 쓰고 잘린 비율이고, 0 이 정상이다\n\n평균 사용률이 낮아도 요청이 같은 찰나에 몰리면 스로틀은 선다 — 스로틀이 뜨면 지연의 원인이 CPU limit(배급 간격)이라는 뜻이고, limit 을 올리면 몫이 커진다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 1 },
+          "gridPos": { "h": 8, "w": 10, "x": 6, "y": 1 },
           "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"traefik\", container=\"traefik\"}[$__rate_interval])) / on(pod) group_left() kube_pod_container_resource_limits{namespace=\"traefik\", container=\"traefik\", resource=\"cpu\"}", "legendFormat": "{{pod}}" }
+            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"traefik\", container=\"traefik\"}[$__rate_interval])) / on(pod) group_left() kube_pod_container_resource_limits{namespace=\"traefik\", container=\"traefik\", resource=\"cpu\"}", "legendFormat": "CPU {{pod}}" },
+            { "refId": "B", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"traefik\", container=\"traefik\"}[$__rate_interval])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"traefik\", container=\"traefik\"}[$__rate_interval]))", "legendFormat": "스로틀 {{pod}}" }
           ],
           "fieldConfig": {
-            "defaults": {
-              "unit": "percentunit",
-              "decimals": 1,
-              "min": 0,
-              "max": 1,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.8 } ] }
-            },
-            "overrides": []
+            "defaults": { "unit": "percentunit", "decimals": 1, "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "스로틀.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 15 } ] }
+            ]
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true }
-        },
-        {
-          "id": 3,
-          "type": "stat",
-          "title": "traefik 스로틀",
-          "description": "**0 이 정상.** 커널이 100ms 조각마다 몫을 배급하는데, 그 조각에서 몫을 다 쓰고 잘린 비율이다. 평균 CPU 가 낮아도 요청이 몰리면 선다 — 서면 지연의 원인이 CPU limit 이라는 뜻이고, limit 상향이 손잡이다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 4, "x": 12, "y": 1 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"traefik\", container=\"traefik\"}[5m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"traefik\", container=\"traefik\"}[5m]))", "legendFormat": "{{pod}}", "instant": true }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "percentunit",
-              "decimals": 1,
-              "noValue": "0",
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.01 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name", "colorMode": "value", "graphMode": "none", "orientation": "vertical" }
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] } }
         },
         {
           "id": 4,
           "type": "timeseries",
           "title": "동시 연결 — 엔트리포인트별 (web=터널 · websecure=공개 경로)",
-          "description": "**이 클러스터가 몇 명을 받는지를 정해 온 값이다.** 폴링 사용자는 요청을 안 보내는 순간에도 keep-alive 소켓을 쥔다 — 12부 실측: 연결 = 인원 × 1.00, 그 연결의 메모리가 traefik 상한(계산 약 25,000명)을 만들었다.\n\n**엣지 뒤 판의 판정이 여기서 난다:**\n- 공개 경로(websecure)로 인원 N 을 넣었는데 연결이 N 보다 한참 아래 → 엣지가 연결을 대신 받고 있다. traefik 메모리 축이 풀린 것\n- 연결이 여전히 N 에 비례 → 엣지가 못 받아 준 것. 12부 상한이 그대로 남는다\n\n터널 경유 판(web)은 12부와 같은 구조라 인원 × 1.00 이 재현되어야 한다.",
+          "description": "traefik 이 지금 쥐고 있는 클라이언트 소켓 수. 엔트리포인트별 — web(80) · websecure(443).\n\n- HTTP keep-alive 라 사용자는 요청을 보내지 않는 순간에도 소켓을 쥔다 — 이 값은 초당 요청 수가 아니라 **동시 접속자 수**를 따라간다 (직접 접속이면 접속자 × 1.00)\n- 소켓마다 traefik 이 메모리를 들므로 왼쪽 메모리 게이지가 이 값을 따라 오른다\n- 프록시(CDN 엣지)가 앞에 있으면 사용자 소켓은 프록시가 들고, 여기에는 프록시-traefik 연결만 남는다 — 접속자 수보다 한참 작으면 프록시가 연결을 대신 받고 있는 것이다",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
           "targets": [
@@ -143,7 +121,7 @@ data:
           "id": 5,
           "type": "bargauge",
           "title": "queue 메모리 — 파드별 / limit",
-          "description": "**queue 는 연결 축이 아니다** — 상태가 전부 Redis 에 있고 백엔드 소켓은 traefik 풀이 재사용한다(12부: 5,000명에 뒤 연결 127개). 인원을 올려도 이 게이지는 거의 안 움직이는 게 정상이고, **움직이면 그게 조사 대상이다** (12부 미확정: 10,000명 4파드 판에서 파드당 128MiB 로 튐 — 이번 계단에서 파드 수 고정으로 가른다).",
+          "description": "파드별 working_set ÷ memory limit. 100% 에 닿으면 그 파드는 OOMKill 로 죽는다.\n\n- queue 는 대기열 상태를 전부 Redis 에 두고, 백엔드 소켓은 traefik 이 풀로 재사용한다 — 그래서 이 값은 동시 접속자 수와 거의 무관하다\n- 오르면 그 순간 동시에 처리 중인 요청이 늘어난 것이다 (요청이 만든 객체는 응답이 나가야 회수된다)\n- 임계 80%",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
           "targets": [
@@ -163,72 +141,43 @@ data:
         },
         {
           "id": 6,
-          "type": "bargauge",
-          "title": "queue CPU — 파드별 / limit",
-          "description": "**queue 부하는 이 축으로 온다** — 폴링이 초당 수천 요청이고 요청마다 처리 경로를 돈다. 12부 계수: 사람당 0.052 mCPU. 막대가 고르게 오르면 인원 축 정상, 하나만 높으면 분배 문제다. 판정은 옆 스로틀 — limit 500m 시절 평균은 낮은데 스로틀 83% 가 났던 자리다.",
+          "type": "timeseries",
+          "title": "queue CPU · 스로틀 — limit 대비 % (빨강이 뜨면 잘리는 중)",
+          "description": "파드별 CPU 사용률(사용량 ÷ limit)과 스로틀 비율을 한 축(%)에 그린다.\n\n- **실선 — CPU 사용률.** 폴링 요청마다 처리 경로를 돌므로 이 값은 초당 요청 수(≈ 동시 접속자 수)를 따라간다. 파드끼리 고르게 오르는 것이 정상이고, 하나만 높으면 분배가 안 되는 것이다\n- **빨간 선 — 스로틀.** 100ms 배급 조각에서 몫을 다 쓰고 잘린 비율. 0 이 정상\n\n평균 사용률이 낮아도 스로틀은 설 수 있다 — 뜨면 지연의 원인이 CPU limit 이라는 뜻이다. 스로틀이 서는 동안 Redis 응답을 제때 못 읽어 커넥션 반납이 늦어지고, 오른쪽 풀 포기가 따라 선다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 10 },
+          "gridPos": { "h": 8, "w": 10, "x": 6, "y": 10 },
           "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / on(pod) group_left() kube_pod_container_resource_limits{namespace=\"app\", container=\"queue\", resource=\"cpu\"}", "legendFormat": "{{pod}}" }
+            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / on(pod) group_left() kube_pod_container_resource_limits{namespace=\"app\", container=\"queue\", resource=\"cpu\"}", "legendFormat": "CPU {{pod}}" },
+            { "refId": "B", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"queue\"}[$__rate_interval]))", "legendFormat": "스로틀 {{pod}}" }
           ],
           "fieldConfig": {
-            "defaults": {
-              "unit": "percentunit",
-              "decimals": 1,
-              "min": 0,
-              "max": 1,
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.8 } ] }
-            },
-            "overrides": []
+            "defaults": { "unit": "percentunit", "decimals": 1, "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "스로틀.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }, { "id": "custom.fillOpacity", "value": 15 } ] }
+            ]
           },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "displayMode": "basic", "showUnfilled": true }
-        },
-        {
-          "id": 7,
-          "type": "stat",
-          "title": "queue 스로틀",
-          "description": "**0 이 정상.** 12부: limit 500m 에서 82.97% → 1000m 에서 0.00%. 스로틀이 서면 풀 대기·포기(오른쪽)가 따라 선다 — CPU 를 못 받는 동안 Redis 응답을 제때 못 읽어 커넥션 반납이 늦어서다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 4, "x": 12, "y": 10 },
-          "targets": [
-            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"queue\"}[5m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"queue\"}[5m]))", "legendFormat": "{{pod}}", "instant": true }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "percentunit",
-              "decimals": 1,
-              "noValue": "0",
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.01 } ] }
-            },
-            "overrides": []
-          },
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name", "colorMode": "value", "graphMode": "none", "orientation": "vertical" }
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] } }
         },
         {
           "id": 8,
-          "type": "timeseries",
-          "title": "Redis 풀 — 기다린 시간 · 포기 / 기준 1,500ms",
-          "description": "**포기가 판정이고 대기는 전조다.** 대기가 몇만 건이어도 포기 0 이면 지연이지 고장이 아니다(12부: 대기 41,829건 · 포기 0).\n\n- **포기 > 0** 사용자가 실패를 받는 중. 원인은 대개 풀이 아니라 **queue CPU** — 12부에서 limit 을 올리자 포기 59건/초 → 0 (풀 크기는 10 그대로였다)\n- 기준 1,500ms = go-redis 기본값 ReadTimeout(500ms) + 1초\n\nRedis 자체의 건강(코어·명령·메모리)은 Redis·Kafka 판에서 본다 — 이 패널은 queue 앱이 Redis 로 가는 문의 상태다.",
+          "type": "stat",
+          "title": "Redis 풀 포기 — 0 이어야 한다",
+          "description": "Redis 커넥션을 한도(1,500ms = go-redis 기본 ReadTimeout 500ms + 1초) 안에 못 얻어 물러난 요청 수. 물러난 요청은 실패로 응답된다 — 0 이 정상이다.\n\n- 커넥션을 기다린 것 자체(대기)는 지연일 뿐 실패가 아니라 여기 안 그린다. 전조가 필요하면 queue_redis_pool_wait_* 로 조회한다\n- 포기가 서면 왼쪽 스로틀(빨간 선)이 같은 시각에 떠 있는지부터 본다 — 파드가 CPU 를 못 받는 동안 커넥션 반납이 늦어져 풀이 마르는 경로가 있다. 풀 크기 부족과는 다른 원인이고 손잡이도 다르다(CPU limit vs 풀 크기)\n\nRedis 자체의 건강(코어·명령·메모리)은 Redis·Kafka 판에서 본다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
           "targets": [
-            { "refId": "A", "expr": "sum(rate(queue_redis_pool_wait_seconds_total[1m])) / sum(rate(queue_redis_pool_wait_count_total[1m])) * 1000", "legendFormat": "기다린 시간 (요청당 ms)" },
-            { "refId": "B", "expr": "sum(rate(queue_redis_pool_timeouts_total[1m])) or vector(0)", "legendFormat": "포기 (건/초)" }
+            { "refId": "A", "expr": "sum(rate(queue_redis_pool_timeouts_total[5m])) or vector(0)", "legendFormat": "포기/초", "instant": true }
           ],
           "fieldConfig": {
-            "defaults": { "unit": "ms", "decimals": 1, "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" } },
-            "overrides": [
-              {
-                "matcher": { "id": "byName", "options": "포기 (건/초)" },
-                "properties": [
-                  { "id": "unit", "value": "reqps" },
-                  { "id": "custom.axisPlacement", "value": "right" },
-                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
-                ]
-              }
-            ]
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 2,
+              "noValue": "0",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.001 } ] }
+            },
+            "overrides": []
           },
-          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } }
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value", "colorMode": "value", "graphMode": "none" }
         },
         {
           "type": "row",
@@ -241,9 +190,9 @@ data:
           "id": 9,
           "type": "timeseries",
           "title": "p99 — 앱(position · events · board) vs traefik 전 구간",
-          "description": "**traefik 선과 앱 선의 간격이 관문+네트워크 몫이다.**\n\n- 앱 선만 오른다 → 앱·저장소 쪽. position/events 면 queue·Redis, board 면 booking\n- traefik 선만 오르고 간격이 벌어진다 → 행1(관문)로 — 연결·CPU·스로틀\n- 전부 같이 오른다 → 노드·네트워크\n\n통과선(부하 판): position 정상 구간 500ms · 현황판(events·board) 3초. y 축이 로그라 눈대중 말고 범례 수치를 읽는다. traefik 히스토그램 첫 칸이 5ms 라 그 아래 평평한 건 빠른 게 아니라 못 잰 것이고, **상한 버킷에 평평하게 붙은 값(2026-08-29 판 실측: 10초 고정)은 측정값이 아니라 \"그보다 크다\"는 뜻이다.**\n\n점(exemplar)을 누르면 그 요청의 트레이스가 열린다.",
+          "description": "경로별 99분위 응답 시간. 앱 선은 앱이 잰 처리 구간, traefik 선은 엔트리포인트 전 구간(수신-응답 완료)이다.\n\n- traefik 선과 앱 선의 간격 = 관문·네트워크 몫\n- 앱 선만 오른다 → 앱·저장소 쪽 (position/events 는 queue·Redis, board 는 booking)\n- 간격이 벌어진다 → 행1(관문)의 연결·CPU·스로틀을 본다\n\ny 축이 로그라 수치는 범례로 읽는다. 히스토그램 경계 밖은 못 잰다 — traefik 첫 칸(5ms) 아래는 평평하게 붙고, **상한 버킷에 평평하게 붙은 값은 측정값이 아니라 \"그보다 크다\"는 뜻이다.**\n\n점(exemplar)은 그 시각 그 구간에 실제 있었던 요청 하나다 — 누르면 트레이스가 열린다. 경로마다 트레이스 표본 비율이 달라(폴링 0.01 · booking 1.0) 점의 개수는 요청 수와 무관하다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 19 },
+          "gridPos": { "h": 12, "w": 24, "x": 0, "y": 19 },
           "targets": [
             { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/position\"}[1m])))", "legendFormat": "앱 position p99", "exemplar": true },
             { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/events\"}[1m])))", "legendFormat": "앱 events p99", "exemplar": true },
@@ -264,7 +213,7 @@ data:
         {
           "type": "row",
           "title": "4. 흐름 — 줄에 들어오는 속도와 빠져나가는 속도",
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 },
           "collapsed": false,
           "panels": []
         },
@@ -272,9 +221,9 @@ data:
           "id": 10,
           "type": "timeseries",
           "title": "줄서기(enter) · 승격 발행 · 인증 소비",
-          "description": "**queue 라는 서비스의 정의를 그린다 — 들어오는 속도 vs 빠져나가는 속도.**\n\n- **enter(오른쪽 축, 구간 누적)** 줄에 들어온 사람. 사용자당 한 번이라 rate 로는 오픈 순간 한 점에 묻혀 누적으로 그린다. 오픈에 벽처럼 솟는 것이 정상. increase() 외삽이 버스트를 부풀릴 수 있어 대략치다\n- **승격/초** promote 루프가 자리를 내준 속도 = 줄이 빠지는 속도. **대기자가 있는데 이 선이 0 이면 승격 루프가 선 것이다** (통과선: 회전 > 0)\n- **인증/초** booking 이 인증을 만든 속도\n\n**⚠ 오픈 직후에는 인증이 승격보다 큰 것이 정상이다.** 정원이 비어 있을 때 enter 로 들어온 사람은 승격 없이 직접 입장하고(2026-08-29 판 실측: 인증 13.9/s vs 승격 7.6/s), 그 몫도 admissions 발행·인증에는 잡힌다. 두 선의 겹침 판정은 **줄이 차 있는 정상 구간에서만** 한다 — 그 구간엔 입장이 전부 승격 경유라 겹쳐야 하고, 벌어지면 다리가 새는 중이다(위치는 Redis·Kafka 판).\n\n승격 = 정원 ÷ 체류 (12부 항등식). 정원 500 · 체류 36초면 약 14/초.",
+          "description": "줄에 들어오는 속도와 빠져나가는 속도.\n\n- **enter (막대, 오른쪽 축)** 구간 동안 줄에 들어온 사람 수. 사용자당 한 번이라 rate 대신 구간 누적으로 그린다 (increase 외삽이라 대략치). 오픈에 벽처럼 솟는 것이 정상\n- **승격/초** promote 루프가 대기자에게 자리를 내준 속도 (1분 창)\n- **인증/초** booking 이 입장 인증을 만든 속도 (1분 창)\n\n읽는 법:\n- 정원이 비어 있는 구간에는 enter 가 승격 없이 직접 입장한다 — 그 구간엔 인증 > 승격이 정상이다\n- 줄이 차 있는 구간에는 입장이 전부 승격 경유라 두 선이 겹친다 — 벌어지면 전달이 새는 중이다 (위치는 Redis·Kafka 판)\n- 대기자가 있는데 승격이 0 이면 승격 루프가 멈춘 것이다\n- 승격/초 = 정원 ÷ 체류 시간",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 29 },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 32 },
           "interval": "1m",
           "targets": [
             { "refId": "A", "expr": "sum(rate(queue_promoted_total[1m])) or vector(0)", "legendFormat": "승격/초 — admissions 발행" },
