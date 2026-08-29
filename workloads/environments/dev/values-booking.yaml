@@ -35,9 +35,15 @@ env:
   REDIS_MASTER_NAME: cgvmaster
   REDIS_SENTINEL_NODES: redis.data.svc.cluster.local:26379
   # 입장 인증 만료. queue가 회수 이벤트를 놓쳤을 때의 최후 방어라 queue의 SESSION_TIMEOUT보다 길어야 한다.
-  # 짧으면 정상 세션이 중간에 인증을 잃고 좌석선택이 403이 된다.
-  # values-queue.yaml의 SESSION_TIMEOUT(60)을 바꾸면 이 값도 같이 올린다.
-  ADMITTED_TTL: "180"
+  # 짧으면 정상 세션이 중간에 인증을 잃고 좌석선택이 403이 된다. 정상 흐름에서는 회수
+  # 이벤트가 먼저 지우므로 이 TTL은 이벤트 유실 때만 작동한다 — 세션(300)의 2배면 넉넉하다.
+  # values-queue.yaml의 SESSION_TIMEOUT(300)을 바꾸면 이 값도 같이 올린다.
+  ADMITTED_TTL: "600"
+  # 좌석 락 TTL. 좌석을 고른 뒤 결제 정보를 입력하는 구간(1-2분)을 덮는 값 —
+  # 결제 진입 시 renewMine 이 연장하므로 결제 전체를 덮을 필요는 없다.
+  # 짧으면 입력 중에 좌석을 뺏겨 환불(seat_conflict)이 나고, 길면 이탈자의 좌석이
+  # 잔여 계산에서 빠진 채 남아 남들에게 매진으로 보인다. 앱 기본값은 45(application.yml).
+  SEAT_LOCK_TTL: "180"
   MYSQL_HOST: mysql.data.svc.cluster.local
   MYSQL_PORT: "3306"
   MYSQL_DB: cgv
