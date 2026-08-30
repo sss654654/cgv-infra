@@ -208,7 +208,15 @@ kubectl create secret generic mysql-secret -n data \
 
 ### 틀리기 쉬운 세 지점
 
-**① 네임스페이스** — kubeseal 기본 봉인 범위는 `strict`로, **이름과 네임스페이스에 묶인다.** `-n data`로 봉인한 것을 `app`에 두면 CR은 정상 apply되고 ArgoCD도 Synced로 보이지만, 컨트롤러가 `no key could decrypt secret`으로 실패해 Secret이 생기지 않는다. 10종이 세 네임스페이스에 흩어져 있어 실수 확률이 낮지 않다.
+**① 네임스페이스** — kubeseal 기본 봉인 범위는 `strict`라, **이름과 네임스페이스에 묶인다.**
+
+```
+-n data 로 봉인한 것을 app 에 두면
+   CR         정상 apply.  ArgoCD 도 Synced 로 보인다
+   컨트롤러    no key could decrypt secret 으로 실패 → Secret 이 생기지 않는다
+```
+
+17종이 다섯 네임스페이스(`data`·`observability`·`app`·`argocd`·`cert-manager`)에 흩어져 있다.
 
 **② `--controller-name`** — kubeseal은 기본적으로 `kube-system`의 `sealed-secrets-controller`를 찾는다. 이 저장소는 helm 릴리스명을 `sealed-secrets`로 설치하므로 서비스명이 다르다. 플래그를 빠뜨리면 공개키를 못 받아 `cannot fetch certificate` 오류가 난다.
 
