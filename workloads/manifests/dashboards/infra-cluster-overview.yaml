@@ -5,7 +5,8 @@
 #   행2 노드 CPU     메모리와 같은 구조 — 선언 · 실사용 · 추이
 #   행3 노드 디스크  마운트별 byte · 마운트별 inode
 #   행4 파드         stat 4 → 흔적 표 둘 → 임박 stat+표 쌍
-#     행0-3 은 노드 단위, 행4 는 파드·컨테이너 단위로 겹치지 않는다.
+#   행5 스펙 장부    도는 컨테이너 전수의 req 대비 실사용(메모리·CPU) — 스펙 재산정 재료
+#     행0-3 은 노드 단위, 행4·5 는 파드·컨테이너 단위로 겹치지 않는다.
 #     흐름은 설명으로 잇는다 — Pending 은 행1 스케줄 여유로, 메모리 임박은 행1 파드 여유로.
 #
 # 패널마다 답하는 질문이 하나씩 다르게 유지한다. 같은 값을 두 곳에 두지 않는다.
@@ -14,14 +15,14 @@
 #   행1 을 두 표로 가르는 이유: 스케줄러는 requests 만 보고 커널은 실사용만 본다. 두 기준의 한계가
 #     서로 다른 값이라(k3s-1 실측 2026-08-22 무부하 — 스케줄 여유 181 MiB vs 노드 여유 1,587 MiB)
 #     한 표에 섞으면 무엇이 무엇의 한계인지 흐려진다.
-#   행2 는 행1 과 같은 구조다. 다만 CPU 는 여유가 0 이 되어도 죽지 않고 스로틀만 걸린다 —
-#     같은 표를 읽되 위험이 아니라 느려짐의 신호로 읽는다.
+#   행2 는 행1 과 같은 구조다. 다만 CPU 는 여유가 0 이 되어도 컨테이너가 종료되지 않고
+#     스로틀만 걸린다 — 같은 표를 읽되 중단이 아니라 느려짐의 신호로 읽는다.
 #   limit 임박은 크기 순이 아니라 limit 까지의 거리 순이다. 많이 쓰는 것과 limit 에 닿은 것은 다르다.
 #   Traefik 에 전용 자리를 두지 않는다 — limit 에 닿으면 임박 표에 올라오고, 연결이 어떻게
 #     쌓여 메모리가 오르는지는 queue 대시보드에서 앱과 나란히 봐야 의미가 있다.
 #
-# 사고 흔적·비정상 흔적·재시작 burst 는 같은 관용구를 쓴다. stat 은 지금만 보므로 잠깐 죽었다
-# 살아난 사고를 놓친다.
+# 사고 흔적·비정상 흔적·재시작 burst 는 같은 관용구를 쓴다. stat 은 지금만 보므로 잠깐 끊겼다
+# 돌아온 사고를 놓친다.
 #     흔적  max_over_time(조건[range:15s]) == 1
 #     지금  조건 * on(...) group_left() (흔적)
 #     발화  max_over_time((time() * 조건)[range:15s]) * 1000
@@ -297,7 +298,7 @@ data:
         {
           "type": "table",
           "title": "사고 흔적 — 시간 범위 안에 비정상이었던 것",
-          "description": "#### 잠깐 죽었다 살아난 것이 있나\n\n왼쪽 셋은 **지금**만 본다. 회복한 사고는 여기서만 보인다.\n\n```\n분류        k3s 응답 · 노드 Ready · etcd 응답 · etcd 합의\n노드        어느 노드인가\n지금        회복 / 비정상\n마지막 발화  마지막으로 비정상이던 시각\n```\n\n**표가 비어 있는 것이 정상이다.** 시간 범위를 넓히면 더 오래된 사고가 올라온다.\n\n`etcd 합의` 는 프로세스가 죽으면 메트릭 자체가 사라져 줄이 남지 않는다. 그 경우는 `etcd 응답` 이 잡는다.\n\n**여기서 로그로 넘어가는 링크는 없다.** 노드가 내려간 이유는 클러스터 안에 남지 않는다 — 기록하는 kubelet 이 함께 내려간다. 그 기록은 노드의 journald 에 있다(`journalctl -u k3s`).",
+          "description": "#### 잠깐 끊겼다 돌아온 것이 있나\n\n왼쪽 셋은 **지금**만 본다. 회복한 사고는 여기서만 보인다.\n\n```\n분류        k3s 응답 · 노드 Ready · etcd 응답 · etcd 합의\n노드        어느 노드인가\n지금        회복 / 비정상\n마지막 발화  마지막으로 비정상이던 시각\n```\n\n**표가 비어 있는 것이 정상이다.** 시간 범위를 넓히면 더 오래된 사고가 올라온다.\n\n`etcd 합의` 는 프로세스가 죽으면 메트릭 자체가 사라져 줄이 남지 않는다. 그 경우는 `etcd 응답` 이 잡는다.\n\n**여기서 로그로 넘어가는 링크는 없다.** 노드가 내려간 이유는 클러스터 안에 남지 않는다 — 기록하는 kubelet 이 함께 내려간다. 그 기록은 노드의 journald 에 있다(`journalctl -u k3s`).",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -1127,7 +1128,7 @@ data:
         {
           "type": "table",
           "title": "실사용 — 커널 기준 (millicore)",
-          "description": "#### 얼마나 쓰고 어디에 몰리나 (CPU)\n\n메모리 쪽과 같은 분해다.\n\n```\n물리 4,000m = 파드 사용 + 시스템 사용 + 노드 여유\n노드 여유   = 파드 여유 + 시스템 여유\n```\n\n**읽는 뜻은 다르다.** 메모리는 파드 여유가 0 이 되면 컨테이너가 OOMKill 되지만, CPU 는 죽지 않고 스로틀이 걸린다 — 여유가 0 에 가까워지면 응답이 느려지기 시작한다.\n\n```\n파드 사용    /kubepods.slice cgroup.  개별 컨테이너 합이 아니다\n시스템 사용   노드 전체(node-exporter non-idle) − 파드\n파드 여유    allocatable − 파드 사용\n```\n\n**노드 전체만 메모리와 달리 node-exporter 로 잰다.** 인터럽트(irq·softirq)와 steal 은 어느 cgroup 에도 안 잡히는데 노드가 실제로 태우는 CPU 에는 포함이라, 시스템 사용 쪽에 남긴다. 그만큼 cgroup 합보다 15퍼센트쯤 크다.\n\n**파드 여유는 allocatable 기준이다.** 메모리는 cgroup 상한과 견주지만 CPU 는 넘어도 죽지 않고 스로틀만 걸려, 스케줄러가 보는 선을 그대로 쓴다.",
+          "description": "#### 얼마나 쓰고 어디에 몰리나 (CPU)\n\n메모리 쪽과 같은 분해다.\n\n```\n물리 4,000m = 파드 사용 + 시스템 사용 + 노드 여유\n노드 여유   = 파드 여유 + 시스템 여유\n```\n\n**읽는 뜻은 다르다.** 메모리는 파드 여유가 0 이 되면 컨테이너가 OOMKill 되지만, CPU 는 컨테이너가 종료되지 않고 스로틀이 걸린다 — 여유가 0 에 가까워지면 응답이 느려지기 시작한다.\n\n```\n파드 사용    /kubepods.slice cgroup.  개별 컨테이너 합이 아니다\n시스템 사용   노드 전체(node-exporter non-idle) − 파드\n파드 여유    allocatable − 파드 사용\n```\n\n**노드 전체만 메모리와 달리 node-exporter 로 잰다.** 인터럽트(irq·softirq)와 steal 은 어느 cgroup 에도 안 잡히는데 노드가 실제로 태우는 CPU 에는 포함이라, 시스템 사용 쪽에 남긴다. 그만큼 cgroup 합보다 15퍼센트쯤 크다.\n\n**파드 여유는 allocatable 기준이다.** 메모리는 cgroup 상한과 견주지만 CPU 는 넘어도 죽지 않고 스로틀만 걸려, 스케줄러가 보는 선을 그대로 쓴다.",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -1913,7 +1914,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "count(kube_pod_status_ready{condition=\"false\"} == 1) or vector(0)",
+              "expr": "count((kube_pod_status_ready{condition=\"false\"} == 1) unless on(namespace, pod) (kube_pod_status_phase{phase=\"Succeeded\"} == 1)) or vector(0)",
               "instant": true
             }
           ],
@@ -2067,25 +2068,25 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "label_join((max by (namespace, pod) (max_over_time((kube_pod_status_ready{condition=\"false\"} == 1)[${__range_s}s:15s])) == 1) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\")",
+              "expr": "label_join(((max by (namespace, pod) (max_over_time((kube_pod_status_ready{condition=\"false\"} == 1)[${__range_s}s:15s])) == 1) unless on(namespace, pod) (max by (namespace, pod) (max_over_time((kube_pod_status_phase{phase=\"Succeeded\"} == 1)[${__range_s}s:15s])) == 1)) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\")",
               "format": "table",
               "instant": true
             },
             {
               "refId": "B",
-              "expr": "max by (loc) (label_join(max by (namespace, pod) (kube_pod_status_ready{condition=\"false\"} == 1) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\"))",
+              "expr": "max by (loc) (label_join((max by (namespace, pod) (kube_pod_status_ready{condition=\"false\"} == 1) unless on(namespace, pod) (kube_pod_status_phase{phase=\"Succeeded\"} == 1)) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\"))",
               "format": "table",
               "instant": true
             },
             {
               "refId": "C",
-              "expr": "max by (loc) (label_join((max by (namespace, pod) (max_over_time((time() * (kube_pod_status_ready{condition=\"false\"} == 1))[${__range_s}s:15s])) * 1000) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\"))",
+              "expr": "max by (loc) (label_join(((max by (namespace, pod) (max_over_time((time() * (kube_pod_status_ready{condition=\"false\"} == 1))[${__range_s}s:15s])) * 1000) unless on(namespace, pod) (max by (namespace, pod) (max_over_time((kube_pod_status_phase{phase=\"Succeeded\"} == 1)[${__range_s}s:15s])) == 1)) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\"))",
               "format": "table",
               "instant": true
             },
             {
               "refId": "D",
-              "expr": "max by (loc, reason) (label_join(((max by (namespace, pod, reason) (max_over_time((kube_pod_container_status_waiting_reason == 1)[${__range_s}s:15s])) or max by (namespace, pod, reason) (max_over_time((kube_pod_status_reason == 1)[${__range_s}s:15s]))) and on(namespace, pod) (max by (namespace, pod) (max_over_time((kube_pod_status_ready{condition=\"false\"} == 1)[${__range_s}s:15s])) == 1)) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\"))",
+              "expr": "max by (loc, reason) (label_join(((max by (namespace, pod, reason) (max_over_time((kube_pod_container_status_waiting_reason == 1)[${__range_s}s:15s])) or max by (namespace, pod, reason) (max_over_time((kube_pod_status_reason == 1)[${__range_s}s:15s]))) and on(namespace, pod) (max by (namespace, pod) (max_over_time((kube_pod_status_ready{condition=\"false\"} == 1)[${__range_s}s:15s])) == 1) unless on(namespace, pod) (max by (namespace, pod) (max_over_time((kube_pod_status_phase{phase=\"Succeeded\"} == 1)[${__range_s}s:15s])) == 1)) * on(namespace, pod) group_left(node) max by (namespace, pod, node) (kube_pod_info), \"loc\", \" \", \"node\", \"namespace\", \"pod\"))",
               "format": "table",
               "instant": true
             }
@@ -2220,7 +2221,7 @@ data:
         {
           "type": "table",
           "title": "재시작 burst — 10분에 2회 이상",
-          "description": "#### 무엇이 왜 반복해서 죽었나\n\nCrashLoopBackOff 로 가기 직전이거나 이미 들어간 컨테이너다.\n\n```\n횟수        범위 안 10분 창의 최대 재시작 횟수\n이유        마지막 종료의 이유 — 컨테이너 스스로 남긴 기록\n              OOMKilled   limit 을 넘어 커널이 죽였다 → 위 메모리 임박 표에 전조가 있었는지 본다\n              Error       프로세스가 0 이 아닌 코드로 죽었다 → 그 컨테이너 로그\n              Completed   정상 종료의 반복 — 재시작 정책 문제\n```\n\n**파드 이름을 누르면 그 파드의 쿠버네티스 이벤트 / 컨테이너 로그가 열린다** (Loki, 새 탭, 대시보드와 같은 시간 범위). Loki 는 죽은 컨테이너의 로그도 갖고 있어 죽기 직전 장면이 남아 있다.",
+          "description": "#### 무엇이 왜 반복해서 재시작했나\n\nCrashLoopBackOff 로 가기 직전이거나 이미 들어간 컨테이너다.\n\n```\n횟수        범위 안 10분 창의 최대 재시작 횟수\n이유        마지막 종료의 이유 — 컨테이너 스스로 남긴 기록\n              OOMKilled   limit 을 넘어 커널이 죽였다 → 위 메모리 임박 표에 전조가 있었는지 본다\n              Error       프로세스가 0 이 아닌 코드로 죽었다 → 그 컨테이너 로그\n              Completed   정상 종료의 반복 — 재시작 정책 문제\n```\n\n**파드 이름을 누르면 그 파드의 쿠버네티스 이벤트 / 컨테이너 로그가 열린다** (Loki, 새 탭, 대시보드와 같은 시간 범위). Loki 는 죽은 컨테이너의 로그도 갖고 있어 죽기 직전 장면이 남아 있다.",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -3066,7 +3067,7 @@ data:
         {
           "type": "table",
           "title": "스펙 장부 — CPU (컨테이너 전수, millicore)",
-          "description": "#### 선언한 CPU 가 실사용과 맞나\n\n읽는 법은 위 메모리 장부와 같다 — 빨강 = 사용이 req 초과, 파랑 = req 의 절반도 안 씀.\n\n**뜻은 메모리와 다르다.** CPU 는 req 를 넘어도 죽지 않는다.\n\n```\n빨강 (사용 > req)   노드 CPU 가 경합할 때 req 비율만큼만 보장받는다 — 지금처럼\n                   한가할 땐 차이가 없고, 부하 판에서 느려지는 원인이 된다\n파랑 (req 과대)    행2 스케줄 여유가 줄어든다.  메모리와 같은 회수 후보\nlimit             넘으려는 순간마다 잘리는 선\n스로틀 비율        잘림의 커널 실측.  주황(5% 초과)이면 limit 이 일 패턴에 비해\n                  낮다는 뜻 — 사고는 아니고, limit 값을 다듬을 때 보는 재료\n```\n\n주의 — 사용은 유휴값이다. 확정은 부하 계단에서 한다.",
+          "description": "#### 선언한 CPU 가 실사용과 맞나\n\n읽는 법은 위 메모리 장부와 같다 — 빨강 = 사용이 req 초과, 파랑 = req 의 절반도 안 씀.\n\n**뜻은 메모리와 다르다.** CPU 는 req 를 넘어도 컨테이너가 종료되지 않는다.\n\n```\n빨강 (사용 > req)   노드 CPU 가 경합할 때 req 비율만큼만 보장받는다 — 지금처럼\n                   한가할 땐 차이가 없고, 부하 판에서 느려지는 원인이 된다\n파랑 (req 과대)    행2 스케줄 여유가 줄어든다.  메모리와 같은 회수 후보\nlimit             넘으려는 순간마다 잘리는 선\n스로틀 비율        잘림의 커널 실측.  주황(5% 초과)이면 limit 이 일 패턴에 비해\n                  낮다는 뜻 — 사고는 아니고, limit 값을 다듬을 때 보는 재료\n```\n\n주의 — 사용은 유휴값이다. 확정은 부하 계단에서 한다.",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"

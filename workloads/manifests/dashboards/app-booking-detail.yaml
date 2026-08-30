@@ -1,57 +1,38 @@
-# booking 서비스 대시보드 — 정원 계단 판을 돌리는 화면.
+# booking 서비스 대시보드 — 정원 축 (2026-08-29 재설계)
 #
-# 이 화면이 답할 질문은 하나다:
-#   X = 정원(MAX_SESSIONS)을 올려도 확정/초가 더는 안 오르는 지점의 정원.
-#   booking 은 1파드 고정(DDL update, 마이그레이션 도구 없음)이라 "몇 대"가 아니라
-#   "한 대의 한계"를 잰다. 계단 = 2 → 30 → 60 → 200 → 500 (일곱 판).
-#   ⚠ X 는 "동시에 처리 중인 요청 수"가 아니다 — 입장한 사람 대부분은 화면에서
-#     회차·좌석을 고르는 중이라 그 순간 요청을 보내지 않는다. 처리 중 요청 수의
-#     상한은 커넥션 풀 크기(10)고 그것은 접힌 풀 행에서 본다.
+# 행·패널을 백지에서 다시 정했다. 기준 = "그 패널이 없으면 못 하는 판단이 있나".
+#   행1 booking 파드   메모리 게이지 · CPU·스로틀+GC 정지 · heap/nonheap
+#   행2 MySQL          풀 · CPU·스로틀
+#   행3 여정           단계별 통과 수 · 단계별 지연 p99
 #
-# 행 구성 — queue 화면과 같은 리듬이다. 판정이 흐르는 순서가 곧 행 순서다.
-#   행1 이 판의 결론   여정 통과(승격→확정 여섯 계단) · 확정이 돌아오나(자리 반환) · 판의 상태(정원·0 넷·좌석·매진 예상)
-#                      어느 계단에서 떨어지는지가 곧 원인이다
-#   행2 사용자         지연 p99 · 거절(4xx) 엔드포인트·코드별
-#   행3 얼마나 드나    자원 여섯을 상한 대비 % 로. 스펙의 근거가 여기서 나온다
-#   ▸ 접힌 행 셋       MySQL 커넥션 풀 / booking 파드(워밍업 포함) / MySQL
-#                      행 제목이 "언제 여는지"를 적는다. 행3 에서 오른 선이 가리키는 행만 연다
+# 판 경계
+#   이 판의 부하 축은 정원(MAX_SESSIONS)이다. 대기열이 앞에서 인원을 정원으로 깎아
+#   주므로, 부하 인원을 올려도 이 판의 값은 안 변하고 정원을 바꿔야 변한다.
+#   로비 폴링(board)·승격·대기열은 queue(traefik) 판 / Redis·Kafka 는 공유 계층 판.
+#   MySQL 은 booking 만 쓰는 원장이라 이 판 소관이다.
 #
-# queue 화면과 짝: 각 화면이 자기가 발행한 다리를 지킨다 — 이 화면은 확정→반환, queue 는 승격→인증.
-#   여기 여정 통과의 "승격 → 입장 인증"  = queue 가 보낸 것이 닿았나
-#   queue 순환 패널의 "확정 → 자리 반환"  = booking 이 끝낸 것이 닿았나
+# 읽는 방향 — 행3 지연이 오르면 위로 올라가며 원인을 찾는다.
+#   어느 단계가 느린가(행3) → bookings 만 = 원장 쪽(행2: 풀 대기? CPU?)
+#                          → 전부 균일 = 파드 쪽(행1: 스로틀? GC?)
+#   행1·2 가 다 무죄면 파드 밖(노드·디스크)이다 — 인프라 판으로 간다.
 #
-# 여정 통과 패널이 이 화면의 진단 축이다. 자원 지표는 원인을 못 잡는 사건이 있다 —
-#   정원 200·체류 90초 판에서 처리량이 12분의 1로 떨어졌는데 자원은 전부 10% 미만이었고
-#   "0 이어야 하는 값"도 전부 0이었다. 실제로는 세션 타임아웃(60초)보다 체류가 길어
-#   좌석 선택 직전에 입장 인증이 회수되고 있었다. 승격부터 확정까지 단계별 건/초를 겹쳐
-#   보면 어느 계단에서 떨어졌는지가 그 자리에서 보인다.
+# 뺀 것과 이유 (2026-08-29 판정)
+#   행 잠금            결과가 행3 지연과 사후 쿼리로 보인다. 실측 전 판에서 전부 0
+#   확정 종착점 카운터   판이 끝난 뒤 사후 쿼리로 확인한다:
+#                      sum by (result) (increase(booking_confirm_total{result!~"success|replay"}[판 길이]))
+#   좌석 소진           이것만 있어야 가능한 판단이 없다
+#   MySQL 메모리        버퍼풀 고정 할당(실측 553MiB/1Gi 정지). 신호 없음
+#   질의 수             내리는 판단을 못 댔다
+#   Redis(EVALSHA 등)   공유 계층 판 — queue 것과 나란히 봐야 의미가 있다
 #
-# 이 화면에 없는 것 — 두 서비스가 공유하는 자원은 queue 대시보드 한 곳에서만 본다:
-#   traefik(관문)·Redis 커넥션 풀 → queue 화면의 접힌 "인원이 정하는 것" 행.
-#   Redis 자원 → queue 화면의 "뒷단이 정원에 반응하나" 행.
-#   booking 도 Redis 를 쓴다(입장 인증 admitted:* · 좌석 잠금 seat:*) — 같은 Sentinel,
-#   같은 master 다. 정원 계단은 좌석 선점 동시성을 올리는 판이라 booking 발 Redis 부하가
-#   여기서 처음 커진다. Redis 지표에는 호출한 서비스를 가르는 라벨이 없으므로, 계단 중
-#   queue 화면의 Redis 명령 수가 오르면 그 증가분이 booking 몫이다.
+# 한도는 지표로 읽는다 — kube_pod_container_resource_limits · hikaricp_connections_max ·
+#   jvm_memory_max_bytes. 설정을 바꾸면 판이 따라온다.
+#   ⚠ 패널 제목의 절대값(1536Mi·2코어·1코어·768Mi)은 표기용 — limit 을 바꾸면 제목도 같이 고친다.
 #
-# 규약 (queue 화면과 동일):
-#   기준선(limit·정원·풀 크기)은 점선. 빨강은 실패에만 쓴다.
-#   범례 표는 mean·max — mean≈정상 구간, max=봉우리. 판 밖 봉우리를 판의 값으로 읽지 않게.
-#   게이지·cAdvisor 시리즈는 up 조인으로 산 파드만 남긴다(파드 교체 구간의 유령 시리즈 제거).
-#   rate 창 [1m] — booking ServiceMonitor·cAdvisor·mysqld_exporter 전부 15초라 창에 표본 4개.
-#   실패 결과 라벨(seat_conflict 등)은 범례에서 한국어 별칭으로 바꾼다 — 원 라벨은 쿼리에 있다.
-#
-# 실측 조건 표기: 설명의 수치는 그 값을 낸 판의 조건(정원·체류)을 같이 적는다.
-#   정원이나 체류가 다른 계단에서는 다른 값이 나오는 것이 정상이다.
-#
-# 판 설계의 제약 하나: 체류 시간 < SESSION_TIMEOUT(60초).
-#   넘으면 좌석을 고르는 중에 자리가 회수돼 판이 무효가 된다(정원 200·체류 90초 판에서 겪음).
-#   실제 서비스 스펙을 낼 때는 반대 방향이다 — 사용자가 걸리는 시간보다 타임아웃이 길어야 한다.
-#
-# 계측의 한계:
-#   p99 는 버킷 경계(…100·250·500ms·1s…) 사이 직선 보간이라 성긴 구간에서 추정 폭을 갖는다.
-#   Kafka 지연은 발행 파드의 시계로 찍혀 노드 간 시계 차이(NTP 수 ms)가 오차로 섞인다.
-#   부하 도구(k6) 쪽 지표는 이 화면에 없다 — 도구 한계 배제는 run.sh 로그·노트북 CPU 로 한다.
+# 기준선 실측: 유휴 working_set 약 710MiB · heap 사용 200MiB · heap 상한 768MiB ·
+#   nonheap 222MiB · Hikari 풀 30 중 0 · MySQL CPU 1.3% · GC 정지 0.005%.
+#   (2026-08-30 개정: limit 1Gi→1536Mi·비율 75→50 — 오픈 버스트 OOMKill 2회의 조치.
+#    같은 날 버스트 실측 working_set 최고 1,121Mi.)
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -64,1775 +45,204 @@ data:
     {
       "uid": "app-booking-detail",
       "title": "booking 서비스",
-      "tags": [
-        "cgv",
-        "app"
-      ],
+      "tags": ["cgv", "app", "booking", "mysql"],
+      "editable": true,
       "timezone": "browser",
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "30s",
       "schemaVersion": 39,
-      "refresh": "10s",
-      "time": {
-        "from": "now-30m",
-        "to": "now"
-      },
+      "templating": { "list": [] },
       "panels": [
         {
           "type": "row",
-          "title": "1. 이 판의 결론 — 정원을 올려도 확정이 안 늘면 직전 계단이 이 파드의 상한이다",
+          "title": "1. booking 파드 — 여정을 처리하는 몸",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
           "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 0
-          },
           "panels": []
         },
         {
+          "id": 1,
           "type": "timeseries",
-          "title": "여정 통과 — 어느 계단에서 떨어지나 (건/초)",
-          "description": "**사람이 줄에서 예매까지 가는 여섯 계단.** 위에서 아래로 내려가는 계단 모양이 정상이다.\n\n- **승격** queue 가 자리를 내준 수\n- **입장 인증** booking 이 그 사람을 받아들인 수\n- **회차 조회 200 · 좌석 조회 200 · 좌석 선점 200** 각 단계를 통과한 수\n- **확정** 예매를 끝낸 수\n\n**어느 계단에서 뚝 떨어지는지가 곧 원인이다.**\n- 승격 대비 인증이 낮다 → 전달이 늦다. 지연과 트레이스는 queue 화면의 「입장이 닿나」가 든다\n- 인증은 높은데 좌석 선점이 낮다 → 인증이 지워졌거나 좌석이 없다. 오른쪽 4xx 패널이 코드로 답한다\n- 좌석 선점은 높은데 확정이 낮다 → 트랜잭션이 막혔다. ▸MySQL 커넥션 풀 행\n\n정원 200 · 체류 90초 판에서 승격 4.4 · 인증 4.4 인데 확정이 0.18 이었다. 세션 타임아웃(60초)보다 체류가 길어 좌석 선택 직전에 인증이 회수된 것이다 — 자원 지표는 전부 10% 미만이라 그 화면으로는 못 잡았다.",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "gridPos": {
-            "h": 11,
-            "w": 9,
-            "x": 0,
-            "y": 1
-          },
+          "title": "메모리 — working_set / limit 1536Mi (커널의 선)",
+          "description": "커널이 잰 \"지금 쥐고 있는 메모리\" ÷ memory limit. **100%(점선)에 닿으면 커널이 파드를 죽인다(OOMKill).**\n\n2026-08-30 사용자 10,000 부하에서 실제로 일어났다 — limit 1Gi 시절 여유가 24Mi 뿐이라 오픈 버스트에 OOMKill 2회. limit 을 1536Mi 로 올리고 heap 상한은 그대로(768Mi) 둬서 여유를 546Mi 로 만들었다. 같은 날 버스트 실측 최고 1,121Mi — 옛 limit 이면 죽는 값이다.\n\n타임시리즈인 이유 — 이 판의 용도가 부하 중 \"언제 얼마까지 올랐나\"의 사후 분석이라서다. 게이지는 마지막 값 하나만 남아 판이 끝나면 판 동안의 움직임이 사라진다. 지금 값은 범례 Last 로 읽는다.\n\nJVM 은 메모리를 미리 예약해서 쓰므로 이 선은 유휴에서도 낮지 않다(유휴 실측 약 710Mi — 그때 heap 실사용은 200Mi). GC 가 heap 을 비워도 JVM 은 OS 에 반환하지 않아서, 이 선은 오르기만 하고 거의 안 내려온다.\n\n**이 선 혼자서는 판정이 안 끝난다** — 높은 것이 예약분인지 진짜 부족인지는 오른쪽 heap 패널이 가른다. heap 이 낮은데 이 선만 높으면 예약분이고, heap 도 상한에 붙었으면 진짜 부족이다.\n\nlimit 은 지표로 읽으므로 limit 을 바꾸면 선이 따라온다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 1 },
           "targets": [
-            {
-              "refId": "A",
-              "expr": "max(queue_promotion_rate) or vector(0)",
-              "legendFormat": "1 승격"
-            },
-            {
-              "refId": "B",
-              "expr": "sum(rate(booking_admissions_total{application=\"cgv-booking\", result=\"ok\"}[1m])) or vector(0)",
-              "legendFormat": "2 입장 인증"
-            },
-            {
-              "refId": "C",
-              "expr": "sum(rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri=~\".*screenings\", status=\"200\"}[1m])) or vector(0)",
-              "legendFormat": "3 회차 조회"
-            },
-            {
-              "refId": "D",
-              "expr": "sum(rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri=~\".*/seats\", status=\"200\"}[1m])) or vector(0)",
-              "legendFormat": "4 좌석 조회"
-            },
-            {
-              "refId": "E",
-              "expr": "sum(rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri=~\".*seats/select\", status=\"200\"}[1m])) or vector(0)",
-              "legendFormat": "5 좌석 선점"
-            },
-            {
-              "refId": "F",
-              "expr": "sum(rate(booking_confirm_total{application=\"cgv-booking\", result=\"success\"}[1m])) or vector(0)",
-              "legendFormat": "6 확정"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "reqps",
-              "decimals": 2,
-              "min": 0,
-              "custom": {
-                "fillOpacity": 0,
-                "lineWidth": 2
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "6 확정"
-                },
-                "properties": [
-                  {
-                    "id": "custom.lineWidth",
-                    "value": 3
-                  },
-                  {
-                    "id": "custom.fillOpacity",
-                    "value": 15
-                  }
-                ]
-              }
-            ]
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "mean",
-                "max"
-              ]
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          }
-        },
-        {
-          "type": "stat",
-          "title": "판의 상태 — 넷은 0, 좌석은 남아 있어야 한다",
-          "description": "**이 판의 조건과, 판을 세우는 값들.** 그래프가 아니라 숫자로 둔다 — \"0인가 아닌가\"를 선에서 찾게 하지 않는다.\n\n- **정원** 이 계단의 값(MAX_SESSIONS). 판 내내 상수다\n- **5xx** 서버가 깨졌다\n- **풀 포기** 커넥션을 30초 기다리다 실패했다. 한 건이라도 있으면 이미 무너진 뒤다\n- **재시작** 그 구간의 모든 수치를 버린다 — 워밍업·풀이 처음부터 다시 시작된다\n- **인증 회수** 세션 타임아웃으로 자리를 뺏긴 수. **승격보다 크면 체류가 타임아웃(60초)을 넘고 있다** — queue 화면의 체류 패널과 짝이다\n- **남은 좌석** booking 이 5초마다 좌석 행을 직접 세어 낸 값이다(전체 − 팔린 수). 0 이 되면 그 뒤 구간은 전원이 매진을 확인하고 퇴장하는 구간이라 측정에서 뺀다\n- **이 속도면 매진까지** 남은 좌석 ÷ 지금 확정/초. 이 정원이 내는 결과값이고, 스펙에서 M(매진 목표 시간)에 대응한다",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "gridPos": {
-            "h": 11,
-            "w": 8,
-            "x": 16,
-            "y": 1
-          },
-          "targets": [
-            {
-              "refId": "Z",
-              "expr": "max(queue_capacity and on(pod) (up{job=\"app/queue\"} == 1)) or vector(0)",
-              "legendFormat": "정원 (MAX_SESSIONS)"
-            },
-            {
-              "refId": "A",
-              "expr": "sum(increase(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*|/api/admin.*\", status=~\"5..\"}[1m])) or vector(0)",
-              "legendFormat": "5xx (1분)"
-            },
-            {
-              "refId": "B",
-              "expr": "sum(increase(hikaricp_connections_timeout_total{application=\"cgv-booking\"}[1m])) or vector(0)",
-              "legendFormat": "풀 포기 (1분)"
-            },
-            {
-              "refId": "C",
-              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"app\", container=\"booking\"}[10m])) or vector(0)",
-              "legendFormat": "재시작 (10분)"
-            },
-            {
-              "refId": "D",
-              "expr": "sum(rate(booking_admission_revoked_total{application=\"cgv-booking\"}[1m])) or vector(0)",
-              "legendFormat": "인증 회수 (건/초)"
-            },
-            {
-              "refId": "E",
-              "expr": "max(booking_seats_remaining{application=\"cgv-booking\"})",
-              "legendFormat": "남은 좌석"
-            },
-            {
-              "refId": "F",
-              "expr": "max(booking_seats_remaining{application=\"cgv-booking\"}) / (sum(rate(booking_confirm_total{application=\"cgv-booking\", result=\"success\"}[1m])) > 0)",
-              "legendFormat": "이 속도면 매진까지"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "none",
-              "decimals": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 1
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "정원 (MAX_SESSIONS)"
-                },
-                "properties": [
-                  {
-                    "id": "thresholds",
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        {
-                          "color": "text",
-                          "value": null
-                        }
-                      ]
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "인증 회수 (건/초)"
-                },
-                "properties": [
-                  {
-                    "id": "decimals",
-                    "value": 2
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "남은 좌석"
-                },
-                "properties": [
-                  {
-                    "id": "thresholds",
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        {
-                          "color": "red",
-                          "value": null
-                        },
-                        {
-                          "color": "orange",
-                          "value": 1
-                        },
-                        {
-                          "color": "green",
-                          "value": 200
-                        }
-                      ]
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "이 속도면 매진까지"
-                },
-                "properties": [
-                  {
-                    "id": "unit",
-                    "value": "s"
-                  },
-                  {
-                    "id": "decimals",
-                    "value": 0
-                  },
-                  {
-                    "id": "thresholds",
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        {
-                          "color": "text",
-                          "value": null
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "options": {
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value_and_name",
-            "colorMode": "value",
-            "orientation": "auto"
-          }
-        },
-        {
-          "type": "timeseries",
-          "title": "확정이 돌아오나 — 확정 vs 자리 반환",
-          "description": "**booking 이 보낸 확정이 queue 에 닿아 자리가 비었나.** 예매가 끝나면 booking 이 Kafka 로 알리고 queue 가 그 자리를 회수한다 — 이게 돌아와야 다음 사람이 승격된다. 왼쪽 「여정 통과」의 확정 계단이 이 패널의 입력이다.\n\n- **확정/초** 예매가 끝난 수\n- **자리 반환/초** queue 가 실제로 자리를 비운 수. 소비 성공마다 오르는 카운터(`queue_completed_total`)라 노드 간 시계 차이와 무관하다 — 확정/초 와 직접 대조된다\n- **반환 지연 p99**(왼쪽 축 — exemplar 점이 이 선 위에 얹힌다) 확정부터 자리가 빌 때까지. **점을 누르면 booking 이 시작한 트레이스**(/api/bookings → Kafka → queue 반환)가 열린다\n- **queue 소비 실패** 0 이라 안 보이는 것이 정상. 선이 서면 메시지는 닿았는데 queue 가 처리하지 못하는 중이다(미커밋 재시도)\n\n**두 선이 겹쳐야 정상이고, 벌어지면 자리가 안 돌아오는 중이다.** 확정보다 반환이 적으면 소비 실패 카운터와 Loki 의 `예매완료 수신` 로그 수를 같이 본다 — 로그 수가 확정과 같으면 처리는 됐고 지표만 안 온 것이다. 지연만 오르면 전달은 되는데 늦는 것이다.\n\n⚠ **반환 지연 p99 는 반환 건수보다 적은 표본에서 나온다.** p99 는 지연 히스토그램에서 뽑는데, 그 히스토그램은 음수 지연을 버린다 — 발행 시각이 booking 파드의 시계라 queue 노드가 뒤에 있으면 음수가 된다(노드 간 약 11ms). 그래서 p99 는 시계가 역전되지 않은 관측만의 분포다. 2026-08-23 판 실측: 확정 3,400 · 히스토그램 관측 1,685 · Loki 소비 로그 3,505. 버킷 경계 사이는 보간 추정이다.\n\n⚠ `queue_completed_total` 은 2026-08-23 배포(dev-68)부터 있다. 그 이전 구간에서는 반환 선이 그려지지 않는다.",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "gridPos": {
-            "h": 11,
-            "w": 7,
-            "x": 9,
-            "y": 1
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(rate(booking_confirm_total{application=\"cgv-booking\", result=\"success\"}[1m])) or vector(0)",
-              "legendFormat": "확정/초 — bookings-completed 발행"
-            },
-            {
-              "refId": "B",
-              "expr": "sum(rate(queue_completed_total[1m])) or vector(0)",
-              "legendFormat": "자리 반환/초 — bookings-completed 소비"
-            },
-            {
-              "refId": "C",
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_completed_lag_seconds_bucket[1m])))",
-              "legendFormat": "반환 지연 p99 — bookings-completed",
-              "exemplar": true
-            },
-            {
-              "refId": "D",
-              "expr": "sum(rate(queue_kafka_consume_failures_total[1m])) > 0",
-              "legendFormat": "소비 실패/초 — bookings-completed"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s",
-              "decimals": 3,
-              "min": 0,
-              "custom": {
-                "fillOpacity": 0,
-                "lineWidth": 2
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "반환 지연 p99 — bookings-completed"
-                },
-                "properties": [
-                  {
-                    "id": "custom.axisLabel",
-                    "value": "지연"
-                  },
-                  {
-                    "id": "custom.lineStyle",
-                    "value": {
-                      "fill": "dash",
-                      "dash": [
-                        6,
-                        6
-                      ]
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "확정/초.*|자리 반환/초.*|소비 실패.*"
-                },
-                "properties": [
-                  {
-                    "id": "unit",
-                    "value": "reqps"
-                  },
-                  {
-                    "id": "decimals",
-                    "value": 2
-                  },
-                  {
-                    "id": "min",
-                    "value": 0
-                  },
-                  {
-                    "id": "custom.axisPlacement",
-                    "value": "right"
-                  },
-                  {
-                    "id": "custom.axisLabel",
-                    "value": "건/초"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "확정/초 — bookings-completed 발행"
-                },
-                "properties": [
-                  {
-                    "id": "custom.lineWidth",
-                    "value": 3
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "소비 실패/초 — bookings-completed"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "red"
-                    }
-                  },
-                  {
-                    "id": "custom.fillOpacity",
-                    "value": 40
-                  }
-                ]
-              }
-            ]
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "mean",
-                "max"
-              ]
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          }
-        },
-        {
-          "type": "row",
-          "title": "2. 사용자가 겪는 것",
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 12
-          },
-          "panels": []
-        },
-        {
-          "type": "timeseries",
-          "title": "지연 p99 (엔드포인트별)",
-          "description": "**사용자가 겪은 지연. 여기가 오르면 아래 `자원 사용률` 로 내려간다.**\n\np99 = 100명 중 99번째로 느린 사람의 값. 평균은 느린 소수를 다수가 가리고,\n최댓값은 한 건이 전체를 대표해 둘 다 못 쓴다.\n\n경로 셋은 전부 Redis 인증 확인을 먼저 지나고 MySQL 을 읽는다 — 경로 하나가 자원\n하나에 대응하지 않으므로, **몇 개가 같이 올랐느냐**로 좁힌다.\n- 셋 다 오른다 → 공통 구간(Redis·traefik)이다. queue 대시보드에서 본다\n- `/api/bookings` 만 오른다 → 그 경로에만 있는 트랜잭션. ▸MySQL 커넥션 풀 행\n- 조회 둘만 오른다 → MySQL 읽기. ▸MySQL 행의 `MySQL 안쪽`\n\n`/api/screenings/board` 는 여기서 뺐다. **이 판은 정원 안에서 예매하는 사람이 겪는 것을 보는데, 그 경로는 게이트 앞이라 로비 인원 전체가 부른다** — 섞으면 p99 가 누구 것인지 안 갈린다. 그 지연은 queue 판의 `사용자가 겪는 것` 에 있다. `요청` 패널에서도 같은 이유로 뺐다 — 이 판은 정원 안에서 예매하는 사람이 만드는 부하만 본다.\n\n⚠ 버킷 경계(…100·250·500ms·1s…) 사이는 직선 보간이라 값은 추정 폭을 갖는다.\n정원 2 판 — bookings 봉우리 482ms(MySQL 재시작 여파 포함) · seats 49ms.",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 12,
-            "x": 0,
-            "y": 13
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri!~\"/actuator.*|/api/admin.*|/api/screenings/board\"}[1m])))",
-              "legendFormat": "{{uri}}",
-              "exemplar": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s",
-              "decimals": 3,
-              "min": 0,
-              "custom": {
-                "fillOpacity": 0,
-                "lineWidth": 2
-              }
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "mean",
-                "max"
-              ]
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          }
-        },
-        {
-          "type": "timeseries",
-          "title": "거절 (4xx) — 엔드포인트·코드별 (건/초)",
-          "description": "**깨진 것(5xx)과 거절된 것(4xx)을 가른다.** 5xx 는 `판의 상태` stat 이 센다.\n\n비율 하나로 묶으면 원인이 안 갈려서 코드별로 나눈다. 뜻이 전혀 다르다.\n\n- **409 on seats/select** 같은 좌석을 둘이 골랐다. 정원이 커지거나 남은 좌석이 줄면 오르는 것이 설계대로다\n- **403 on seats/select** 입장 인증이 없다. **세션 타임아웃으로 회수된 것이다** — `판의 상태` 의 인증 회수와 짝이다. 체류가 60초를 넘고 있다는 신호\n- **403 on screenings** 승격 직후 인증이 아직 안 왔다. 부하 도구가 재시도하므로 **성공 수와 나란히 읽어야 뜻이 나온다** — 200 이 승격 수와 같으면 결국 다 들어간 것이고, 403 이 그 몇 배인지가 곧 몇 번 튕겼는지다. **이 비율은 booking 스로틀의 대리 지표다.** 2026-08-21 같은 부하(6000 VU · 6분) 두 판을 나란히 놓으면 그대로 보인다.\n\n```\n            booking 스로틀   403 : 200      인증 지연 p50   확정/초\n건강한 판        5.85%      13.7 : 14.0        0.22초       8.77\n스로틀 판       52.88%     172.9 :  6.6         10초+       1.99\n```\n\n스로틀이 걸리면 Kafka 소비가 밀려 인증이 늦고, 그 사이 재시도가 403 으로 쌓이고, 그 거절을 처리하는 데 CPU 가 다시 쓰인다. **여기가 26배로 벌어져 있으면 원인은 이 패널이 아니라 자원 행의 스로틀이다.**\n- **404·400** 부하 스크립트가 잘못 보낸 요청이다. 서버가 아니라 스크립트를 본다\n\n`> 0` 이라 안 난 조합은 범례에 없다.",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 12,
-            "x": 12,
-            "y": 13
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*|/api/admin.*\", status=~\"4..\"}[1m])) > 0",
-              "legendFormat": "{{status}} {{uri}}"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "reqps",
-              "decimals": 2,
-              "min": 0,
-              "noValue": "거절 없음",
-              "custom": {
-                "fillOpacity": 20,
-                "lineWidth": 2,
-                "stacking": {
-                  "mode": "normal"
-                }
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "403.*"
-                },
-                "properties": [
-                  {
-                    "id": "color",
-                    "value": {
-                      "mode": "fixed",
-                      "fixedColor": "orange"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "mean",
-                "max"
-              ]
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          }
-        },
-        {
-          "type": "row",
-          "collapsed": false,
-          "title": "3. 얼마나 드나 — 자원 여섯을 상한 대비 % 로 (스펙의 근거)",
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 23
-          },
-          "panels": []
-        },
-          {
-            "type": "timeseries",
-            "title": "요청 (건/초, 엔드포인트별) — 아래 자원의 분모",
-            "description": "**아래 자원 사용률의 분모다.** 자원이 오른 것이 요청이 늘어서인지, 요청은 그대로인데 한 건이 무거워져서인지를 이걸로 가른다. 확정은 도는데 여기가 0 이면 계측이 죽은 것이다.\n\nqueue 와 모양이 다르다 — 한 사람이 폴링 없이 조회 몇 번 + 확정 한 번으로 끝난다.\n요청 수는 적고 한 건이 무겁다. `/api/movies` 는 nginx 가 10초 캐시해 거의 안 온다.\nrun.sh 의 `/api/admin/reset` 은 사용자 부하가 아니라서 뺐다.",
-            "datasource": {
-              "type": "prometheus",
-              "uid": "mimir"
-            },
-            "gridPos": {
-              "h": 7,
-              "w": 24,
-              "x": 0,
-              "y": 24
-            },
-            "targets": [
-              {
-                "refId": "A",
-                "expr": "sum by (uri) (rate(http_server_requests_seconds_count{application=\"cgv-booking\", uri!~\"/actuator.*|/api/admin.*|/api/screenings/board\"}[1m]))",
-                "legendFormat": "{{uri}}"
-              }
-            ],
-            "fieldConfig": {
-              "defaults": {
-                "unit": "reqps",
-                "decimals": 1,
-                "min": 0,
-                "custom": {
-                  "fillOpacity": 10,
-                  "lineWidth": 2
-                }
-              },
-              "overrides": []
-            },
-            "options": {
-              "legend": {
-                "displayMode": "table",
-                "placement": "bottom",
-                "calcs": [
-                  "mean",
-                  "max"
-                ]
-              },
-              "tooltip": {
-                "mode": "multi",
-                "sort": "desc"
-              }
-            }
-          },
-        {
-          "type": "timeseries",
-          "title": "자원 사용률 — 전부 상한 대비 %",
-          "description": "**이 정원이 자원을 얼마나 쓰나.** 스펙의 근거가 여기서 나온다.\n자원마다 단위가 달라 비교가 안 되니 전부 \"상한 대비 %\"로 바꿨다.\n\n- **booking CPU** 컨테이너 CPU limit 대비 → ▸booking 파드\n- **booking 스로틀** 커널이 100ms 마다 주는 몫을 다 써서 잘린 비율. 평균 CPU 가 절반이어도 설 수 있다 → ▸booking 파드\n- **MySQL 풀 사용** 커넥션 10 → ▸MySQL 커넥션 풀\n- **MySQL CPU** 컨테이너 CPU limit 대비 → ▸MySQL\n- **JVM 힙** 상한 768Mi (limit 1Gi 의 75%) → ▸booking 파드\n- **GC 멈춤** 1초 중 GC 로 정지한 비율 → ▸booking 파드\n\n**100% 를 향해 먼저 기어오르는 선이 다음에 막힐 자리다.** 그 선이 가리키는 접힌 행을 연다.\n\n정원 계단 여섯 판(정원 30-500)에서는 어떤 선도 25% 를 안 넘었고, 판을 끝낸 것은 자원이 아니라 좌석 재고였다. 2026-08-23 판에서 그 결론이 바뀌었다 — 체류를 18.6초로 줄여 회전을 5.9배로 올리니 booking CPU 가 1코어에 붙었고(스로틀 99.7%), limit 을 2코어로 올려 다시 재니 1.358 코어를 썼다. **정원이 같아도 체류가 짧아지면 회전이 빨라지고, 그러면 재고보다 자원이 먼저 찬다.**",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "gridPos": {
-            "h": 11,
-            "w": 24,
-            "x": 0,
-            "y": 31
-          },
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"booking\"}[1m]) and on(pod) (up{job=\"booking\"} == 1)) / max(kube_pod_container_resource_limits{namespace=\"app\", container=\"booking\", resource=\"cpu\"})",
-              "legendFormat": "booking CPU / limit"
-            },
-            {
-              "refId": "B",
-              "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"booking\"}[1m])) / sum(rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"booking\"}[1m]))",
-              "legendFormat": "booking 스로틀"
-            },
-            {
-              "refId": "C",
-              "expr": "sum(hikaricp_connections_active{application=\"cgv-booking\"} and on(pod) (up{job=\"booking\"} == 1)) / max(hikaricp_connections_max{application=\"cgv-booking\"} and on(pod) (up{job=\"booking\"} == 1))",
-              "legendFormat": "MySQL 풀 사용 / 10"
-            },
-            {
-              "refId": "D",
-              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"mysql\"}[1m])) / max(kube_pod_container_resource_limits{namespace=\"data\", container=\"mysql\", resource=\"cpu\"})",
-              "legendFormat": "MySQL CPU / limit"
-            },
-            {
-              "refId": "E",
-              "expr": "sum(jvm_memory_used_bytes{application=\"cgv-booking\", area=\"heap\"} and on(pod) (up{job=\"booking\"} == 1)) / sum(jvm_memory_max_bytes{application=\"cgv-booking\", area=\"heap\"} > 0 and on(pod) (up{job=\"booking\"} == 1))",
-              "legendFormat": "JVM 힙 / 768Mi"
-            },
-            {
-              "refId": "F",
-              "expr": "sum(rate(jvm_gc_pause_seconds_sum{application=\"cgv-booking\"}[1m]))",
-              "legendFormat": "GC 멈춤 비율"
-            }
+            { "refId": "A", "expr": "container_memory_working_set_bytes{namespace=\"app\", container=\"booking\"} / on(pod) group_left() kube_pod_container_resource_limits{namespace=\"app\", container=\"booking\", resource=\"memory\"} and on(pod) (kube_pod_status_phase{namespace=\"app\", phase=\"Running\"} == 1)", "legendFormat": "{{pod}}" },
+            { "refId": "B", "expr": "vector(1)", "legendFormat": "limit" }
           ],
           "fieldConfig": {
             "defaults": {
               "unit": "percentunit",
-              "decimals": 2,
+              "decimals": 1,
               "min": 0,
-              "max": 1,
-              "custom": {
-                "fillOpacity": 0,
-                "lineWidth": 2
-              }
+              "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "axisSoftMax": 1.05 }
             },
-            "overrides": []
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } }, { "id": "custom.lineWidth", "value": 1 }, { "id": "custom.fillOpacity", "value": 0 }, { "id": "custom.hideFrom", "value": { "legend": false, "tooltip": true, "viz": false } } ] }
+            ]
           },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "mean",
-                "max"
-              ]
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] } }
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "CPU · 스로틀 · GC 정지 — limit 2코어 대비 % (시간의 사건들)",
+          "description": "선 셋이 각각 다른 사건이다. 전부 비율이라 한 축에 선다.\n\n- **CPU** 사용량 ÷ limit. 일을 얼마나 하나\n- **스로틀(빨강)** 커널은 CPU 를 100ms 조각으로 배급한다. 몫을 다 쓰고 잘린 비율. 0 이 정상\n- **GC 정지(주황)** 1초당 GC 로 멈춘 시간. GC 는 heap 을 치우는 동안 애플리케이션을 세우고, 멈춘 시간은 진행 중이던 모든 요청에 더해진다. 0.05 = 시간의 5% 를 멈춘 것\n\n**행3 지연이 올랐을 때 판정이 이 패널에서 끝난다.**\n\n```\nCPU 높다              일이 많다 — limit 상향 검토\nCPU 낮다 + 스로틀 섰다  배급 간격이 원인\nCPU 낮다 + GC 섰다     청소가 원인 — 오른쪽 heap 패널에서 heap 이 찼는지 본다\n셋 다 아니다           파드 무죄 — 행2(MySQL)로 내려간다\n```\n\nGC 자체도 CPU 를 쓴다 — heap 이 차서 GC 가 잦아지면 CPU 선도 같이 오른다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 10, "x": 6, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"booking\"}[$__rate_interval])) / on(pod) group_left() kube_pod_container_resource_limits{namespace=\"app\", container=\"booking\", resource=\"cpu\"} and on(pod) (kube_pod_status_phase{namespace=\"app\", phase=\"Running\"} == 1)", "legendFormat": "CPU {{pod}}" },
+            { "refId": "B", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"booking\"}[$__rate_interval])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"booking\"}[$__rate_interval])) and on(pod) (kube_pod_status_phase{namespace=\"app\", phase=\"Running\"} == 1)", "legendFormat": "스로틀 {{pod}}" },
+            { "refId": "C", "expr": "sum(rate(jvm_gc_pause_seconds_sum{application=\"cgv-booking\"}[$__rate_interval]))", "legendFormat": "GC 정지" },
+            { "refId": "D", "expr": "vector(1)", "legendFormat": "limit" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 1,
+              "min": 0,
+              "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never", "axisSoftMax": 1.05 }
             },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          }
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "스로틀.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+              { "matcher": { "id": "byName", "options": "GC 정지" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] },
+              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } }, { "id": "custom.lineWidth", "value": 1 }, { "id": "custom.hideFrom", "value": { "legend": false, "tooltip": true, "viz": false } } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } }
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "heap · nonheap — 상한 768Mi (언어의 선)",
+          "description": "JVM 안쪽의 메모리. queue 로 치면 \"힙이 GOMEMLIMIT 에 붙었나\"와 같은 판정이다.\n\n- **heap 사용** 요청을 처리하며 만드는 객체가 실제로 쓰는 양. 톱니 모양(오르고, GC 가 비우고)이 정상\n- **heap 상한(점선)** limit 1536Mi × 50%(MaxRAMPercentage) = 768Mi. JVM 이 강제하는 선 — heap 은 이 값을 넘지 못한다\n- **nonheap** JVM 자신의 살림 — 클래스 정보 · 컴파일된 코드 · 스레드 스택. 기동 후 거의 고정(222Mi)이고, 움직이는 순간이 사건이다\n\n**죽음 두 종류가 갈리는 자리다.**\n```\nheap 이 상한에 붙고 GC 가 못 비운다   JVM 스스로 죽음 (OutOfMemoryError)\nworking_set 이 limit 에 닿는다        커널이 죽임 (OOMKill) — 왼쪽 패널이 그 감시\n```\n이전 설정(1Gi×75%)은 heap 768 + nonheap 222 ≈ limit 이라 여유가 24Mi 뿐이었고, 2026-08-30 오픈 버스트에서 실제로 OOMKill 이 났다. 지금은 heap 상한을 그대로 두고 limit 만 올려 커널 쪽 여유가 546Mi 다 — heap 밖 메모리(커넥션 버퍼·JIT 작업분·소켓)가 사는 자리.\n\n부하 중 heap 최고점이 \"heap 상한 768Mi 가 충분한가\" 판정의 실측 근거다 — 상한에 붙으면 그때 limit·비율을 같이 재산정한다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum(jvm_memory_used_bytes{application=\"cgv-booking\", area=\"heap\"})", "legendFormat": "heap 사용" },
+            { "refId": "B", "expr": "sum(jvm_memory_max_bytes{application=\"cgv-booking\", area=\"heap\"})", "legendFormat": "heap 상한" },
+            { "refId": "C", "expr": "sum(jvm_memory_used_bytes{application=\"cgv-booking\", area=\"nonheap\"})", "legendFormat": "nonheap" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "bytes", "min": 0, "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "heap 상한" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } }, { "id": "custom.lineWidth", "value": 1 }, { "id": "custom.fillOpacity", "value": 0 } ] },
+              { "matcher": { "id": "byName", "options": "nonheap" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } }
         },
         {
           "type": "row",
-          "title": "▸ MySQL 커넥션 풀 — /api/bookings 만 느리거나, 자원 패널의 풀 사용이 오를 때 연다",
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 36
+          "title": "2. MySQL — 확정이 적히는 원장. booking 이 기다리는 곳",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+          "collapsed": false,
+          "panels": []
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "커넥션 풀 — 동시에 MySQL 에 던질 수 있는 질의 수의 상한",
+          "description": "MySQL(JDBC)은 커넥션 하나가 한 번에 질의 하나다 — 답이 올 때까지 그 커넥션은 묶인다. 그래서 **풀 크기 = 동시 질의 수의 상한**이다. (Redis 는 커넥션 하나에 명령을 줄줄이 밀어넣어 이 상한이 없다.)\n\n- **사용 중** 지금 질의를 실행 중인 커넥션 수\n- **상한(점선)** `hikaricp_connections_max`. 지표로 읽으므로 DB_POOL_SIZE 를 바꾸면 선이 따라온다\n- **대기(빨강)** 커넥션을 못 얻어 기다리는 요청 수. **0 이 아니게 되는 순간이 사건** — 그 대기 시간이 행3 지연에 그대로 더해진다\n\n**오른쪽 MySQL CPU 와 짝으로 읽는다.**\n```\n대기 섰다 + MySQL CPU 놀고 있다   풀이 작다 — 늘린다\n대기 섰다 + MySQL CPU 꽉 찼다     풀을 늘려도 소용없다 — 코어가 부족하다\n```\n`DB_POOL_SIZE: 10  # 실측 후 튜닝` 의 그 실측이 이 패널이다 — 대기가 서는 정원이 답이다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "sum(hikaricp_connections_active{application=\"cgv-booking\"})", "legendFormat": "사용 중" },
+            { "refId": "B", "expr": "sum(hikaricp_connections_pending{application=\"cgv-booking\"})", "legendFormat": "대기" },
+            { "refId": "C", "expr": "max(hikaricp_connections_max{application=\"cgv-booking\"})", "legendFormat": "상한" }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "decimals": 0, "min": 0, "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "대기" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+              { "matcher": { "id": "byName", "options": "상한" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } }, { "id": "custom.lineWidth", "value": 1 }, { "id": "custom.fillOpacity", "value": 0 } ] }
+            ]
           },
-          "panels": [
-            {
-              "type": "timeseries",
-              "title": "풀 — 쓰는 중 · 기다리는 중 / 크기",
-              "description": "**MySQL 로 나가는 문 10개.** 트랜잭션이 끝날 때까지 문 하나를 쥔다 —\n확정 한 건이 좌석 확인·예매 저장·좌석 갱신을 한 트랜잭션으로 묶는 동안 그 문은 못 쓴다.\n\n- **쓰는 중**이 크기에 붙는다 → 문이 다 찼다\n- **기다리는 중** > 0 → 문이 없어 줄 선 요청이 있다. 기다림은 지연이고, 포기(30초)는 `판의 상태` stat\n\n쓰는 중이 차는데 MySQL 이 놀면(`자원 사용률`) 풀을 올리고, MySQL 이 이미 바쁘면 풀을 올려도\n안 는다 — 동시에 던지는 질의만 늘어 더 느려진다.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 0,
-                "y": 37
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "sum(hikaricp_connections_active{application=\"cgv-booking\"} and on(pod) (up{job=\"booking\"} == 1))",
-                  "legendFormat": "쓰는 중"
-                },
-                {
-                  "refId": "B",
-                  "expr": "sum(hikaricp_connections_pending{application=\"cgv-booking\"} and on(pod) (up{job=\"booking\"} == 1))",
-                  "legendFormat": "기다리는 중"
-                },
-                {
-                  "refId": "C",
-                  "expr": "max(hikaricp_connections_max{application=\"cgv-booking\"} and on(pod) (up{job=\"booking\"} == 1))",
-                  "legendFormat": "풀 크기"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "none",
-                  "decimals": 0,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 10,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "풀 크기"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.lineStyle",
-                        "value": {
-                          "fill": "dash",
-                          "dash": [
-                            6,
-                            6
-                          ]
-                        }
-                      },
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "text"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "기다리는 중"
-                    },
-                    "properties": [
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "orange"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "MySQL CPU · 스로틀 — limit 1코어 대비 %",
+          "description": "MySQL 컨테이너의 CPU 사용률(사용량 ÷ limit)과 스로틀 비율.\n\n**MySQL 은 1코어다.** booking 이 2코어라 앱은 여유가 있어도 원장이 먼저 걸릴 수 있고, 그때 앱 CPU 는 낮은 채 행3 의 지연만 오른다 — 특히 원장에 쓰는 유일한 경로인 `/api/bookings` 가.\n\n- **실선** CPU 사용률\n- **빨간 선** 스로틀. 0 이 정상\n\n왼쪽 풀 패널과 짝으로 읽는다(그쪽 설명의 판정 표).\n\n확정 커밋은 디스크 쓰기를 기다린다 — 여기(CPU)가 놀고 풀도 여유인데 확정만 느리면 원인은 디스크 쪽이고, 그 판정은 노드 지표(인프라 판) 몫이다.\n\nmysqld_exporter 컨테이너(0.1코어)는 이 패널에 없다 — 원장 자신의 부하가 아니다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"mysql\"}[$__rate_interval])) / on(pod) group_left() kube_pod_container_resource_limits{namespace=\"data\", container=\"mysql\", resource=\"cpu\"} and on(pod) (kube_pod_status_phase{namespace=\"data\", phase=\"Running\"} == 1)", "legendFormat": "CPU {{pod}}" },
+            { "refId": "B", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"data\", container=\"mysql\"}[$__rate_interval])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"data\", container=\"mysql\"}[$__rate_interval])) and on(pod) (kube_pod_status_phase{namespace=\"data\", phase=\"Running\"} == 1)", "legendFormat": "스로틀 {{pod}}" },
+            { "refId": "C", "expr": "vector(1)", "legendFormat": "limit" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 1,
+              "min": 0,
+              "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never", "axisSoftMax": 1.05 }
             },
-            {
-              "type": "timeseries",
-              "title": "얻는 데 걸린 시간 · 쥐고 있던 시간",
-              "description": "**풀 부족과 MySQL 지연이 이 두 선으로 갈린다.**\n\n- **얻는 데 걸린 시간** 문이 빌 때까지 기다린 평균\n- **쥐고 있던 시간** 문을 잡고 일한 평균 = 트랜잭션 길이\n\n- 얻는 시간만 오른다 → 문이 부족하다. 풀을 올린다\n- 쥔 시간이 먼저 오르고 얻는 시간이 따라 오른다 → MySQL 이 느려졌다. ▸MySQL 행의 `MySQL 안쪽`\n- 둘 다 평평한데 p99 가 오른다 → 원인이 풀 밖이다\n\n평균값이다(합 ÷ 건수) — Hikari 가 분위수를 안 내서, 한 건의 튐은 `판의 상태` 의 포기 건수로 본다.\n정원 2 판 — 쥔 시간 57ms.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 8,
-                "y": 37
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "sum(rate(hikaricp_connections_acquire_seconds_sum{application=\"cgv-booking\"}[1m])) / sum(rate(hikaricp_connections_acquire_seconds_count{application=\"cgv-booking\"}[1m]))",
-                  "legendFormat": "얻는 데 걸린 시간"
-                },
-                {
-                  "refId": "B",
-                  "expr": "sum(rate(hikaricp_connections_usage_seconds_sum{application=\"cgv-booking\"}[1m])) / sum(rate(hikaricp_connections_usage_seconds_count{application=\"cgv-booking\"}[1m]))",
-                  "legendFormat": "쥐고 있던 시간"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "s",
-                  "decimals": 4,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 0,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            }
-          ]
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "스로틀.*" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+              { "matcher": { "id": "byName", "options": "limit" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 6] } }, { "id": "custom.lineWidth", "value": 1 }, { "id": "custom.hideFrom", "value": { "legend": false, "tooltip": true, "viz": false } } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } }
         },
         {
           "type": "row",
-          "title": "▸ booking 파드 — 자원 패널의 CPU·스로틀·힙·GC 가 오를 때 연다",
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 37
-          },
-          "panels": [
-            {
-              "type": "timeseries",
-              "title": "CPU · 스로틀 / limit",
-              "description": "**booking 의 CPU 상한을 이 선으로 판정한다.** 확정 22.7건/초(체류 18.6초 · 정원 500)에서 1코어가 찼고, 2코어에서 다시 재니 1.358 코어를 썼다.\n\n스로틀은 CPU 가 상한에 닿기 전에 먼저 선다 — 커널이 100ms 마다 몫을 나눠 주는데,\n평균이 몫에 가까울수록 창 안에서 다 쓰고 잘리는 일이 잦아진다.\n**평균 CPU 가 limit 의 절반이어도 스로틀은 설 수 있다.**\n\nqueue 는 스로틀 83% 에서 limit 을 두 배로 올려 풀었다. booking 은 1파드 고정이라\n여기가 차면 limit 를 올리는 것이 X 를 올리는 유일한 손잡이다.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 0,
-                "y": 38
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"booking\"}[1m]) and on(pod) (up{job=\"booking\"} == 1))",
-                  "legendFormat": "CPU (코어)"
-                },
-                {
-                  "refId": "B",
-                  "expr": "max(kube_pod_container_resource_limits{namespace=\"app\", container=\"booking\", resource=\"cpu\"})",
-                  "legendFormat": "limit (코어)"
-                },
-                {
-                  "refId": "C",
-                  "expr": "sum(rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"booking\"}[1m])) / sum(rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"booking\"}[1m]))",
-                  "legendFormat": "스로틀 비율"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "none",
-                  "decimals": 3,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 10,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "limit (코어)"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.lineStyle",
-                        "value": {
-                          "fill": "dash",
-                          "dash": [
-                            6,
-                            6
-                          ]
-                        }
-                      },
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "text"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "스로틀 비율"
-                    },
-                    "properties": [
-                      {
-                        "id": "unit",
-                        "value": "percentunit"
-                      },
-                      {
-                        "id": "custom.axisPlacement",
-                        "value": "right"
-                      },
-                      {
-                        "id": "custom.axisLabel",
-                        "value": "스로틀"
-                      },
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "orange"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            },
-            {
-              "type": "timeseries",
-              "title": "JVM 메모리 · 컨테이너 / limit 1Gi",
-              "description": "**OOMKill 은 컨테이너 값이 limit 에 닿을 때 난다 — 힙이 여유로워도 죽는다.**\n\n- **힙** 객체가 사는 곳. MaxRAMPercentage=75 라 상한 768Mi\n- **비힙** 클래스 정보·JIT 가 만든 기계어. 워밍업 때 오르고 그 뒤 평평\n- **컨테이너** 커널이 세는 실사용. 힙+비힙보다 항상 크다(스택·네이티브 버퍼)\n\n힙이 상한에 붙으면 GC 가 잦아지고(오른쪽 패널) 그것이 p99 를 민다 —\n메모리 문제가 지연으로 나타나는 경로다.\n\n정원 2 판 — 컨테이너 745MiB(73%). 판 밖 재시작 직후 로딩 포함.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 8,
-                "y": 38
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "sum by (area) (jvm_memory_used_bytes{application=\"cgv-booking\"} and on(pod) (up{job=\"booking\"} == 1))",
-                  "legendFormat": "{{area}}"
-                },
-                {
-                  "refId": "B",
-                  "expr": "sum(container_memory_working_set_bytes{namespace=\"app\", container=\"booking\"} and on(pod) (up{job=\"booking\"} == 1))",
-                  "legendFormat": "컨테이너"
-                },
-                {
-                  "refId": "C",
-                  "expr": "1073741824",
-                  "legendFormat": "limit 1Gi"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "bytes",
-                  "decimals": 0,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 10,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "heap"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "힙"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "nonheap"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "비힙"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "limit 1Gi"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.lineStyle",
-                        "value": {
-                          "fill": "dash",
-                          "dash": [
-                            6,
-                            6
-                          ]
-                        }
-                      },
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "red"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "컨테이너"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.lineWidth",
-                        "value": 3
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            },
-            {
-              "type": "timeseries",
-              "title": "GC 로 멈춰 있던 비율 · 횟수",
-              "description": "**힙이 지연으로 바뀌는 자리.** JVM 의 GC 는 수십-수백 ms 를 멈추고,\n그동안 요청 처리가 통째로 선다 (Go 는 마이크로초라 queue 화면엔 이 패널이 없다).\n\n- **비율** 1초 중 몇 초를 멈췄나. 5% = 1초에 50ms\n- **횟수** 오른쪽 축. 한 번이 긴지, 자주 나는지를 가른다\n\nminor GC 는 짧고 잦은 정상 동작. **major GC 가 늘면 힙이 부족하다.**\n왼쪽 힙이 상한에 붙는 시각과 여기가 같이 오르면 원인이 힙이고,\n힙이 여유로운데 오르면 객체를 너무 빨리 만들고 버리는 것이다.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 16,
-                "y": 38
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "sum by (action) (rate(jvm_gc_pause_seconds_sum{application=\"cgv-booking\"}[1m]))",
-                  "legendFormat": "{{action}}"
-                },
-                {
-                  "refId": "B",
-                  "expr": "sum(rate(jvm_gc_pause_seconds_count{application=\"cgv-booking\"}[1m]))",
-                  "legendFormat": "횟수 (건/초)"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "percentunit",
-                  "decimals": 2,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 20,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "횟수 (건/초)"
-                    },
-                    "properties": [
-                      {
-                        "id": "unit",
-                        "value": "reqps"
-                      },
-                      {
-                        "id": "decimals",
-                        "value": 1
-                      },
-                      {
-                        "id": "custom.axisPlacement",
-                        "value": "right"
-                      },
-                      {
-                        "id": "custom.axisLabel",
-                        "value": "횟수"
-                      },
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.lineStyle",
-                        "value": {
-                          "fill": "dash",
-                          "dash": [
-                            6,
-                            6
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            },
-            {
-              "type": "timeseries",
-              "title": "워밍업 — 이 선이 바닥에 붙은 뒤부터 읽는다",
-              "description": "**판의 앞 구간을 버리는 경계.**\n\nJVM 은 처음에 코드를 해석해 돌리다가, 자주 도는 코드를 기계어로 바꾼다(JIT 컴파일).\n그 변환이 끝나기 전에는 같은 요청도 몇 배 느리다 — 이 구간의 p99·CPU 는 최종 성능이 아니다.\n\n판을 시작하고 이 선이 내려앉는 시각을 확인한 뒤, 다른 패널을 그 시각부터 읽는다.\n정원이 커지면 처음 도는 분기가 열려 계단 초에 다시 오를 수 있다 — 계단마다 확인한다.\n\n정원 2 판 — 시작 후 약 1-2분에 바닥.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 24,
-                "x": 0,
-                "y": 38
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "rate(jvm_compilation_time_ms_total{application=\"cgv-booking\"}[1m]) / 1000",
-                  "legendFormat": "컴파일에 쓴 시간 (초/초)"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "none",
-                  "decimals": 3,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 20,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            }
-          ]
+          "title": "3. 여정 — 입장한 사람이 표를 사기까지",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+          "collapsed": false,
+          "panels": []
         },
         {
-          "type": "row",
-          "title": "▸ MySQL — 자원 패널의 MySQL CPU 가 오르거나, 조회·확정이 느릴 때 연다",
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 38
+          "id": 6,
+          "type": "timeseries",
+          "title": "단계별 통과 수 — 200 으로 끝난 요청 (구간 누적)",
+          "description": "입장한 사람이 부르는 다섯 경로의 성공(200) 수. 여정 순서대로 줄어드는 것이 정상이고, **줄어드는 폭이 그 단계에서 빠진 수**다.\n\n```\n회차 목록 → 좌석도 → 좌석 잡기 → 결제·확정\n            (좌석 놓기 = 뒤로가기.  순서 밖의 선택 경로)\n```\n\n403(인증 전파 전 재시도)·409(좌석 경합)는 **여기 안 들어간다** — 넣으면 같은 사람의 재시도가 사람 수를 부풀린다. 그것들은 오른쪽 지연 패널에 status 별 선으로 있다.\n\n부하 도구(k6)는 각 단계를 정확히 한 번씩 밟으므로 이 값을 사람 수로 읽을 수 있다. 실사용자는 뒤로 갔다 다시 보기도 해서 호출 수가 사람 수보다 커진다.\n\n사용자당 한 번씩 나는 일이라 rate 로는 몰린 순간이 묻힌다. 구간 누적 막대로 그리고, increase 는 구간 경계를 외삽하므로 대략치다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 12, "w": 12, "x": 0, "y": 19 },
+          "interval": "1m",
+          "targets": [
+            { "refId": "A", "expr": "sum by (uri) (increase(http_server_requests_seconds_count{application=\"cgv-booking\", uri=~\"/api/(screenings|seats|seats/select|seats/release|bookings)\", status=\"200\"}[$__interval]))", "legendFormat": "{{uri}}" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "min": 0,
+              "custom": { "drawStyle": "bars", "fillOpacity": 45, "lineWidth": 1, "stacking": { "mode": "none" } }
+            },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "/api/screenings" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } } ] },
+              { "matcher": { "id": "byName", "options": "/api/seats" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } } ] },
+              { "matcher": { "id": "byName", "options": "/api/seats/select" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } } ] },
+              { "matcher": { "id": "byName", "options": "/api/seats/release" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ] },
+              { "matcher": { "id": "byName", "options": "/api/bookings" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] }
+            ]
           },
-          "panels": [
-            {
-              "type": "timeseries",
-              "title": "MySQL 컨테이너 — CPU · 메모리 / limit",
-              "description": "**MySQL 이 자원 상한에 닿았나.** 오른쪽 두 패널이 \"안에서 무엇 때문에\"를 답한다.\n\nMySQL 은 파드를 늘려도 안 풀린다 — 쓰기가 한 대로 모인다. 이 선이 상한에 붙으면\nlimit 를 올리거나 복제·샤딩이고, 그것이 dev 구성의 끝이다.\n\n단일 SSD 를 세 노드가 공유하는 구성이라 디스크가 붐비면 **CPU 는 낮은데 질의만 느려진다** —\n그 경우는 오른쪽의 질의 수는 그대로인데 p99 만 오르는 모양으로 나타난다.\n\n정원 2 판 — CPU 0.028. 메모리 봉우리 944MiB 는 판 밖(재시작 직후 로딩), 판 중 460MiB.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 0,
-                "y": 39
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"mysql\"}[1m]))",
-                  "legendFormat": "CPU (코어)"
-                },
-                {
-                  "refId": "B",
-                  "expr": "max(kube_pod_container_resource_limits{namespace=\"data\", container=\"mysql\", resource=\"cpu\"})",
-                  "legendFormat": "CPU limit (코어)"
-                },
-                {
-                  "refId": "C",
-                  "expr": "sum(container_memory_working_set_bytes{namespace=\"data\", container=\"mysql\"})",
-                  "legendFormat": "메모리"
-                },
-                {
-                  "refId": "D",
-                  "expr": "1073741824",
-                  "legendFormat": "메모리 limit 1Gi"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "none",
-                  "decimals": 3,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 10,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "CPU limit (코어)"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.lineStyle",
-                        "value": {
-                          "fill": "dash",
-                          "dash": [
-                            6,
-                            6
-                          ]
-                        }
-                      },
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "text"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byRegexp",
-                      "options": "메모리.*"
-                    },
-                    "properties": [
-                      {
-                        "id": "unit",
-                        "value": "bytes"
-                      },
-                      {
-                        "id": "decimals",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.axisPlacement",
-                        "value": "right"
-                      },
-                      {
-                        "id": "custom.axisLabel",
-                        "value": "메모리"
-                      },
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "메모리 limit 1Gi"
-                    },
-                    "properties": [
-                      {
-                        "id": "custom.lineStyle",
-                        "value": {
-                          "fill": "dash",
-                          "dash": [
-                            6,
-                            6
-                          ]
-                        }
-                      },
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "red"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum", "max"] } }
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "단계별 지연 p99 — 경로 × 응답 코드",
+          "description": "같은 경로를 응답 코드별로 갈라 그린다. **403 선이 판정 도구다** — 403 은 입장 인증 검사(Redis 1회)만 하고 끝나는 경로라, 그 지연은 \"일을 안 해도 걸리는 시간\"(대기·스케줄링)의 바닥값이다.\n\n```\n200 선만 오른다        그 경로의 일(질의·트랜잭션)이 무거워진 것\n403 선이 같이 오른다    일과 무관한 대기가 커진 것 — 행1(스로틀·GC)·행2(풀)로 올라간다\n```\n\n- `/api/screenings 403` 승격 직후 인증이 아직 전파되지 않아 프론트가 300ms 간격으로 재시도하는 것. 정상 흐름\n- `/api/seats/select 409` 다른 사람이 먼저 잡은 좌석. 정상 경합\n- `/api/bookings` 만 원장에 쓴다 — 이 선만 오르면 행2 를 본다\n\ny 축이 로그라 수치는 범례로 읽는다. **상한 버킷(10초)에 평평하게 붙은 값은 측정값이 아니라 \"그보다 크다\"는 뜻이다.**\n\n점(exemplar)은 그 시각 그 구간에 실제 있었던 요청 하나 — 누르면 트레이스가 열린다. 쿼리에 uri·status 라벨을 남겨야 점 색이 선을 따라간다. 개수는 요청 수와 무관하다(스크레이프 15초당 버킷당 1개 한도).",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 12, "w": 12, "x": 12, "y": 19 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, uri, status) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/(screenings|seats|seats/select|seats/release|bookings)\"}[1m])))", "legendFormat": "{{uri}} {{status}}", "exemplar": true }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never", "scaleDistribution": { "type": "log", "log": 10 } }
             },
-            {
-              "type": "timeseries",
-              "title": "MySQL 안쪽 — 질의 · 실행 중 스레드",
-              "description": "**컨테이너 CPU 가 낮은데 느릴 때 여기서 갈린다.**\n\n- **질의/초** MySQL 이 받은 일의 양\n- **실행 중** 지금 CPU 를 쓰는 스레드 (오른쪽 축)\n- **접속** 열린 연결 수. booking 풀 10 + exporter 자신 1 = 11 이 정상이다\n\n- 요청은 그대로인데 질의/초가 오른다 → 요청 하나가 던지는 질의가 늘었다\n- 실행 중이 접속에 가까워진다 → 열린 연결이 전부 일하는 중. MySQL 포화\n- 실행 중은 낮은데 느리다 → CPU 가 아니라 잠금이다. 오른쪽 패널",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 8,
-                "y": 39
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "rate(mysql_global_status_queries{job=\"mysql-metrics\"}[1m])",
-                  "legendFormat": "질의 (건/초)"
-                },
-                {
-                  "refId": "B",
-                  "expr": "mysql_global_status_threads_running{job=\"mysql-metrics\"}",
-                  "legendFormat": "실행 중"
-                },
-                {
-                  "refId": "C",
-                  "expr": "mysql_global_status_threads_connected{job=\"mysql-metrics\"}",
-                  "legendFormat": "접속"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "reqps",
-                  "decimals": 1,
-                  "min": 0,
-                  "custom": {
-                    "fillOpacity": 10,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byRegexp",
-                      "options": "실행 중|접속"
-                    },
-                    "properties": [
-                      {
-                        "id": "unit",
-                        "value": "none"
-                      },
-                      {
-                        "id": "decimals",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.axisPlacement",
-                        "value": "right"
-                      },
-                      {
-                        "id": "custom.axisLabel",
-                        "value": "스레드"
-                      },
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            },
-            {
-              "type": "timeseries",
-              "title": "행 잠금 — 좌석 경합이 보이는 자리",
-              "description": "**같은 좌석을 노린 뒤 트랜잭션이 앞 트랜잭션의 커밋을 기다린다.**\nRedis(한 번에 한 명령)에는 없던 종류의 대기고, **정원에 비례해 오르는 것이 이 판의 핵심 신호다.**\n\n- **대기 발생** 잠금을 기다린 트랜잭션 (건/초)\n- **평균 대기 시간** 한 번 기다릴 때 몇 ms (오른쪽 축).\n  기동 후 누적 평균(time_avg)이 아니라 1분 창의 시간÷건수다 —\n  누적 평균은 계단을 거듭할수록 앞 계단이 분모에 쌓여 변화가 안 보인다\n\n이 선이 오르면 `확정이 안 된 이유` 의 잠금 경쟁도 같이 오른다 — 같은 사건의 DB 쪽 집계라,\n둘이 어긋나면 하나를 잘못 읽고 있는 것이다.\n\n**커넥션을 늘려도 안 풀린다.** 같은 행을 노리는 트랜잭션만 늘어 더 나빠진다.",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 16,
-                "y": 39
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "rate(mysql_global_status_innodb_row_lock_waits{job=\"mysql-metrics\"}[1m])",
-                  "legendFormat": "대기 발생 (건/초)"
-                },
-                {
-                  "refId": "B",
-                  "expr": "rate(mysql_global_status_innodb_row_lock_time{job=\"mysql-metrics\"}[1m]) / rate(mysql_global_status_innodb_row_lock_waits{job=\"mysql-metrics\"}[1m])",
-                  "legendFormat": "평균 대기 시간"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "reqps",
-                  "decimals": 2,
-                  "min": 0,
-                  "noValue": "잠금 대기 없음",
-                  "custom": {
-                    "fillOpacity": 20,
-                    "lineWidth": 2
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "평균 대기 시간"
-                    },
-                    "properties": [
-                      {
-                        "id": "unit",
-                        "value": "ms"
-                      },
-                      {
-                        "id": "decimals",
-                        "value": 1
-                      },
-                      {
-                        "id": "custom.axisPlacement",
-                        "value": "right"
-                      },
-                      {
-                        "id": "custom.axisLabel",
-                        "value": "평균 대기"
-                      },
-                      {
-                        "id": "custom.fillOpacity",
-                        "value": 0
-                      },
-                      {
-                        "id": "custom.lineStyle",
-                        "value": {
-                          "fill": "dash",
-                          "dash": [
-                            6,
-                            6
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            },
-            {
-              "type": "timeseries",
-              "title": "확정이 안 된 이유 (건/초)",
-              "description": "**확정 API 를 부른 뒤의 실패만 센다.** 그 앞 단계(좌석 선점)에서 막히면 여기 안 잡힌다 — 여섯 판 내내 \"실패 없음\"이었고, 실제 이탈은 전부 좌석 선점의 403·409 였다.\n그건 `여정 통과` 와 `거절 (4xx)` 이 답한다.\n\n이 패널이 쓰이는 경우는 하나다: **좌석 선점까지는 통과했는데 확정만 안 될 때.**\n- `lock_expired` 선점해 둔 좌석의 45초가 지났다. 서버가 느려졌다는 신호\n- `lock_contention` 좌석 잠금 경쟁. ▸MySQL 행의 `행 잠금` 패널과 짝이다\n- `already_sold` 좌석이 실제로 소진됐다\n- `error` 나머지. 하나라도 서면 그 판은 통과가 아니다",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "mimir"
-              },
-              "gridPos": {
-                "h": 9,
-                "w": 8,
-                "x": 16,
-                "y": 39
-              },
-              "targets": [
-                {
-                  "refId": "A",
-                  "expr": "sum by (result) (rate(booking_confirm_total{application=\"cgv-booking\", result!=\"success\"}[1m])) > 0",
-                  "legendFormat": "{{result}}"
-                }
-              ],
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "reqps",
-                  "decimals": 2,
-                  "min": 0,
-                  "noValue": "실패 없음",
-                  "custom": {
-                    "fillOpacity": 20,
-                    "lineWidth": 2,
-                    "stacking": {
-                      "mode": "normal"
-                    }
-                  }
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "seat_conflict"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "좌석 겹침 (정원 비례 = 정상)"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "lock_contention"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "잠금 경쟁"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "forbidden"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "인증 없음"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "lock_expired"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "선점 만료"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "already_sold"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "좌석 소진"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "error"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "오류"
-                      },
-                      {
-                        "id": "color",
-                        "value": {
-                          "mode": "fixed",
-                          "fixedColor": "red"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "replay"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "중복 요청 (도구)"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "no_such_seat"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "없는 좌석 (도구)"
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byName",
-                      "options": "no_screening"
-                    },
-                    "properties": [
-                      {
-                        "id": "displayName",
-                        "value": "없는 회차 (도구)"
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              }
-            }
-          ]
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": ".*40[39]$" }, "properties": [ { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [6, 4] } } ] },
+              { "matcher": { "id": "byName", "options": "/api/bookings 200" }, "properties": [ { "id": "custom.lineWidth", "value": 3 } ] }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] } }
         }
       ]
     }

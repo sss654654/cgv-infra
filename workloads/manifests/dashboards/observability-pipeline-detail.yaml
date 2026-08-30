@@ -162,7 +162,7 @@ data:
         {
           "type": "stat",
           "title": "트레이스 (스팬/초)",
-          "description": "- **역할**: Alloy가 Tempo로 보내는 양\n- **패널**: OTLP exporter가 보낸 스팬의 초당 속도\n- **읽는 법**: 앱마다 샘플링 비율이 달라 요청 수에 그대로 비례하지는 않는다 — booking 은 전 요청(1.0), queue 폴링은 0.01 이다. 0이면 앱이 안 보내거나 Tempo가 죽은 것이다\n- **그래서**: 아래 트레이스 행에서 버림과 한도를 본다",
+          "description": "- **역할**: Alloy가 Tempo로 보내는 양\n- **패널**: OTLP exporter가 보낸 스팬의 초당 속도\n- **읽는 법**: 앱마다 샘플링 비율이 달라 요청 수에 그대로 비례하지는 않는다 — booking 은 전 요청(1.0), queue 폴링도 1.0 이다(2026-08-29 에 0.01 에서 올렸다). 0이면 앱이 안 보내거나 Tempo 가 받지 못하는 것이다\n- **그래서**: 아래 트레이스 행에서 버림과 한도를 본다",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -331,7 +331,7 @@ data:
         {
           "type": "timeseries",
           "title": "메트릭 — 보낸 양 · 실패 (초당)",
-          "description": "- **역할**: 보내는 쪽(Alloy)에서 본 그림. 저장소가 죽어도 이 패널은 남는다\n- **패널**: remote_write가 보낸 샘플과 실패한 샘플. 실패는 채워서 그린다\n- **읽는 법**: 보낸 양이 0으로 떨어지면 Alloy가 못 보내는 것이고, 실패가 오르면 저장소가 안 받는 것이다\n- **그래서**: 오른쪽 지연과 버려진 것을 같이 본다",
+          "description": "- **역할**: 보내는 쪽(Alloy)에서 본 그림. 저장소가 멈춰도 이 패널은 남는다\n- **패널**: remote_write가 보낸 샘플과 실패한 샘플. 실패는 채워서 그린다\n- **읽는 법**: 보낸 양이 0으로 떨어지면 Alloy가 못 보내는 것이고, 실패가 오르면 저장소가 안 받는 것이다\n- **그래서**: 오른쪽 지연과 버려진 것을 같이 본다",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -544,7 +544,7 @@ data:
         {
           "type": "timeseries",
           "title": "로그 — 보낸 양 · 버린 양 (초당)",
-          "description": "- **역할**: 보내는 쪽(Alloy)에서 본 그림. 저장소가 죽어도 이 패널은 남는다\n- **패널**: loki.write가 보낸 줄과 버린 줄\n- **읽는 법**: 버린 양이 0이 아니면 재시도해도 안 되어 포기한 것이다\n- **그래서**: 오른쪽 지연과 버려진 것을 같이 본다",
+          "description": "- **역할**: 보내는 쪽(Alloy)에서 본 그림. 저장소가 멈춰도 이 패널은 남는다\n- **패널**: loki.write가 보낸 줄과 버린 줄\n- **읽는 법**: 버린 양이 0이 아니면 재시도해도 안 되어 포기한 것이다\n- **그래서**: 오른쪽 지연과 버려진 것을 같이 본다",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -795,8 +795,8 @@ data:
         },
         {
           "type": "timeseries",
-          "title": "트레이스 — 한도까지 얼마나 남았나 (live traces / 10,000)",
-          "description": "- **역할**: 왼쪽에서 버리기 시작하기 **전에** 보는 값. 왼쪽이 결과라면 여기가 원인이다\n- **패널**: ingester가 지금 메모리에 들고 있는 트레이스 수와 그 상한. 상한은 Tempo의 `max_traces_per_user`이고 지금은 차트 기본값 10,000이다(이 저장소 설정에 명시가 없다)\n- **읽는 법**: 실측 범위는 부하 없이 10 안팎, 부하 중 평상 700-1,600이다. 오픈 순간에만 치솟는다 — k6가 가상 사용자를 같은 순간에 풀어 폴링 타이머가 정렬되기 때문이다. 8,000을 넘으면 곧 왼쪽에서 버린다\n- **그래서**: 상한을 올리면 Tempo 메모리가 따라 오른다. monolithic 단일 파드이고 WAL PV가 k3s-2에 묶여 노드를 못 옮기며(nodeSelector cgv.io/data=obs) 그 노드의 memory request가 91%다. 그래서 지금은 표본을 낮춰 들어오는 양을 줄이는 쪽으로 맞춘다",
+          "title": "트레이스 — 한도까지 얼마나 남았나 (live traces / 한도)",
+          "description": "- **역할**: 왼쪽에서 버리기 시작하기 **전에** 보는 값. 왼쪽이 결과라면 여기가 원인이다\n- **패널**: ingester 가 지금 메모리에 들고 있는, 아직 끝나지 않은 트레이스 수와 그 상한. 상한은 Tempo 의 `max_traces_per_user` 이고 **지표(`tempo_limits_defaults`)에서 읽는다** — 설정을 바꾸면 선이 따라온다\n- **읽는 법**: 트레이스는 마지막 span 이 온 뒤 `trace_idle_period`(5초) 동안 새 span 이 없으면 목록에서 빠진다. 그래서 이 값은 대략 초당 트레이스 수 × 5초이고, **초당 요청 수가 제일 많은 순간과 이 값이 제일 큰 순간이 다르다**(2026-08-22 실측: 2,946 req/s 일 때 1,649 · 그다음 분 1,296 req/s 일 때 10,000). 상한의 80% 를 넘으면 곧 왼쪽에서 버린다\n- **그래서**: 상한을 올리면 Tempo 메모리가 따라 오른다. 두 값은 같이 정한다 — 2026-08-29 에 표본을 1.0 으로 올리면서 한도 10,000 → 50,000 · memory limit 1Gi → 3Gi 로 같이 올렸다. 버리기 시작하면 표본을 낮추거나 한도를 다시 올린다",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -815,15 +815,14 @@ data:
             },
             {
               "refId": "C",
-              "expr": "vector(10000)",
-              "legendFormat": "상한 10,000"
+              "expr": "max(tempo_limits_defaults{limit_name=\"max_local_traces_per_user\"})",
+              "legendFormat": "상한"
             }
           ],
           "fieldConfig": {
             "defaults": {
               "unit": "none",
               "min": 0,
-              "max": 10000,
               "custom": {
                 "fillOpacity": 10,
                 "lineWidth": 2
@@ -833,7 +832,7 @@ data:
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "상한 10,000"
+                  "options": "상한"
                 },
                 "properties": [
                   {
@@ -1002,7 +1001,7 @@ data:
         {
           "type": "state-timeline",
           "title": "수집 — job별 생존 (up)",
-          "description": "- **역할**: 대상이 죽어도 남는 유일한 신호. Alloy가 스크레이프 성공(1)·실패(0)를 판정해 직접 만든다\n- **패널**: min by (job) 이라 그 job의 타깃이 하나라도 죽으면 줄이 빨강\n- **읽는 법**: 빨간 구간 = 그때 그 job을 못 긁었다. 오른쪽 신선도와 짝이다 — up이 0인데 신선도가 멀쩡할 수는 없고, 그 반대는 있다\n- **그래서**: `kubectl get pods -n <ns>` 로 그 대상이 떠 있는지부터 본다",
+          "description": "- **역할**: 대상이 멈춰도 남는 유일한 신호. Alloy가 스크레이프 성공(1)·실패(0)를 판정해 직접 만든다\n- **패널**: min by (job) 이라 그 job의 타깃이 하나라도 죽으면 줄이 빨강\n- **읽는 법**: 빨간 구간 = 그때 그 job을 못 긁었다. 오른쪽 신선도와 짝이다 — up이 0인데 신선도가 멀쩡할 수는 없고, 그 반대는 있다\n- **그래서**: `kubectl get pods -n <ns>` 로 그 대상이 떠 있는지부터 본다",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -1293,8 +1292,8 @@ data:
         },
         {
           "type": "bargauge",
-          "title": "메모리 — 쓰는 양 / limit",
-          "description": "- **역할**: 넷 다 최근 데이터를 메모리에 들고 주기적으로 내리는 구조라, 들어오는 양이 늘면 메모리가 늘고 상한에 닿으면 죽는다. 이 스택에서 지금까지 문제가 된 것은 항상 메모리였다\n- **패널**: 막대 끝이 그 컨테이너의 limit 이고 숫자는 실제 사용량이다. 이름 옆 괄호가 limit. Alloy는 노드마다 한 대라 그중 최대를 본다\n- **읽는 법**: 100%에 닿기 전에도 영향이 난다 — 상한에 붙으면 GC가 계속 돌아 응답이 늦어지고, 죽기 전에 프로브가 먼저 실패한다\n- **그래서**: limit을 올리거나 들어오는 양을 줄인다. 트레이스 유입량은 앱 샘플링 비율이 정한다 — booking 1.0, queue 폴링 0.01. 2026-08-21 판에서 폴링을 0.05로 올렸을 때 Alloy 최대가 571→766MiB로 올랐다(한도 1Gi)",
+          "title": "메모리 — limit 대비 %",
+          "description": "- **역할**: 넷 다 최근 데이터를 메모리에 들고 주기적으로 내리는 구조라, 들어오는 양이 늘면 메모리가 늘고 상한에 닿으면 OOMKill 된다. 이 스택에서 지금까지 문제가 된 것은 항상 메모리였다\n- **패널**: working_set ÷ 그 컨테이너의 memory limit. **limit 을 지표(`kube_pod_container_resource_limits`)에서 읽으므로 limit 을 바꾸면 막대가 따라온다** — 절대값을 나란히 놓으면 limit 이 서로 달라(Loki 512Mi · ingester 2Gi · Tempo 3Gi · Alloy 1Gi) 어느 것이 자기 상한에 가까운지 안 갈린다. ingester 는 3대, Alloy 는 노드마다 한 대라 그중 최대를 본다\n- **읽는 법**: 100% 에 닿기 전에도 영향이 난다 — 상한에 붙으면 GC 가 계속 돌아 응답이 늦어지고, 죽기 전에 프로브가 먼저 실패한다\n- **그래서**: limit 을 올리거나 들어오는 양을 줄인다. 트레이스 유입량은 앱 표본 비율이 정한다 — booking 1.0 · queue 폴링 1.0(2026-08-29 에 0.01 에서 올렸고, 그때 Tempo limit 을 1Gi → 3Gi 로 같이 올렸다)",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
@@ -1308,32 +1307,18 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "container_memory_working_set_bytes{namespace=\"observability\", container=\"ingester\"}",
-              "legendFormat": "{{pod}} (2Gi)"
-            },
-            {
-              "refId": "B",
-              "expr": "max(container_memory_working_set_bytes{namespace=\"observability\", container=\"loki\"})",
-              "legendFormat": "Loki (512Mi)"
-            },
-            {
-              "refId": "C",
-              "expr": "max(container_memory_working_set_bytes{namespace=\"observability\", container=\"tempo\"})",
-              "legendFormat": "Tempo (1Gi)"
-            },
-            {
-              "refId": "D",
-              "expr": "max(container_memory_working_set_bytes{namespace=\"observability\", container=\"alloy\"})",
-              "legendFormat": "Alloy 최대 (1Gi)"
+              "expr": "max by (container) (container_memory_working_set_bytes{namespace=\"observability\", container=~\"ingester|loki|tempo|alloy\"}) / max by (container) (kube_pod_container_resource_limits{namespace=\"observability\", container=~\"ingester|loki|tempo|alloy\", resource=\"memory\"})",
+              "legendFormat": "{{container}}"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "bytes",
-              "decimals": 0,
+              "unit": "percentunit",
+              "decimals": 1,
               "min": 0,
+              "max": 1,
               "thresholds": {
-                "mode": "percentage",
+                "mode": "absolute",
                 "steps": [
                   {
                     "color": "green",
@@ -1341,53 +1326,16 @@ data:
                   },
                   {
                     "color": "orange",
-                    "value": 80
+                    "value": 0.8
                   },
                   {
                     "color": "red",
-                    "value": 95
+                    "value": 0.95
                   }
                 ]
               }
             },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "mimir-ingester.*"
-                },
-                "properties": [
-                  {
-                    "id": "max",
-                    "value": 2147483648
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "Loki.*"
-                },
-                "properties": [
-                  {
-                    "id": "max",
-                    "value": 536870912
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byRegexp",
-                  "options": "Tempo.*"
-                },
-                "properties": [
-                  {
-                    "id": "max",
-                    "value": 1073741824
-                  }
-                ]
-              }
-            ]
+            "overrides": []
           },
           "options": {
             "displayMode": "gradient",
@@ -1406,7 +1354,7 @@ data:
         {
           "type": "timeseries",
           "title": "재시작 — 언제 몇 번 죽었나",
-          "description": "- **역할**: 저장소가 죽으면 그 신호가 통째로 끊긴다. 누적값은 총수만 말하고 언제인지를 말하지 않는다\n- **패널**: 5분 구간마다 늘어난 재시작 수. 죽지 않은 구간도 0으로 그린다 — 바닥에 0이 깔려 있으면 \"안 죽었다\", 화면이 비면 \"못 읽었다\"로 갈린다. 총수는 범례의 Sum\n- **읽는 법**: 1 이상이면 빨강. 막대가 계속 서 있으면 지금도 죽는 중이고, 오래전 한 번이면 그 시각에만 하나 서 있다\n- **그래서**: 막대가 선 시각을 오른쪽 기록에서 찾는다",
+          "description": "- **역할**: 저장소가 죽으면 그 신호가 통째로 끊긴다. 누적값은 총수만 말하고 언제인지를 말하지 않는다\n- **패널**: 5분 구간마다 늘어난 재시작 수. 재시작이 없던 구간도 0으로 그린다 — 바닥에 0이 깔려 있으면 \"재시작이 없었다\", 화면이 비면 \"못 읽었다\"로 갈린다. 총수는 범례의 Sum\n- **읽는 법**: 1 이상이면 빨강. 막대가 계속 서 있으면 지금도 죽는 중이고, 오래전 한 번이면 그 시각에만 하나 서 있다\n- **그래서**: 막대가 선 시각을 오른쪽 기록에서 찾는다",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
