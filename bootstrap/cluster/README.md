@@ -11,7 +11,7 @@
    - k3s-1: mysqldata 20G · kafkadata 30G · ingesterwal 5G
    - k3s-2: kafkadata 30G · ingesterwal 5G · lokiwal 5G · tempowal 5G
    - k3s-3: kafkadata 30G · ingesterwal 5G · miniodata 100G
-2. **OS prep**: 정적 IP(Phase1 192.168.0.201-203), SSH키, unattended-upgrades.
+2. **OS prep**: 정적 IP(`10.0.0.11-13`, 게이트웨이·DNS는 OPNsense `10.0.0.1`), SSH키, unattended-upgrades.
    **데이터 디스크를 `/mnt/disks/<용도>`에 마운트** — 각 디스크를 `mkfs.ext4` 후 fstab UUID로 마운트(통마운트, 서브디렉터리 mkdir 없음). local-path는 config.yaml에서 disable — PVC는 정적 PV(`bootstrap/storage/`, install.sh [3/9]가 apply)에 바인딩된다.
 3. 세 노드에 `bootstrap/cluster/`의 네 파일(config.yaml·registries.yaml·01·02)을 같은 디렉터리로 복사 — 스크립트가 옆의 config.yaml을 `/etc/rancher/k3s/`로 옮긴다.
    **`registries.yaml`은 손으로 옮긴다** — `sudo cp registries.yaml /etc/rancher/k3s/`.
@@ -33,9 +33,12 @@
 한 대를 재시작하고 `kubectl get nodes`가 3대를 다시 Ready로 보고할 때까지 기다린 뒤 다음 대로 간다.
 반영됐는지는 `kubectl describe node <노드>`의 Allocatable로 확인한다(kubelet 예약이 걸리면 capacity보다 작아진다).
 
-## Phase1 → Phase2
-Phase1 = vmbr0 직결(192.168.0.x, 스켈레톤). 검증 후 폐기 → vmbr1+OPNsense(10.0.0.x)로 재형성.
-`config.yaml`의 `tls-san`에 양쪽 IP를 미리 넣어 재형성 시 API 인증서가 안 깨짐.
+## Phase1 → Phase2 — 전환 완료
+Phase1 = `vmbr0` 직결(192.168.0.201-203). Phase2 = `vmbr1` + OPNsense(10.0.0.11-13).
+**현재는 Phase2다.** `config.yaml`의 `tls-san`에 양쪽 IP가 들어 있어 재형성에 API 인증서가 깨지지 않았다.
+새로 세울 때는 위 2번의 정적 IP를 `10.0.0.11-13`으로, 게이트웨이·DNS를 `10.0.0.1`(OPNsense)로 잡는다.
+`vmbr1`에는 물리 NIC이 없어 그 브리지에 꽂힌 것은 OPNsense를 거치지 않으면 밖으로 못 나간다 —
+GitLab(`192.168.0.167:8929`·`:5050`)으로 나가는 길이 OPNsense 허용 규칙에 있어야 이미지를 받는다.
 
 ## 나중 (Terraform/Ansible로 승격)
 0-5단계(Proxmox VM·OS prep·k3s)를 Terraform(Proxmox provider)·Ansible로 자동화하면 여기 담긴다.
