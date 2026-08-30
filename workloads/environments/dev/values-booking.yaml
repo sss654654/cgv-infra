@@ -24,8 +24,16 @@ resources:
   # ⚠ JVM 은 availableProcessors() 를 이 값에서 읽어 GC·ForkJoinPool·가상 스레드 캐리어 수를
   #   정한다. 1코어 결과와 2코어 결과는 배수 관계가 아니다 — 2코어일 때의 수요만 나온다.
   # requests 는 250m 그대로 둔다. 스케줄러 회계를 안 건드려야 파드 배치가 안 바뀐다.
-  limits: {cpu: "2000m", memory: 1Gi} # limit이 힙 크기의 분모(MaxRAMPercentage=75 → 힙 약 768Mi).
-  # 측정 오염 방지용 초기 여유(DB풀·처리량 측정 전 OOM 방지) — 처리량 확정 후 768Mi로 조일 수 있으면 조임.
+  # memory 1Gi → 1536Mi (2026-08-30). 사용자 10,000 부하의 오픈 버스트에서 OOMKill 2회.
+  #   이전 구성은 heap 상한 768Mi(1Gi×75%) + nonheap 222Mi = 990Mi 로 limit 1Gi 에 여유가
+  #   약 24Mi 뿐이었다. DB 풀 10→30(커넥션 버퍼)과 버스트의 힙 성장이 그 여유를 넘겨
+  #   working_set 이 limit 에 닿았다 (exit 137, 재기동 25초 만에 재발).
+  #   limit 만 올리면 MaxRAMPercentage 로 heap 도 커져 다시 빠듯해지므로, 아래 JAVA_OPTS 의
+  #   비율을 50 으로 내려 heap 상한을 768Mi 그대로 고정한다(이전 판들과 GC 조건 동일).
+  #   → heap 768 + nonheap 222 = 990Mi vs limit 1536Mi, 여유 약 546Mi.
+  #   2Gi 로 안 가는 이유: 필요 추정(약 900Mi)의 3배 여유가 이미 있고, 노드(8GB) RAM 은
+  #   다른 파드 몫이다. heap 자체가 모자라는 게 실측되면 그때 limit·비율을 같이 재산정한다.
+  limits: {cpu: "2000m", memory: 1536Mi}
   # booking HPA는 켜지 않음: 대수는 처리량 실측 후 역산, DDL 레이스로 단일 replica 전제
 # 비밀번호(MYSQL_PASSWORD)는 여기 없음 → booking-secrets(SealedSecret)에서 envFrom. 서비스명은 미들웨어 배포 후 확정.
 env:
@@ -78,5 +86,7 @@ env:
   #   더 키우면 처리량은 안 늘고 대기 장소만 앱(풀 지표에 보임)에서 MySQL 안(안 보임)으로
   #   옮겨간다 — 대기가 또 서는데 MySQL CPU 도 찼으면 그때는 풀이 아니라 코어를 올린다.
   DB_POOL_SIZE: "30"
-  JAVA_OPTS: "-XX:MaxRAMPercentage=75 -Djava.net.preferIPv4Stack=true"
+  # 75 → 50 (2026-08-30): limit 을 1536Mi 로 올리면서 heap 상한을 768Mi 로 유지하는 비율.
+  # 1536 × 0.5 = 768 — 이전 판들과 heap·GC 조건이 같아 부하 결과를 비교할 수 있다.
+  JAVA_OPTS: "-XX:MaxRAMPercentage=50 -Djava.net.preferIPv4Stack=true"
   OTLP_HTTP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318/v1/traces
