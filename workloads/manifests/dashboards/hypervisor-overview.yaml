@@ -394,21 +394,36 @@ data:
         {
           "type": "timeseries",
           "id": 21,
-          "title": "VM 디스크 저장고(thin pool) — 차면 클러스터 정지 / 815G",
-          "description": "#### VM 디스크 공간이 남아 있나\n\n`local-lvm`(thin pool)은 VM 201·202·203 의 디스크 이미지가 사는 저장고다. **마운트된 파일시스템이 아니라 `node_filesystem` 에 안 나와**, `lvs` 를 읽어 textfile 로 내보낸다(cron 5분 주기라 갱신이 느리다).\n\n실측(2026-08-24): VM 들에게 약속한 디스크 합계 355GB, 저장고에서 실제 쓰는 양 66GB, 풀 크기 815GB = **8.1%**. 약속보다 적게 차지하는 것이 thin 방식이고, 대신 약속 총합이 풀보다 커질 수 있어 실사용이 늘면 넘칠 수 있다.\n\n- **꽉 차면 VM 3대가 동시에 쓰기를 못 한다** — 클러스터 정지\n- **metadata 도 같이 본다** — 데이터에 여유가 있어도 메타데이터가 차면 풀 전체가 쓰기를 거부한다\n- VM 안에서 파일을 지워도 이 값은 잘 안 내려간다(블록 반환이 보장되지 않는다) — **VM 안은 널널한데 풀이 차는 상황이 성립하고, 그건 클러스터 대시보드로는 못 본다**",
+          "title": "VM 디스크 저장고(thin pool) — 차면 클러스터 정지",
+          "description": "#### VM 디스크 공간이 남아 있나\n\n`local-lvm`(thin pool)은 VM 201·202·203 의 디스크 이미지가 사는 저장고다. **마운트된 파일시스템이 아니라 `node_filesystem` 에 안 나와**, `lvs` 를 읽어 textfile 로 내보낸다(cron 5분 주기라 갱신이 느리다).\n\n- **한도(점선)에 닿으면 VM 3대가 동시에 쓰기를 못 한다** — 클러스터 정지\n- VM 별 선은 그 VM 디스크들의 합이다. 총 사용에는 스냅샷 몫이 더 들어가 VM 합보다 크다\n- VM 안에서 파일을 지워도 이 값은 잘 안 내려간다(블록 반환이 보장되지 않는다) — **VM 안은 널널한데 풀이 차는 상황이 성립하고, 그건 클러스터 대시보드로는 못 본다**\n- metadata 사용률은 판에서 뺐다(수년 여유) — 확인은 `lvs` 로 한다. 데이터가 여유여도 metadata 가 차면 풀 전체가 쓰기를 거부한다",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 7, "w": 7, "x": 0, "y": 32 },
           "targets": [
-            { "refId": "A", "expr": "pve_thinpool_data_used_ratio{job=\"hypervisor\"} * 100", "legendFormat": "{{lv}} data" },
-            { "refId": "B", "expr": "pve_thinpool_metadata_used_ratio{job=\"hypervisor\"} * 100", "legendFormat": "{{lv}} metadata" }
+            { "refId": "A", "expr": "pve_thin_vm_used_bytes{job=\"hypervisor\"}", "legendFormat": "VM {{vm}}" },
+            { "refId": "B", "expr": "pve_thinpool_used_bytes{job=\"hypervisor\"}", "legendFormat": "총 사용" },
+            { "refId": "C", "expr": "pve_thinpool_size_bytes{job=\"hypervisor\"}", "legendFormat": "한도" }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "percent", "decimals": 1, "min": 0, "max": 100,
-              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "thresholdsStyle": { "mode": "line" } },
-              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 } ] }
+              "unit": "bytes", "decimals": 1, "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "thresholdsStyle": { "mode": "off" } },
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "총 사용" },
+                "properties": [ { "id": "custom.lineWidth", "value": 3 }, { "id": "custom.fillOpacity", "value": 0 } ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "한도" },
+                "properties": [
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "custom.lineWidth", "value": 1 },
+                  { "id": "custom.fillOpacity", "value": 0 },
+                  { "id": "color", "value": { "mode": "fixed", "fixedColor": "#e02f44" } }
+                ]
+              }
+            ]
           },
           "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
         },
