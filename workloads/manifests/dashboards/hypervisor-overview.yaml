@@ -394,10 +394,10 @@ data:
         {
           "type": "timeseries",
           "id": 21,
-          "title": "VM 디스크 저장고(thin pool) — 차면 클러스터 정지",
-          "description": "#### VM 디스크 공간이 남아 있나\n\n`local-lvm`(thin pool)은 VM 201·202·203 의 디스크 이미지가 사는 저장고다. **마운트된 파일시스템이 아니라 `node_filesystem` 에 안 나와**, `lvs` 를 읽어 textfile 로 내보낸다(cron 5분 주기라 갱신이 느리다).\n\n- **한도(점선)에 닿으면 VM 3대가 동시에 쓰기를 못 한다** — 클러스터 정지\n- VM 별 선은 그 VM 디스크들의 합이다. 총 사용에는 스냅샷 몫이 더 들어가 VM 합보다 크다\n- VM 안에서 파일을 지워도 이 값은 잘 안 내려간다(블록 반환이 보장되지 않는다) — **VM 안은 널널한데 풀이 차는 상황이 성립하고, 그건 클러스터 대시보드로는 못 본다**\n- metadata 사용률은 판에서 뺐다(수년 여유) — 확인은 `lvs` 로 한다. 데이터가 여유여도 metadata 가 차면 풀 전체가 쓰기를 거부한다",
+          "title": "local-lvm(thin pool) — VM 디스크 저장고 · 차면 클러스터 정지",
+          "description": "#### VM 디스크 공간이 남아 있나\n\nProxmox 화면의 `local-lvm` 스토리지가 이 저장고다 — thin pool 하나에 VM 201·202·203 의 디스크 이미지가 전부 산다. **마운트된 파일시스템이 아니라 `node_filesystem` 에 안 나와**, `lvs` 를 읽어 textfile 로 내보낸다(cron 5분 주기라 갱신이 느리다).\n\n- **한도(점선)에 닿으면 VM 3대가 동시에 쓰기를 못 한다** — 클러스터 정지\n- VM 별 선은 그 VM 디스크들의 합이다. 총 사용에는 스냅샷 몫이 더 들어가 VM 합보다 크다\n- VM 안에서 파일을 지워도 이 값은 잘 안 내려간다(블록 반환이 보장되지 않는다) — **VM 안은 널널한데 풀이 차는 상황이 성립하고, 그건 클러스터 대시보드로는 못 본다**\n- metadata 사용률은 판에서 뺐다(수년 여유) — 확인은 `lvs` 로 한다. 데이터가 여유여도 metadata 가 차면 풀 전체가 쓰기를 거부한다",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 7, "w": 7, "x": 0, "y": 32 },
+          "gridPos": { "h": 7, "w": 7, "x": 6, "y": 32 },
           "targets": [
             { "refId": "A", "expr": "pve_thin_vm_used_bytes{job=\"hypervisor\"}", "legendFormat": "VM {{vm}}" },
             { "refId": "B", "expr": "pve_thinpool_used_bytes{job=\"hypervisor\"}", "legendFormat": "총 사용" },
@@ -430,10 +430,10 @@ data:
         {
           "type": "bargauge",
           "id": 22,
-          "title": "Proxmox 시스템 영역(/) — 96G 중 사용",
-          "description": "#### 호스트 영역이 차고 있나\n\n`/` 는 Proxmox 시스템과 `local` 저장소(ISO·백업·템플릿)가 쓰는 96GB 영역이다. 차면 로그·이미지·백업이 못 쓰인다. VM 디스크는 여기가 아니라 왼쪽 thin pool 에 있다.\n\n**Proxmox 화면보다 약 5% 크게 보인다** — 이 계산은 ext4 가 root 전용으로 떼어두는 예약분(기본 5%)을 사용으로 친다(`avail` 이 예약분을 뺀 값이라). 더 보수적인 쪽이라 그대로 둔다.\n\n게이지 끝(96GiB)과 임계선은 정적이다 — 파티션을 바꾸면 같이 고친다. `/boot/efi` 는 설치 후 변하지 않아 뺐다.",
+          "title": "local — Proxmox 시스템 영역(/) · 96G 중 사용",
+          "description": "#### 호스트 영역이 차고 있나\n\nProxmox 화면의 `local` 스토리지가 이 영역이다 — `/` 위에서 Proxmox 시스템과 ISO·백업·템플릿이 함께 쓰는 96GB. 차면 로그·이미지·백업이 못 쓰인다. VM 디스크는 여기가 아니라 왼쪽 thin pool 에 있다.\n\n**Proxmox 화면보다 약 5% 크게 보인다** — 이 계산은 ext4 가 root 전용으로 떼어두는 예약분(기본 5%)을 사용으로 친다(`avail` 이 예약분을 뺀 값이라). 더 보수적인 쪽이라 그대로 둔다.\n\n게이지 끝(96GiB)과 임계선은 정적이다 — 파티션을 바꾸면 같이 고친다. `/boot/efi` 는 설치 후 변하지 않아 뺐다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 7, "w": 6, "x": 7, "y": 32 },
+          "gridPos": { "h": 7, "w": 6, "x": 0, "y": 32 },
           "targets": [ { "refId": "A", "expr": "node_filesystem_size_bytes{job=\"hypervisor\", mountpoint=\"/\"} - node_filesystem_avail_bytes{job=\"hypervisor\", mountpoint=\"/\"}", "legendFormat": "{{mountpoint}}", "instant": true } ],
           "options": {
             "reduceOptions": { "calcs": ["lastNotNull"] },
