@@ -9,10 +9,10 @@
 #   이 판의 부하 축은 정원(MAX_SESSIONS)이다. 대기열이 앞에서 인원을 정원으로 깎아
 #   주므로, 부하 인원을 올려도 이 판의 값은 안 변하고 정원을 바꿔야 변한다.
 #   로비 폴링(board)·승격·대기열은 queue(traefik) 판 / Redis·Kafka 는 공유 계층 판.
-#   MySQL 은 booking 만 쓰는 원장이라 이 판 소관이다.
+#   MySQL 은 booking 만 쓰는 저장소라 이 판 소관이다.
 #
 # 읽는 방향 — 행3 지연이 오르면 위로 올라가며 원인을 찾는다.
-#   어느 단계가 느린가(행3) → bookings 만 = 원장 쪽(행2: 풀 대기? CPU?)
+#   어느 단계가 느린가(행3) → bookings 만 = MySQL 쪽(행2: 풀 대기? CPU?)
 #                          → 전부 균일 = 파드 쪽(행1: 스로틀? GC?)
 #   행1·2 가 다 무죄면 파드 밖(노드·디스크)이다 — 인프라 판으로 간다.
 #
@@ -55,7 +55,7 @@ data:
       "panels": [
         {
           "type": "row",
-          "title": "1. booking 파드 — 여정을 처리하는 몸",
+          "title": "1. booking 파드",
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
           "collapsed": false,
           "panels": []
@@ -63,7 +63,7 @@ data:
         {
           "id": 1,
           "type": "timeseries",
-          "title": "메모리 — working_set / limit 1536Mi (커널의 선)",
+          "title": "메모리 — working_set / limit 1536Mi · 넘으면 OOMKill",
           "description": "커널이 잰 \"지금 쥐고 있는 메모리\" ÷ memory limit. **100%(점선)에 닿으면 커널이 파드를 죽인다(OOMKill).**\n\n2026-08-30 사용자 10,000 부하에서 실제로 일어났다 — limit 1Gi 시절 여유가 24Mi 뿐이라 오픈 버스트에 OOMKill 2회. limit 을 1536Mi 로 올리고 heap 상한은 그대로(768Mi) 둬서 여유를 546Mi 로 만들었다. 같은 날 버스트 실측 최고 1,121Mi — 옛 limit 이면 죽는 값이다.\n\n타임시리즈인 이유 — 이 판의 용도가 부하 중 \"언제 얼마까지 올랐나\"의 사후 분석이라서다. 게이지는 마지막 값 하나만 남아 판이 끝나면 판 동안의 움직임이 사라진다. 지금 값은 범례 Last 로 읽는다.\n\nJVM 은 메모리를 미리 예약해서 쓰므로 이 선은 유휴에서도 낮지 않다(유휴 실측 약 710Mi — 그때 heap 실사용은 200Mi). GC 가 heap 을 비워도 JVM 은 OS 에 반환하지 않아서, 이 선은 오르기만 하고 거의 안 내려온다.\n\n**이 선 혼자서는 판정이 안 끝난다** — 높은 것이 예약분인지 진짜 부족인지는 오른쪽 heap 패널이 가른다. heap 이 낮은데 이 선만 높으면 예약분이고, heap 도 상한에 붙었으면 진짜 부족이다.\n\nlimit 은 지표로 읽으므로 limit 을 바꾸면 선이 따라온다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 6, "x": 0, "y": 1 },
@@ -87,7 +87,7 @@ data:
         {
           "id": 2,
           "type": "timeseries",
-          "title": "CPU · 스로틀 · GC 정지 — limit 2코어 대비 % (시간의 사건들)",
+          "title": "CPU · 스로틀 · GC 정지 — limit 2코어 대비 %",
           "description": "선 셋이 각각 다른 사건이다. 전부 비율이라 한 축에 선다.\n\n- **CPU** 사용량 ÷ limit. 일을 얼마나 하나\n- **스로틀(빨강)** 커널은 CPU 를 100ms 조각으로 배급한다. 몫을 다 쓰고 잘린 비율. 0 이 정상\n- **GC 정지(주황)** 1초당 GC 로 멈춘 시간. GC 는 heap 을 치우는 동안 애플리케이션을 세우고, 멈춘 시간은 진행 중이던 모든 요청에 더해진다. 0.05 = 시간의 5% 를 멈춘 것\n\n**행3 지연이 올랐을 때 판정이 이 패널에서 끝난다.**\n\n```\nCPU 높다              일이 많다 — limit 상향 검토\nCPU 낮다 + 스로틀 섰다  배급 간격이 원인\nCPU 낮다 + GC 섰다     청소가 원인 — 오른쪽 heap 패널에서 heap 이 찼는지 본다\n셋 다 아니다           파드 무죄 — 행2(MySQL)로 내려간다\n```\n\nGC 자체도 CPU 를 쓴다 — heap 이 차서 GC 가 잦아지면 CPU 선도 같이 오른다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 10, "x": 6, "y": 1 },
@@ -115,7 +115,7 @@ data:
         {
           "id": 3,
           "type": "timeseries",
-          "title": "heap · nonheap — 상한 768Mi (언어의 선)",
+          "title": "heap · nonheap — 힙 상한 768Mi · JVM이 지키는 선",
           "description": "JVM 안쪽의 메모리. queue 로 치면 \"힙이 GOMEMLIMIT 에 붙었나\"와 같은 판정이다.\n\n- **heap 사용** 요청을 처리하며 만드는 객체가 실제로 쓰는 양. 톱니 모양(오르고, GC 가 비우고)이 정상\n- **heap 상한(점선)** limit 1536Mi × 50%(MaxRAMPercentage) = 768Mi. JVM 이 강제하는 선 — heap 은 이 값을 넘지 못한다\n- **nonheap** JVM 자신의 살림 — 클래스 정보 · 컴파일된 코드 · 스레드 스택. 기동 후 거의 고정(222Mi)이고, 움직이는 순간이 사건이다\n\n**죽음 두 종류가 갈리는 자리다.**\n```\nheap 이 상한에 붙고 GC 가 못 비운다   JVM 스스로 죽음 (OutOfMemoryError)\nworking_set 이 limit 에 닿는다        커널이 죽임 (OOMKill) — 왼쪽 패널이 그 감시\n```\n이전 설정(1Gi×75%)은 heap 768 + nonheap 222 ≈ limit 이라 여유가 24Mi 뿐이었고, 2026-08-30 오픈 버스트에서 실제로 OOMKill 이 났다. 지금은 heap 상한을 그대로 두고 limit 만 올려 커널 쪽 여유가 546Mi 다 — heap 밖 메모리(커넥션 버퍼·JIT 작업분·소켓)가 사는 자리.\n\n부하 중 heap 최고점이 \"heap 상한 768Mi 가 충분한가\" 판정의 실측 근거다 — 상한에 붙으면 그때 limit·비율을 같이 재산정한다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
@@ -135,7 +135,7 @@ data:
         },
         {
           "type": "row",
-          "title": "2. MySQL — 확정이 적히는 원장. booking 이 기다리는 곳",
+          "title": "2. MySQL — 확정이 적히는 곳. booking 이 기다리는 시간의 대부분",
           "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
           "collapsed": false,
           "panels": []
