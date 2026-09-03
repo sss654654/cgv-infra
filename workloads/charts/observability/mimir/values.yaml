@@ -64,7 +64,9 @@ global:
 # 자원 = 시작값(전부 Go — JVM 힙 설정 불필요, limit만. 관측은 메모리 위주, CPU는 쿼리 시에만).
 distributor:
   replicas: 1
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+  # limit 256Mi 에서 반복 OOMKill(52회). peak 를 못 재 512Mi 는 2배 상향이고, 실측 뒤 다시 잡는다.
+  # request 는 그대로 — 스케줄 여유가 노드당 수십 MiB 라 올리면 다음 배포가 앉을 자리가 준다.
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
 ingester:
   replicas: 3                                  # RF3와 짝 — 노드당 1(아래 anti-affinity)
   zoneAwareReplication: { enabled: false }     # ingester수=RF(3=3)면 anti-affinity로 충분 — zone-aware는 ingester>RF일 때 물건
