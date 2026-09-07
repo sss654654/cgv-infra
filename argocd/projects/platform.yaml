@@ -1,0 +1,40 @@
+# AppProject platform — 클러스터 기반 계층(진입 · 관측) 울타리.
+# infra 프로젝트에서 갈라 나왔다. data 와 갈린 근거는 울타리 내용이 실제로 다르다는 것이다 —
+#   이쪽은 업스트림 차트를 쓰고 cluster-scoped 리소스(CRD · ClusterRole)를 만들어야 한다.
+# 관측(observability · observability-host)과 진입(metallb-system · traefik)을 한 프로젝트에 두는 이유는
+#   반대다 — 둘의 울타리 내용이 같다. sourceRepos 도 clusterResourceWhitelist 도 구분이 안 된다.
+#   나눠도 파일만 늘고 막는 것이 안 는다(docs/구조-기준.md 기준 5).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"   # metallb App(wave -4)보다 프로젝트가 먼저 존재해야 함
+spec:
+  description: 진입(metallb · traefik)과 관측(LGTM · Alloy · exporter)
+  sourceRepos:
+    - http://192.168.0.167:8929/cgv/cgv-infra.git
+    - https://grafana-community.github.io/helm-charts   # 관측 업스트림 차트(멀티소스)
+    - https://grafana.github.io/helm-charts
+    - https://charts.min.io/
+    - https://prometheus-community.github.io/helm-charts
+    - https://metallb.github.io/metallb
+    - https://traefik.github.io/charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: observability
+    - server: https://kubernetes.default.svc
+      namespace: observability-host      # node-exporter 전용(privileged PSA)
+    - server: https://kubernetes.default.svc
+      namespace: metallb-system
+    - server: https://kubernetes.default.svc
+      namespace: traefik
+  # 업스트림 차트가 CRD 와 ClusterRole 을 만든다(metallb IPAddressPool · prometheus-operator 계열 ·
+  #   traefik IngressRoute). 그래서 cluster-scoped 를 연다 — 이것이 data 와 갈리는 실질 차이다.
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

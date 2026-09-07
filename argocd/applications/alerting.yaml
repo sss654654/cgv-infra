@@ -21,7 +21,7 @@ metadata:
     #   마운트되므로 파드가 뜨기 전에 있어야 한다. 없으면 FailedMount 로 기동이 멈춘다.
     argocd.argoproj.io/sync-wave: "-1"
 spec:
-  project: infra
+  project: platform
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main

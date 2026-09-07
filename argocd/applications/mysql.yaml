@@ -9,7 +9,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"    # 앱보다 먼저(booking이 MySQL에 의존)
 spec:
-  project: infra
+  project: data
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main

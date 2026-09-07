@@ -12,7 +12,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-3"    # root 직속 App들 중 이른 순번(CRD 존재를 보장하지는 않음 — 위 주석)
 spec:
-  project: infra
+  project: platform
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main

@@ -555,12 +555,13 @@ cgv-infra/
 │   ├── calico/ cert-manager/ sealed-secrets/ strimzi/ argocd/ storage/ namespaces/   매니페스트·values
 │   └── root-app.yaml       app-of-apps 루트 → argocd/ 인계
 ├── argocd/             GitOps 배선 (제어면 — "무엇을·어디에·누가")
-│   ├── projects/           bootstrap · argocd · apps · infra · secrets · cert  (AppProject = 울타리)
-│   ├── applicationsets/    apps(directory) · observability(list) · platform(list)  (App 자동 생성기)
-│   └── applications/       손으로 나열하는 16개 —
-│                           argocd · argocd-image-updater · sealed-secrets · mysql · redis · kafka
-│                           metallb-pool · dashboards · alerting · netpol · netpol-app · rbac
-│                           cert-issuers · certificates · public-guard · reset-app
+│   ├── projects/           bootstrap · argocd · apps · data · platform · secrets · cert  (AppProject = 울타리)
+│   ├── applicationsets/    반복 축(대상 또는 환경)이 있는 것 —
+│   │                       apps(서비스×환경) · data(서비스×환경) · manifests(목록)
+│   │                       platform(목록) · observability(목록)
+│   └── applications/       반복 축이 없는 것 8개 —
+│                           argocd · argocd-image-updater · mysql · metallb-pool
+│                           dashboards · alerting · public-guard · reset-app
 ├── charts/             배포 대상 — 값이 필요한 것
 │   ├── apps/               cgv-app(공통 틀) + queue · booking · frontend(서비스 값)
 │   ├── data/               cgv-mysql · cgv-redis (bitnami 래퍼)
@@ -613,13 +614,15 @@ Application 하나는 반드시 프로젝트 하나에 속하고, 그 프로젝�
 | `bootstrap` | root Application | GitLab | `argocd` | `argoproj.io`의 AppProject·Application·ApplicationSet만. **cluster 범위 0** |
 | `argocd` | ArgoCD 자신 | GitLab + argo-helm | `argocd` | 전부 — 차트가 CRD·ClusterRole·ClusterRoleBinding을 만든다 |
 | `apps` | queue·booking·frontend | GitLab | `app` | ns 범위 전부 |
-| `infra` | 플랫폼·관측·미들웨어 | GitLab + 업스트림 차트 6 | `data`·`observability` 등 5 | 전부 |
+| `data` | mysql·redis·kafka | GitLab | `data` | ns 범위 전부. **cluster 범위 0** |
+| `platform` | 진입(metallb·traefik)·관측(LGTM) | GitLab + 업스트림 차트 6 | `observability`·`observability-host`·`metallb-system`·`traefik` | 전부 |
 | `secrets` | SealedSecret 배달 | GitLab | `data`·`app`·`observability`·`argocd`·`cert-manager` | **`SealedSecret`만** |
 | `cert` | 인증서 발급자 배달 | GitLab | `cert-manager` | **`ClusterIssuer`만**. 네임스페이스 리소스는 0 |
 
 - **갈린 기준은 네임스페이스가 아니라 "무엇을 하는 App인가"다.** `secrets`가 그 예다 — 네 네임스페이스에 들어가지만 만들 수 있는 것은 `SealedSecret` 하나뿐이라, 그 App이 읽는 디렉터리에 `Deployment`가 섞여도 거부된다.
 - `bootstrap`이 좁은 이유는 `root`가 만드는 것이 선언뿐이어서다. 워크로드는 그 선언이 만든 App들이 각자의 프로젝트 안에서 만든다. `root`를 `default`에 두면 저장소에 커밋할 수 있는 쪽이 클러스터에 무엇이든 만들 수 있게 된다.
 - `apps`가 업스트림 저장소를 안 여는 것도 같은 축이다. 앱 차트는 이 저장소 안에 있으므로 외부에서 받을 일이 없다.
+- **`data`와 `platform`은 원래 `infra` 하나였다.** 다섯 네임스페이스를 한 울타리에 묶고 있어서 `traefik` App이 `data` 네임스페이스에 무엇이든 만들 수 있었다. 갈린 실질 차이는 cluster 범위다 — 미들웨어는 CRD나 ClusterRole을 만들 필요가 없고(CRD는 부트스트랩이 세운다), 업스트림 차트를 쓰는 쪽은 만들어야 한다. 관측과 진입을 다시 나누지 않은 이유는 그 둘의 울타리 내용이 서로 같아서다 — 나눠도 막는 것이 늘지 않는다.
 
 ### ArgoCD가 자기를 관리한다
 

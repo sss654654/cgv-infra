@@ -40,7 +40,7 @@ spec:
       annotations:
         argocd.argoproj.io/sync-wave: '{{ if eq .name "minio" }}0{{ else }}1{{ end }}'   # MinIO 먼저(S3 백엔드) → LGTM/수집기
     spec:
-      project: infra
+      project: platform
       sources:
         - repoURL: '{{.repoURL}}'          # 업스트림 차트(직접 참조)
           chart: '{{.chart}}'

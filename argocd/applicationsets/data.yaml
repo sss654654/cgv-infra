@@ -1,0 +1,58 @@
+# 미들웨어 ApplicationSet — 저장소 안 차트 + 환경 값으로 배포하는 데이터 계층.
+#
+# 지금 목록에 redis 하나뿐이다. 그래도 AppSet 인 이유는 환경 축이 있기 때문이다 —
+#   stg 클러스터가 생기면 redis 는 양쪽에 다 있어야 한다(docs/구조-기준.md 기준 1).
+#   그때 환경 목록에 한 줄을 더하면 되고, 파일을 새로 쓰지 않는다.
+#
+# 여기 없는 것과 그 이유
+#   mysql  환경 축이 없다. stg 는 관리형 데이터베이스를 쓸 예정이라 이 차트를 안 올린다
+#          → 개별 Application 으로 남는다
+#   kafka  환경 축은 있으나 값이 아니라 매니페스트다(브로커 수가 CR 에 박혀 있다)
+#          → 지금은 manifests AppSet 소속. 차트로 만들면 이리로 옮긴다
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: data
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  # root-app 이 argocd/ 를 prune:true 로 관리한다. 이 파일이 지워지면 AppSet 이 prune 되고
+  #   기본 동작인 cascade 로 생성된 Application 과 리소스까지 사라진다.
+  #   root 직속 Application 은 finalizer 가 없어 리소스가 남는데, 그 반경을 여기에도 맞춘다.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - { name: redis, chartPath: charts/data/cgv-redis, wave: "-1" }
+          - list:
+              elements:
+                - { env: dev, server: "https://kubernetes.default.svc" }
+  template:
+    metadata:
+      name: '{{.name}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{.wave}}'   # 앱보다 먼저(앱이 이 계층에 의존)
+    spec:
+      project: data
+      source:
+        repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+        targetRevision: main
+        path: '{{.chartPath}}'
+        helm:
+          # 상대경로 기준 = source.path(charts/data/<차트>). 세 단계 위가 저장소 루트다.
+          valueFiles:
+            - values.yaml
+            - '../../../envs/{{.env}}/{{.name}}.yaml'
+      destination:
+        server: '{{.server}}'
+        namespace: data
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ServerSideApply=true              # bitnami 큰 리소스 대비

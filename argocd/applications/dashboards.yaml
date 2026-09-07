@@ -13,7 +13,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"   # 관측 스택(AppSet wave 0~1) 뒤. 순서가 어긋나도 ConfigMap은 그대로 남고 sidecar가 나중에 읽는다
 spec:
-  project: infra
+  project: platform
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     # 정본은 main. 대시보드를 여러 번 고치는 작업 기간에만 전용 브랜치로 잠시 돌린다

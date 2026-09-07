@@ -39,7 +39,7 @@ spec:
       annotations:
         argocd.argoproj.io/sync-wave: '{{.wave}}'
     spec:
-      project: infra
+      project: platform
       sources:
         - repoURL: '{{.repoURL}}'          # 업스트림 차트(직접 참조 + 버전 핀)
           chart: '{{.chart}}'
