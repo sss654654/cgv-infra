@@ -1,0 +1,8 @@
+# CI 의 template:render 가 만드는 렌더 결과. 산출물이지 소스가 아니다.
+# 이게 커밋되면 "git 에 있는 렌더 결과"와 "ArgoCD 가 실제로 만드는 렌더 결과"가
+#   갈라져도 아무도 모른다. 정본은 차트와 값이다.
+rendered/
+
+# helm 이 dependency 를 받을 때 만드는 것. 벤더링한 .tgz 는 charts/data/*/charts/ 에
+#   의도적으로 커밋돼 있으므로 여기서 무시하지 않는다.
+*.tgz.tmp

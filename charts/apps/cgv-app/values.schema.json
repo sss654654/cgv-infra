@@ -1,11 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "cgv-app values",
-  "description": "resources.limits.memory만 필수로 강제 — 없으면 JVM 힙 크기 계산의 분모가 잘못돼 OOMKill 위험. 나머지 키는 제약 없음(additionalProperties 기본 허용).",
+  "description": "렌더까지 가야 드러나는 실수를 값 단계에서 잡는다. 여기 없는 키는 제약하지 않는다(additionalProperties 기본 허용) — argocd-image-updater 가 imageUpdater.resolvedImage 를 써 넣기 때문에 닫으면 안 된다.",
   "type": "object",
-  "required": ["resources"],
+  "required": ["resources", "image", "containerPort"],
   "properties": {
     "resources": {
+      "description": "limits.memory 가 없으면 JVM 힙 크기 계산의 분모가 잘못돼 OOMKill 위험.",
       "type": "object",
       "required": ["limits"],
       "properties": {
@@ -16,6 +17,51 @@
             "memory": { "type": ["string", "integer"] }
           }
         }
+      }
+    },
+    "image": {
+      "description": "세 부분이 서로 다른 축이다 — registry(환경) / repository(서비스) : tag(빌드). 조립은 _helpers.tpl 의 app.image 가 한다. 셋 중 하나라도 비면 렌더가 '/repo:tag' 같은 주소를 만들어 ImagePullBackOff 로만 드러나므로 여기서 먼저 막는다.",
+      "type": "object",
+      "required": ["registry", "repository", "tag"],
+      "properties": {
+        "registry": {
+          "description": "ApplicationSet 환경 목록이 helm.parameters 로 준다. 레지스트리 주소만, 경로 없이.",
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "description": "레지스트리 안의 경로. 주소를 포함하면 안 된다 — 그러면 registry 와 겹쳐 두 번 붙는다.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._/-]*$"
+        },
+        "tag": {
+          "description": "argocd-image-updater 가 환경 값 파일에 쓴다.",
+          "type": "string",
+          "minLength": 1
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "containerPort": {
+      "description": "프로브와 Service 가 이 포트를 참조한다. 없으면 렌더는 되는데 프로브가 0 번 포트를 찌른다.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "kind": {
+          "description": "ServiceMonitor 는 Service 를, PodMonitor 는 파드를 직접 스크레이프한다. 메트릭 포트가 Service 에 안 물려 있으면 PodMonitor 여야 한다.",
+          "type": "string",
+          "enum": ["ServiceMonitor", "PodMonitor"]
+        },
+        "containerPort": { "type": "integer", "minimum": 0, "maximum": 65535 }
       }
     }
   }

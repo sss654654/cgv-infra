@@ -1,0 +1,165 @@
+# cgv-infra CI — 배포하지 않는다. 이 저장소가 만드는 것을 클러스터에 닿기 전에 검증만 한다.
+#
+# 왜 필요한가: 이 저장소에는 배포 파이프라인이 없다(배포는 ArgoCD 가 한다). 그래서
+#   잘못된 YAML 을 push 하면 그것을 알려 주는 것이 클러스터였다 — ArgoCD 가 sync 에 실패하고
+#   Application 이 빨개진 뒤에야 안다. 그건 늦다. 여기서 커밋 시점에 잡는다.
+#
+# 클러스터에 접근하지 않는다. 러너는 데스크탑이고 kubeconfig 가 없다.
+#   그래서 CRD 스키마를 schemas/ 에 파일로 갖고 있다(아래 validate job 주석).
+#
+# stage 를 하나로 두는 이유: 셋이 서로 독립이고 전부 몇 초짜리다. 순서를 강제할 이유가 없다.
+
+stages:
+  - validate
+
+default:
+  tags:
+    - docker            # cgv-onprem 과 같은 러너. 별도 러너를 두지 않는다
+  interruptible: true   # 같은 브랜치에 새 커밋이 오면 돌던 것을 취소한다
+  timeout: 10m          # 전부 몇 초짜리다. 이 시간을 넘으면 뭔가 매달린 것이다
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+      # 일반 브랜치는 MR 을 열어야 돈다. main 은 직접 push 를 막아 두었지만,
+      #   argocd-image-updater 가 봇으로 커밋하는 경로가 있어 그쪽도 검증한다.
+
+variables:
+  # 도구 이미지는 이 저장소의 GitLab 레지스트리에서 받는다. 업스트림(docker.io · ghcr.io)을
+  #   직접 쓰지 않는 이유는 셋이다.
+  #   1. 러너의 allowed_images 는 외부 이미지를 하나씩 여는 구조다. 검증 하나 하자고
+  #      그 목록에 외부 저장소를 더하면 통제가 넓어지고, 그 이유가 git 밖(config.toml)에 남는다.
+  #      레지스트리 하나만 열면 앞으로 도구가 늘어도 목록을 안 건드린다.
+  #   2. 매 job 마다 외부에 붙지 않는다. 거기가 느리거나 죽으면 CI 가 멈춘다.
+  #   3. 이미지가 데스크탑 도커에 캐시돼 두 번째 job 부터 pull 이 0 초다.
+  # 미러링 절차는 schemas/README.md 가 아니라 아래 "도구 이미지 갱신" 주석에.
+  HELM_IMAGE: 192.168.0.167:5050/cgv/cgv-infra/helm:3.16.3
+  KUBECONFORM_IMAGE: 192.168.0.167:5050/cgv/cgv-infra/kubeconform:v0.6.7-alpine
+  #
+  # ── 도구 이미지 갱신 ───────────────────────────────────────────────────────
+  # 버전을 올릴 때 데스크탑에서 한 번 밀어 넣는다. 러너는 같은 도커 데몬을 쓴다.
+  #   docker login 192.168.0.167:5050
+  #   docker pull  alpine/helm:<새 버전>
+  #   docker tag   alpine/helm:<새 버전> 192.168.0.167:5050/cgv/cgv-infra/helm:<새 버전>
+  #   docker push  192.168.0.167:5050/cgv/cgv-infra/helm:<새 버전>
+  #   → 그다음 위 HELM_IMAGE 를 그 버전으로.  kubeconform 도 같다.
+  # ⚠ 러너의 allowed_images 에 "192.168.0.167:5050/**" 가 있어야 한다(러너 config.toml).
+  #   별 하나(*)는 슬래시를 안 넘어 cgv/cgv-infra/helm 같은 중첩 경로가 안 걸린다.
+  # ⚠ kubeconform 은 -alpine 태그를 쓴다. 기본 태그는 scratch 기반이라 셸이 없고,
+  #   GitLab 은 script: 를 셸로 실행하므로 "sh: executable file not found" 로 죽는다.
+  # ArgoCD 가 렌더할 때 helm.parameters 로 주는 값. 여기서는 렌더가 되는지만 보므로
+  #   실제 레지스트리 주소일 필요가 없다 — 비어 있으면 차트의 required 가 걸린다.
+  RENDER_REGISTRY: registry.invalid
+  # 배포 배선이 있는 환경. ApplicationSet 의 env 축과 같아야 한다.
+  ACTIVE_ENVS: "dev"
+
+# ── 차트 구조 ────────────────────────────────────────────────────────────────
+# Chart.yaml 이 있는 것만 대상이다. charts/ 아래 대부분은 값 파일만 있는 폴더라
+#   차트가 아니다(docs/구조-기준.md "아직 기준대로 되어 있지 않은 것" 참조).
+#
+# ⚠ 차트 기본값만으로는 lint 할 수 없다. values.schema.json 이 resources.limits.memory 를
+#   required 로 걸어 두었고, 그 값은 환경 층이 채우기 때문이다(기본값에 없는 것이 정상).
+#   그래서 실제 배포와 같은 값 조합을 줘서 lint 한다 — 그러지 않으면 "기본값이 스키마를
+#   못 지킨다"는, 배포에서 일어나지 않는 실패를 보게 된다.
+lint:charts:
+  stage: validate
+  image:
+    name: $HELM_IMAGE
+    entrypoint: [""]
+  script:
+    - |
+      set -e
+      echo "── charts/apps/cgv-app (queue@dev 값 조합)"
+      helm lint charts/apps/cgv-app \
+        -f charts/apps/cgv-app/values.yaml \
+        -f charts/apps/queue/values.yaml \
+        -f envs/dev/queue.yaml \
+        --set image.registry=$RENDER_REGISTRY
+      for c in charts/data/cgv-mysql charts/data/cgv-redis; do
+        svc=$(basename "$c" | sed 's/^cgv-//')
+        echo "── $c ($svc@dev 값 조합)"
+        helm lint "$c" -f "$c/values.yaml" -f "envs/dev/$svc.yaml"
+      done
+
+# ── 렌더 ─────────────────────────────────────────────────────────────────────
+# ArgoCD 가 각 Application 에서 하는 helm 렌더를 같은 값 조합으로 재현한다.
+#   여기서 실패하면 ArgoCD 도 ComparisonError 로 실패한다. 그 실패를 여기로 당긴다.
+# 값 조합은 argocd/applicationsets/{apps,data}.yaml 의 valueFiles 순서와 같아야 한다.
+#   그 순서가 바뀌면 이 job 도 같이 고친다 — 아니면 여기 통과가 의미를 잃는다.
+template:render:
+  stage: validate
+  image:
+    name: $HELM_IMAGE
+    entrypoint: [""]
+  script:
+    - |
+      set -e
+      mkdir -p rendered
+
+      # 활성 환경만 렌더한다. ACTIVE_ENVS 는 ApplicationSet 의 환경 목록과 같아야 한다
+      #   (argocd/applicationsets/apps.yaml · data.yaml 의 env 축).
+      #   골격만 있는 환경(envs/stg)은 배포 배선이 없어 검증 대상이 아니다 —
+      #   넣으면 "resources 가 없다"로 항상 실패한다. 그건 결함이 아니라 아직 안 채운 것이다.
+      # ⚠ 환경을 활성화할 때 여기도 같이 늘린다. 안 늘리면 새 환경이 검증 밖으로 나간다.
+      for e in $ACTIVE_ENVS; do
+        for svc in queue booking frontend; do
+          echo "── apps  $svc @ $e"
+          helm template "$svc" charts/apps/cgv-app \
+            -f charts/apps/cgv-app/values.yaml \
+            -f "charts/apps/$svc/values.yaml" \
+            -f "envs/$e/$svc.yaml" \
+            --set image.registry=$RENDER_REGISTRY \
+            > "rendered/$e-$svc.yaml"
+        done
+
+        # data AppSet(redis) · mysql Application: 차트마다 자기 값 + 환경 값
+        for pair in "redis:cgv-redis" "mysql:cgv-mysql"; do
+          svc=${pair%%:*}; chart=${pair##*:}
+          [ -f "envs/$e/$svc.yaml" ] || { echo "── skip  $svc @ $e (이 환경엔 없다)"; continue; }
+          echo "── data  $svc @ $e"
+          helm template "$svc" "charts/data/$chart" \
+            -f "charts/data/$chart/values.yaml" \
+            -f "envs/$e/$svc.yaml" \
+            > "rendered/$e-$svc.yaml"
+        done
+      done
+
+      ls -la rendered/
+  artifacts:
+    paths:
+      - rendered/       # validate:manifests 가 이걸 이어받아 스키마 검사를 한다
+    expire_in: 1 day
+
+# ── 스키마 ───────────────────────────────────────────────────────────────────
+# 렌더 결과와 정적 매니페스트가 쿠버네티스 스키마에 맞는지 본다.
+#   -strict: 스키마에 없는 필드를 오류로. 오타난 키를 잡는 것이 이 job 의 목적이다.
+#
+# CRD 11종(Kafka·KafkaNodePool·KafkaTopic·SealedSecret·ClusterIssuer·Certificate·
+#   IPAddressPool·L2Advertisement·Middleware·ServiceMonitor·PodMonitor)은 kubeconform 이 모른다. 그래서
+#   schemas/ 에 클러스터에서 뽑은 openAPIV3Schema 를 커밋해 두고 그것을 쓴다.
+#   -ignore-missing-schemas 를 쓰지 않는 이유: 그러면 CRD 를 통째로 안 보게 되는데,
+#   Kafka CR 처럼 브로커 수·리스너가 들어 있는 것이 검증 밖으로 나간다.
+#   ⚠ CRD 버전을 올리면 schemas/ 도 다시 뽑아야 한다(절차와 함정은 schemas/README.md).
+validate:manifests:
+  stage: validate
+  needs: ["template:render"]
+  image:
+    name: $KUBECONFORM_IMAGE
+    entrypoint: [""]
+  script:
+    - |
+      set -e
+      # 스키마 파일 이름의 종류(kind)는 소문자다. kubeconform 이 {{.ResourceKind}} 를
+      #   소문자로 치환하기 때문이다(v0.6.7 pkg/registry/registry.go 의
+      #   ResourceKind: strings.ToLower(resourceKind)). 그룹과 버전은 원본 표기 그대로다.
+      #   대문자로 두면 러너의 파일시스템이 대소문자를 구분해 CRD 를 하나도 못 찾는다
+      #   (파이프라인 #111-#115: 코어 61개 통과, CRD 36개가 전부 "could not find schema").
+      # 경로는 절대로 준다 — job 의 작업 디렉터리에 기대지 않게. $CI_PROJECT_DIR 은
+      #   GitLab 이 주는 저장소 루트라 러너의 builds_dir 이 바뀌어도 따라간다.
+      TPL="$CI_PROJECT_DIR/schemas/{{.ResourceKind}}-{{.Group}}-{{.ResourceAPIVersion}}.json"
+      echo "── 스키마 패턴: $TPL"
+      /kubeconform -strict -summary \
+        -schema-location default \
+        -schema-location "$TPL" \
+        manifests/ rendered/
