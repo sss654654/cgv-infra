@@ -436,7 +436,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 - **PodSecurity** — 위 [k3s 클러스터 아키텍처](#k3s-클러스터-아키텍처)의 ns별 표대로 집행한다. 호스트 접근이 필요한 node-exporter만 별도 ns로 격리해 나머지를 baseline 이상으로 유지한다.
 - **네트워크 격리** — 클러스터가 물리 NIC 없는 브리지에 있어 밖으로 나가는 길이 OPNsense 하나다. 들어오는 문 둘, 나가는 규칙 넷, 엣지 우회 차단은 위 [네트워크](#네트워크)에 있다.
-- **NetworkPolicy 24건 — 네 네임스페이스** ([netpol](manifests/netpol/) · [netpol-app](manifests/netpol-app/))
+- **NetworkPolicy 24건 — 네 네임스페이스** ([netpol](manifests/netpol-data/) · [netpol-app](manifests/netpol-app/))
   ```
   app             10   기본 차단(ingress·egress) + 앱 3종의 인·아웃 + DNS + demo-reset
   data             5   MySQL 3306 · Redis 6379 · Kafka 9092(리스너 networkPolicyPeers)
@@ -572,8 +572,9 @@ cgv-infra/
 │   ├── metallb-pool/       주소 풀 CR (10.0.0.240-250)
 │   ├── secrets/            SealedSecret 17종
 │   ├── dashboards/         Grafana 대시보드 ConfigMap 7장
-│   ├── netpol/             data·observability 로 들어오는 접속 제한
+│   ├── netpol-data/        data 네임스페이스로 들어오는 접속 제한
 │   ├── netpol-app/         app 네임스페이스 인·아웃
+│   ├── netpol-observability/  observability 네임스페이스로 들어오는 접속 제한
 │   ├── rbac/               읽기 전용 ClusterRole
 │   ├── alerting/           Grafana 알림 규칙·연락처
 │   ├── cert-issuers/       Let's Encrypt ClusterIssuer 둘

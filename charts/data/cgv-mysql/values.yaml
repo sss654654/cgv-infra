@@ -60,5 +60,5 @@ mysql:
     # 차트가 만드는 정책을 끈다. 기본값(enabled: true, allowExternal: true)은 포트만 적고
     #   from 절 없이 렌더되어 3306 으로 오는 접속을 출처와 무관하게 통과시킨다.
     # NetworkPolicy 여러 개가 같은 파드를 고르면 허용이 합쳐지므로, 좁은 정책을 따로 더해도
-    #   이 넓은 정책이 남아 있는 한 좁아지지 않는다. 출처 규칙은 manifests/netpol/ 한 곳에만 둔다.
+    #   이 넓은 정책이 남아 있는 한 좁아지지 않는다. 출처 규칙은 manifests/netpol-data/ 한 곳에만 둔다.
     enabled: false

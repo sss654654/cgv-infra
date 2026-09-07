@@ -30,8 +30,12 @@ spec:
         elements:
           - { name: sealed-secrets, path: manifests/secrets,       project: secrets,  namespace: data,          wave: "-2" }
           - { name: kafka,          path: manifests/kafka,         project: data,     namespace: data,          wave: "-1" }
-          - { name: netpol,         path: manifests/netpol,        project: data,     namespace: data,          wave: "0" }
-          - { name: netpol-app,     path: manifests/netpol-app,    project: apps,     namespace: app,           wave: "0" }
+          # NetworkPolicy 는 네임스페이스마다 나눈다. 한 Application 의 destination.namespace 는
+          #   하나이고, AppProject 도 그 네임스페이스만 허용한다 — 한 경로에 여러 ns 의 정책을 담으면
+          #   울타리 밖 것이 OutOfSync 로 남는다(2026-09-07 에 infra 프로젝트를 가르며 드러났다).
+          - { name: netpol-data,          path: manifests/netpol-data,          project: data,     namespace: data,          wave: "0" }
+          - { name: netpol-app,           path: manifests/netpol-app,           project: apps,     namespace: app,           wave: "0" }
+          - { name: netpol-observability, path: manifests/netpol-observability, project: platform, namespace: observability, wave: "0" }
           - { name: rbac,           path: manifests/rbac,          project: platform, namespace: observability, wave: "0" }
           - { name: cert-issuers,   path: manifests/cert-issuers,  project: cert,     namespace: cert-manager,  wave: "0" }
           - { name: certificates,   path: manifests/certificates,  project: apps,     namespace: app,           wave: "0" }

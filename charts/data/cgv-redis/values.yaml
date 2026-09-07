@@ -51,7 +51,7 @@ redis:
     # 차트가 만드는 정책을 끈다. 근거는 cgv-mysql/values.yaml의 같은 항목과 동일 —
     #   기본값(enabled: true, allowExternal: true)이 from 절 없이 렌더되고,
     #   정책이 겹치면 허용이 합쳐져 좁은 정책을 더해도 좁아지지 않는다.
-    # 출처 규칙은 manifests/netpol/ 한 곳에만 둔다.
+    # 출처 규칙은 manifests/netpol-data/ 한 곳에만 둔다.
     enabled: false
 
 # redis-secret 배달: 차트 내에서 생성하지 않고, 중앙 manifests/secrets/에서
