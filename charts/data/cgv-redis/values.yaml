@@ -2,7 +2,7 @@
 # dev = Sentinel HA(master1 + replica2 + Sentinel3, auth on). 클라이언트 sentinel-aware 완료(docs/코드-반영사항 #3/#5):
 #   queue NewFailoverClient(REDIS_SENTINEL_ADDRS) · booking redis-sentinel 프로파일 · booking redis password 필드.
 #   → master 승격이 앱까지 반영(failover 유효). 접속 = sentinel 서비스 redis.data.svc:26379
-#     (values-queue/booking의 REDIS_SENTINEL_ADDRS/NODES와 일치).
+#     (queue/booking 환경 값의 REDIS_SENTINEL_ADDRS/NODES와 일치).
 # ⚠️ bitnami sentinel 모드의 실제 파드 수·서비스명·포트는 helm template 렌더로 확인(빌드 검증).
 redis:
   fullnameOverride: redis            # 서비스 redis(-headless)·sentinel 포트 26379

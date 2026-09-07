@@ -66,7 +66,7 @@
 | 1 | **Calico** (CNI) | 닭-달걀. 파드 네트워크가 없으면 ArgoCD 파드 자체가 못 뜬다. 이 단계 전까지 3노드는 NotReady다 |
 | 2 | **네임스페이스 + PodSecurity 라벨** | 뒤 단계들이 이 ns에 설치된다. 라벨을 나중에 붙이면 이미 뜬 파드는 재검사되지 않는다 |
 | 3 | **StorageClass 6종 + 정적 PV 10개** | 워크로드보다 먼저 있어야 PVC가 바인딩된다. 노드에 이미 마운트된 디스크를 쿠버네티스에 "등록"하는 단계 |
-| 4 | **cert-manager** | 현재 소비자가 없다. 외부노출 단계 대비로 설치만 해둔 상태 |
+| 4 | **cert-manager** | CRD만 세운다. 발급자(ClusterIssuer 둘)와 인증서(ticket.subinhong.dev)는 GitOps가 배달한다 — `manifests/cert-issuers` · `manifests/certificates` |
 | 5 | **sealed-secrets 컨트롤러** | 순환. 시크릿을 푸는 주체가 GitOps로 배달되는 시크릿에 의존하면 순환이 된다. **★ 이 단계 뒤부터 봉인이 가능하다** |
 | 6 | **prometheus-operator CRD** + **control-plane 수집** | CRD는 타입 정의라 그 타입을 쓰는 매니페스트보다 먼저 있어야 한다. etcd 메트릭용 Service/Endpoints/ServiceMonitor도 여기서 apply(ServiceMonitor CRD가 방금 생겼으므로) |
 | 7 | **Strimzi 오퍼레이터** | CR을 해석할 주체가 먼저 있어야 KafkaCluster CR이 의미를 갖는다 |

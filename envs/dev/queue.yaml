@@ -125,7 +125,7 @@ env:
   # 처리 속도 = 정원 ÷ 실제 체류. 이 값은 상한이라 부하 도구(체류 약 36초)의 결과는
   #   안 바뀌고, 세션을 다 쓰고 회수되는 비중만 달라진다. 도구의 체류가 이 값을 넘으면
   #   그 측정은 버린다.
-  # 바꾸면 values-booking.yaml 의 ADMITTED_TTL(이 값보다 길어야 함)도 같이 본다.
+  # 바꾸면 envs/dev/booking.yaml 의 ADMITTED_TTL(이 값보다 길어야 함)도 같이 본다.
   SESSION_TIMEOUT: "300"
   METRICS_PORT: "9091"
   # 컨테이너 limit(256Mi)의 약 78%. Go 런타임은 cgroup limit을 스스로 읽지 않아

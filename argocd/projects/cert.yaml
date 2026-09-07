@@ -1,6 +1,6 @@
 # AppProject cert — 인증서 발급자(ClusterIssuer) 전용 울타리.
 # ClusterIssuer는 cluster-scoped라 apps 프로젝트(cluster-scoped 금지)로 못 가고,
-#   infra 프로젝트는 화이트리스트가 */*라 destinations에 cert-manager를 열면
+#   platform 프로젝트는 화이트리스트가 */*라 destinations에 cert-manager를 열면
 #   소속 App 전부에게 그 네임스페이스가 열린다. 한 종류만 허용하는 전용 프로젝트로 좁힌다.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject

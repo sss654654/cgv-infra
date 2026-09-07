@@ -436,11 +436,11 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 - **PodSecurity** — 위 [k3s 클러스터 아키텍처](#k3s-클러스터-아키텍처)의 ns별 표대로 집행한다. 호스트 접근이 필요한 node-exporter만 별도 ns로 격리해 나머지를 baseline 이상으로 유지한다.
 - **네트워크 격리** — 클러스터가 물리 NIC 없는 브리지에 있어 밖으로 나가는 길이 OPNsense 하나다. 들어오는 문 둘, 나가는 규칙 넷, 엣지 우회 차단은 위 [네트워크](#네트워크)에 있다.
-- **NetworkPolicy 24건 — 네 네임스페이스** ([netpol](manifests/netpol-data/) · [netpol-app](manifests/netpol-app/))
+- **NetworkPolicy 24건 — 네 네임스페이스.** 21건은 이 저장소의 매니페스트([netpol-data](manifests/netpol-data/) · [netpol-app](manifests/netpol-app/) · [netpol-observability](manifests/netpol-observability/))가, 3건은 오퍼레이터·차트가 만든다
   ```
   app             10   기본 차단(ingress·egress) + 앱 3종의 인·아웃 + DNS + demo-reset
-  data             5   MySQL 3306 · Redis 6379 · Kafka 9092(리스너 networkPolicyPeers)
-  observability    5   들어오는 접속을 선언된 출처로 제한
+  data             5   MySQL 3306 · Redis 6379 (netpol-data 3) + Kafka 리스너·entity-operator (Strimzi 가 만든 2)
+  observability    5   들어오는 접속을 선언된 출처로 제한 (netpol-observability 4) + image-renderer (grafana 차트 1)
   argocd           4   차트가 만드는 컴포넌트별 정책 — server · repo-server
                        · application-controller · redis
   ```
