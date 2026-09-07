@@ -43,8 +43,12 @@ spec:
         # dev 계열만 후보로. MR 파이프라인의 ci-pipeline-* 나 손으로 올린 태그는 배포 후보가 아니다.
         argocd-image-updater.argoproj.io/app.allow-tags: 'regexp:^dev-[0-9]+-[0-9a-f]+$'
         # 발견한 태그를 어느 헬름 값에 쓸지 — envs/dev 값 파일의 image.tag 한 줄.
-        argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
         argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
+        # image-name 은 끌 수 없다. 비워 두거나 생략해도 updater 가 기본값으로 이미지 이름을 쓴다.
+        #   그래서 템플릿이 읽지 않는 자리로 돌린다 — 이미지 이름은 사람이 정하고
+        #   (registry = envs/, repository = charts/apps/), 봇은 태그만 옮긴다.
+        #   여기 쓰이는 값은 봇이 레지스트리에서 조회해 해석한 전체 주소이고, 렌더에 쓰이지 않는다.
+        argocd-image-updater.argoproj.io/app.helm.image-name: imageUpdater.resolvedImage
         # 되쓰기 = git 커밋. 자격은 ArgoCD의 저장소 자격(argocd-repo-cgv-infra)을 빌린다(repocreds).
         #   전용 시크릿(git:secret:) 경로는 updater 코드가 https 저장소만 받아 평문 http에서 죽는다
         #   — repocreds 경로는 스킴을 안 가린다. 그래서 저장소 자격에 write_repository 토큰이 들어
