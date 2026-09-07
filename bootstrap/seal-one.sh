@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SealedSecret 낱개 봉인 — seal-secrets.sh(초기 10종 일괄)와 달리 뒤에 하나씩 더할 때 쓴다.
 # 값은 프롬프트로 받고(-s: 화면·히스토리에 안 남음), 원문 Secret은 파일로 만들지 않고
-# 표준입력으로 kubeseal에 흘린다. 결과 암호문만 workloads/manifests/secrets/에 남는다.
+# 표준입력으로 kubeseal에 흘린다. 결과 암호문만 manifests/secrets/에 남는다.
 #
 #   ./seal-one.sh [-a 애노테이션 key=value]... <이름> <네임스페이스> [라벨 key=value ...]
 #
@@ -21,7 +21,7 @@
 #        한 번 통과하면 이후로는 봉인본의 애노테이션이 Secret에 남아 계속 통과한다.
 set -euo pipefail
 cd "$(dirname "$0")"
-OUT="../workloads/manifests/secrets"
+OUT="../manifests/secrets"
 
 USAGE="사용법: $0 [-a 애노테이션 key=value]... <이름> <네임스페이스> [라벨 key=value ...]"
 ANNOTATIONS=()

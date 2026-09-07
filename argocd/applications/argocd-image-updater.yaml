@@ -1,4 +1,4 @@
-# 이미지 → git 되쓰기 봇. 레지스트리에서 새 태그를 발견하면 environments/dev의 image.tag를
+# 이미지 → git 되쓰기 봇. 레지스트리에서 새 태그를 발견하면 envs/dev의 image.tag를
 # main에 커밋한다. ArgoCD는 그 커밋을 여느 커밋처럼 sync한다 — 배포 트리거는 끝까지 git이다.
 # 무엇을 감시하고 어디에 되쓸지는 여기가 아니라 applicationsets/apps.yaml의 annotation에 있다.
 #
@@ -20,7 +20,7 @@ spec:
       targetRevision: 1.2.4
       helm:
         valueFiles:
-          - $values/workloads/charts/platform/argocd-image-updater/values.yaml
+          - $values/charts/platform/argocd-image-updater/values.yaml
     - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
       targetRevision: main
       ref: values                       # 차트를 렌더할 때 값만 제공. 이 소스 자체는 배포하지 않는다

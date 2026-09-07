@@ -10,7 +10,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-3"    # cert-issuers App보다 프로젝트가 먼저 존재해야 참조 가능
 spec:
-  description: 인증서 발급자 배달 (workloads/manifests/cert-issuers)
+  description: 인증서 발급자 배달 (manifests/cert-issuers)
   sourceRepos:
     - http://192.168.0.167:8929/cgv/cgv-infra.git
   destinations:

@@ -16,7 +16,7 @@ spec:
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
-    path: workloads/manifests/metallb
+    path: manifests/metallb-pool
   destination:
     server: https://kubernetes.default.svc
     namespace: metallb-system

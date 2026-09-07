@@ -35,12 +35,12 @@ kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
 # ⚠️ argocd-repo-cgv-infra는 이 스크립트 전에 손으로 apply해야 한다. 그 Secret이 없으면
 #    ArgoCD가 저장소를 못 읽어 sealed-secrets App을 sync할 수 없고, 그 App이 배달하는 것이
 #    바로 그 Secret이라 순환에 걸린다(docs/시크릿-계약.md 조건부 항목).
-SECRET_DIR="../workloads/manifests/secrets"
+SECRET_DIR="../manifests/secrets"
 COUNT=$(find "$SECRET_DIR" -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l)
 EXPECTED=17
 if [ "$COUNT" -lt "$EXPECTED" ]; then
   echo "SealedSecret 봉인본이 ${COUNT}개다(필요 ${EXPECTED}종). ${SECRET_DIR}/ 확인." >&2
-  echo "계약: docs/시크릿-계약.md · 봉인법: workloads/manifests/secrets/README.md" >&2
+  echo "계약: docs/시크릿-계약.md · 봉인법: manifests/secrets/README.md" >&2
   echo "봉인을 건너뛰고 진행하려면: SKIP_SECRET_CHECK=1 ./root-app.sh" >&2
   [ "${SKIP_SECRET_CHECK:-0}" = "1" ] || exit 1
   echo "SKIP_SECRET_CHECK=1 — 검사를 건너뛴다. 시크릿 소비 워크로드는 실패한다." >&2

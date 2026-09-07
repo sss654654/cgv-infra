@@ -46,7 +46,7 @@ spec:
           targetRevision: '{{.version}}'
           helm:
             valueFiles:
-              - $values/workloads/charts/platform/{{.name}}/values.yaml
+              - $values/charts/platform/{{.name}}/values.yaml
         - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git   # 값 제공용 git 소스
           targetRevision: main
           ref: values

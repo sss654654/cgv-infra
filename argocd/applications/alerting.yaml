@@ -25,7 +25,7 @@ spec:
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
-    path: workloads/manifests/alerting
+    path: manifests/alerting
   destination:
     server: https://kubernetes.default.svc
     namespace: observability

@@ -1,4 +1,4 @@
-# mysql — 손 나열 개별 Application. workloads/charts/data/cgv-mysql(래퍼, 벤더링) 배포.
+# mysql — 손 나열 개별 Application. charts/data/cgv-mysql(래퍼, 벤더링) 배포.
 # 채널: install.sh 손 설치에서 GitOps로 이동. prune=false(DB 리소스 자동삭제 금지), 데이터 안전은 Retain PV가 커버.
 # mysql-secret은 sealed-secrets App(wave -2)이 선배달 → 이 App(wave -1)이 그 뒤 sync.
 apiVersion: argoproj.io/v1alpha1
@@ -13,11 +13,11 @@ spec:
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
-    path: workloads/charts/data/cgv-mysql
+    path: charts/data/cgv-mysql
     helm:
       valueFiles:
         - values.yaml
-        - ../../../environments/dev/values-mysql.yaml   # data/cgv-mysql 기준 → workloads/environments/dev
+        - ../../../envs/dev/mysql.yaml   # data/cgv-mysql 기준 → envs/dev
   destination:
     server: https://kubernetes.default.svc
     namespace: data

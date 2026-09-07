@@ -64,5 +64,5 @@ spec:
 # apiserver는 여기에 없다. /metrics가 인증을 요구하는데, ServiceMonitor에서 토큰 파일을 지정하는
 # 필드(bearerTokenFile)는 임의 파일 읽기 통로라 prometheus-operator가 걷어내는 방향이라
 # CRD 버전에 따라 무시되거나 거부될 수 있다. 그래서 apiserver 스크레이프는 Alloy 설정에 직접 둔다
-# (workloads/charts/observability/alloy/values.yaml의 prometheus.scrape "apiserver").
+# (charts/observability/alloy/values.yaml의 prometheus.scrape "apiserver").
 # etcd는 :2381이 평문·무인증이라 인증 지정이 필요 없어 ServiceMonitor로 둘 수 있다.

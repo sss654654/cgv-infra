@@ -6,7 +6,7 @@
 
 ```
 방법 A) 사람이 명령을 쳐서 설치한다     ← bootstrap/ 이 폴더
-방법 B) ArgoCD가 git을 보고 배포한다    ← argocd/ + workloads/
+방법 B) ArgoCD가 git을 보고 배포한다    ← argocd/ + charts · manifests · envs
 ```
 
 목표는 B다. 그런데 **B를 시작하려면 ArgoCD가 먼저 있어야 하고, ArgoCD를 설치할 주체는 ArgoCD가 될 수 없다.** 그래서 A로 최소한만 깔고 넘긴다. 이 폴더의 크기가 곧 "GitOps 밖에 남은 수작업의 양"이라, 여기 뭘 넣을지가 설계 판단이다.
@@ -186,7 +186,7 @@ kubectl create secret generic mysql-secret -n data \
   --dry-run=client -o yaml \
 | kubeseal --format yaml \
     --controller-name sealed-secrets --controller-namespace kube-system \
-> ../workloads/manifests/secrets/mysql-secret.yaml
+> ../manifests/secrets/mysql-secret.yaml
 ```
 
 앞부분은 평범한 Secret 생성이되 `--dry-run=client -o yaml`이 붙어 **클러스터에 만들지 않고 YAML만 출력**한다. 평문이 클러스터에 남지 않고 파이프로 넘어간다. 뒷부분이 그것을 공개키로 잠가 `kind: SealedSecret` 매니페스트로 바꾼다.

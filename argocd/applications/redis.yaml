@@ -1,4 +1,4 @@
-# redis — 손 나열 개별 Application(이질·소수라 appset 대신). workloads/charts/data/cgv-redis(래퍼) 배포.
+# redis — 손 나열 개별 Application(이질·소수라 appset 대신). charts/data/cgv-redis(래퍼) 배포.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -11,11 +11,11 @@ spec:
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
-    path: workloads/charts/data/cgv-redis
+    path: charts/data/cgv-redis
     helm:
       valueFiles:
         - values.yaml
-        - ../../../environments/dev/values-redis.yaml   # data/cgv-redis 기준 → workloads/environments/dev
+        - ../../../envs/dev/redis.yaml   # data/cgv-redis 기준 → envs/dev
   destination:
     server: https://kubernetes.default.svc
     namespace: data

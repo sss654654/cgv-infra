@@ -1,5 +1,5 @@
-# 앱 ApplicationSet — workloads/charts/apps/* 를 순회해 queue/booking/frontend Application 자동 생성.
-# 각 App = charts/apps/cgv-app(공통 틀) + charts/apps/<name>/values.yaml(정체성) + environments/dev/values-<name>.yaml(환경).
+# 앱 ApplicationSet — charts/apps/* 를 순회해 queue/booking/frontend Application 자동 생성.
+# 각 App = charts/apps/cgv-app(공통 틀) + charts/apps/<name>/values.yaml(정체성) + envs/dev/<name>.yaml(환경).
 # directory generator가 charts/apps/*를 순회하되 공통 틀 cgv-app은 exclude.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -25,8 +25,8 @@ spec:
         repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
         revision: main
         directories:
-          - path: workloads/charts/apps/*
-          - path: workloads/charts/apps/cgv-app     # 공통 틀은 App 아님 → 제외
+          - path: charts/apps/*
+          - path: charts/apps/cgv-app     # 공통 틀은 App 아님 → 제외
             exclude: true
   template:
     metadata:
@@ -42,7 +42,7 @@ spec:
         argocd-image-updater.argoproj.io/app.update-strategy: newest-build
         # dev 계열만 후보로. MR 파이프라인의 ci-pipeline-* 나 손으로 올린 태그는 배포 후보가 아니다.
         argocd-image-updater.argoproj.io/app.allow-tags: 'regexp:^dev-[0-9]+-[0-9a-f]+$'
-        # 발견한 태그를 어느 헬름 값에 쓸지 — environments/dev 값 파일의 image.tag 한 줄.
+        # 발견한 태그를 어느 헬름 값에 쓸지 — envs/dev 값 파일의 image.tag 한 줄.
         argocd-image-updater.argoproj.io/app.helm.image-name: image.repository
         argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
         # 되쓰기 = git 커밋. 자격은 ArgoCD의 저장소 자격(argocd-repo-cgv-infra)을 빌린다(repocreds).
@@ -52,19 +52,19 @@ spec:
         argocd-image-updater.argoproj.io/write-back-method: git
         argocd-image-updater.argoproj.io/git-branch: main
         # 앞의 / = 저장소 루트 기준. 이 App이 helm 값을 읽는 그 파일에 그대로 쓴다.
-        argocd-image-updater.argoproj.io/write-back-target: 'helmvalues:/workloads/environments/dev/values-{{.path.basename}}.yaml'
+        argocd-image-updater.argoproj.io/write-back-target: 'helmvalues:/envs/dev/{{.path.basename}}.yaml'
     spec:
       project: apps
       source:
         repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
         targetRevision: main
-        path: workloads/charts/apps/cgv-app     # 공통 틀
+        path: charts/apps/cgv-app     # 공통 틀
         helm:
           valueFiles:
             # 상대경로 기준 = source.path(charts/apps/cgv-app)
             - values.yaml                                                # 차트 기본값
             - '../{{.path.basename}}/values.yaml'                        # 정체성(env 무관) — charts/apps/<name>/
-            - '../../../environments/dev/values-{{.path.basename}}.yaml' # 환경값 — workloads/environments/dev/
+            - '../../../envs/dev/{{.path.basename}}.yaml' # 환경값 — envs/dev/
       destination:
         server: https://kubernetes.default.svc
         namespace: app

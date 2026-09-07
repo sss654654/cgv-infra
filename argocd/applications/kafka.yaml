@@ -12,7 +12,7 @@ spec:
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
-    path: workloads/manifests/kafka
+    path: manifests/kafka
     directory:
       recurse: true
   destination:

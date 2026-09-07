@@ -4,7 +4,7 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
 온프레미스 k3s 클러스터에 GitOps로 배포·운영하는 인프라 코드.
 물리 노드부터 CNI·LB·Ingress·스토리지·관측·미들웨어·시크릿까지 직접 구성한다.
 
-이 repo로 노드 프로비저닝부터 CGV 서비스 기동까지 재현한다: 노드 프로비저닝 스크립트(`bootstrap/cluster/`) → 플랫폼 부트스트랩(`bootstrap/install.sh`) → GitOps 선언(`argocd/` + `workloads/`).
+이 repo로 노드 프로비저닝부터 CGV 서비스 기동까지 재현한다: 노드 프로비저닝 스크립트(`bootstrap/cluster/`) → 플랫폼 부트스트랩(`bootstrap/install.sh`) → GitOps 선언(`argocd/` + `charts`·`manifests`·`envs`).
 
 **동작 중인 서비스: [ticket.subinhong.dev](https://ticket.subinhong.dev)** — 클러스터가 노트북 한 대 위에 있어 23:30에 꺼지고 07:30에 켜진다. 그 사이에는 응답하지 않는다.
 
@@ -69,7 +69,7 @@ kubelet이 파드를 축출했다 — 애플리케이션 한계가 아니라 물
 ### 데모 데이터 초기화
 
 좌석과 대기열은 모든 방문자가 공유한다. 두면 4,000석이 차고 그 뒤에 온 사람은 매진 화면만 본다.
-[`reset-app`](workloads/manifests/reset-app/)의 CronJob이 하루 여섯 번(08·11·14·17·20·23시, Asia/Seoul)
+[`reset-app`](manifests/reset-app/)의 CronJob이 하루 여섯 번(08·11·14·17·20·23시, Asia/Seoul)
 **대기열을 먼저, 그다음 예매 기록을** 비운다 — 순서가 반대면 지우는 동안 승격된 관객이 좌석을 잡아
 잔재가 남는다. 이 파드도 `app`의 기본 차단 정책에 걸리므로 통로를 따로 열었다.
 
@@ -217,7 +217,7 @@ MetalLB cgv-pool 10.0.0.240-250  →  Traefik  →  경로별 앱
   4  → 그 밖 전부 (인터넷)           허용      이미지 허브 · apt · NTP · Discord
   ```
   1·2가 3보다 위에 있어야 성립한다. 3이 위로 가면 배포가 함께 멈춘다.
-- **Ingress** — Traefik(LoadBalancer)에 MetalLB가 IP를 할당하고, 경로로 앱을 가른다([frontend/values.yaml](workloads/charts/apps/frontend/values.yaml)).
+- **Ingress** — Traefik(LoadBalancer)에 MetalLB가 IP를 할당하고, 경로로 앱을 가른다([frontend/values.yaml](charts/apps/frontend/values.yaml)).
   frontend Ingress에는 `host`를 적지 않는다 — 적으면 그 이름으로 온 요청만 받아 LB IP 직접 접근이 끊긴다.
 - **관리 UI(`argocd.cgv.lan`·`grafana.cgv.lan`)는 `web` 엔트리포인트에만 붙는다.**
 
@@ -277,7 +277,7 @@ operator  Strimzi                  CR 을 감시할 주체가 먼저 있어야 �
 
 ## 미들웨어
 
-- **Redis** ([cgv-redis](workloads/charts/data/cgv-redis)) — 큐 상태·좌석락·입장인증. dev = Sentinel HA(auth on).
+- **Redis** ([cgv-redis](charts/data/cgv-redis)) — 큐 상태·좌석락·입장인증. dev = Sentinel HA(auth on).
 
   ```
   구성      동일 스펙 파드 3개인 단일 StatefulSet.  master/replica 가 별도 StatefulSet 이 아니다
@@ -287,7 +287,7 @@ operator  Strimzi                  CR 을 감시할 주체가 먼저 있어야 �
             queue = NewFailoverClient · booking = redis-sentinel 프로파일
   접속      sentinel  redis.data.svc:26379
   ```
-- **Kafka** ([Strimzi CR](workloads/manifests/kafka)) — queue ↔ booking 이벤트. 3브로커 RF3, 오퍼레이터가 CR을 실브로커로 만든다.
+- **Kafka** ([Strimzi CR](manifests/kafka)) — queue ↔ booking 이벤트. 3브로커 RF3, 오퍼레이터가 CR을 실브로커로 만든다.
 
   ```
   admissions           입장
@@ -406,7 +406,7 @@ Mimir 기본값 150000으로는 이 클러스터의 수집량을 못 받는다. 
 ### 대시보드 as-code
 
 ```
-workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
+manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
    └ argocd/applications/dashboards.yaml 이 배달 (prune·selfHeal on)
       └ grafana sidecar 가 파일로 떨어뜨림 → Grafana 가 읽음
 ```
@@ -436,7 +436,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 - **PodSecurity** — 위 [k3s 클러스터 아키텍처](#k3s-클러스터-아키텍처)의 ns별 표대로 집행한다. 호스트 접근이 필요한 node-exporter만 별도 ns로 격리해 나머지를 baseline 이상으로 유지한다.
 - **네트워크 격리** — 클러스터가 물리 NIC 없는 브리지에 있어 밖으로 나가는 길이 OPNsense 하나다. 들어오는 문 둘, 나가는 규칙 넷, 엣지 우회 차단은 위 [네트워크](#네트워크)에 있다.
-- **NetworkPolicy 24건 — 네 네임스페이스** ([netpol](workloads/manifests/netpol/) · [netpol-app](workloads/manifests/netpol-app/))
+- **NetworkPolicy 24건 — 네 네임스페이스** ([netpol](manifests/netpol/) · [netpol-app](manifests/netpol-app/))
   ```
   app             10   기본 차단(ingress·egress) + 앱 3종의 인·아웃 + DNS + demo-reset
   data             5   MySQL 3306 · Redis 6379 · Kafka 9092(리스너 networkPolicyPeers)
@@ -446,7 +446,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
   ```
   기본 차단 위에 지정 출처만 여는 구조다. mysql·redis 차트가 만들던 넓은 정책(`allowExternal: true`라 `from` 절 없이 렌더)은 껐다 — NetworkPolicy는 겹치면 허용의 합집합이라, 넓은 쪽이 남아 있으면 좁은 정책을 더해도 좁아지지 않는다. 라벨 없는 파드에서 접속이 막히는 것을 차단 실증으로 확인했다.
   ⚠️ **세그먼테이션은 인증이 아니다.** 정책은 라벨로 상대를 가르므로, 그 라벨을 달 수 있는 쪽은 통과한다(라벨만 단 파드가 통과하는 것을 실측으로 확인). 신원 확인은 mTLS·SASL의 몫이고 지금은 없다.
-- **공개 경로 앞단** ([public-guard](workloads/manifests/public-guard/))
+- **공개 경로 앞단** ([public-guard](manifests/public-guard/))
   - `security-headers` — HSTS(3600초) · `nosniff` · `X-Frame-Options: DENY`를 Traefik 미들웨어로 붙인다.
   - `admin-api-deny` — 초기화 API(`/api/admin`·`/api/admission/reset`)를 **443에서만** 끊는다. 실제로 부르는 것은 클러스터 안의 CronJob 하나이고 그것은 Service를 직접 부르므로, 밖에서 살아 있을 이유가 없다. 80에는 걸지 않아 격리망 안에서 손으로 부르는 경로는 남는다.
 - **관리 UI가 443에 없다** — 두 Ingress를 `web` 엔트리포인트에만 붙여 WireGuard 터널로만 닿게 했다. 엔트리포인트를 안 적으면 왜 443에 붙는지는 위 [네트워크](#네트워크)에 있다.
@@ -513,7 +513,7 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
   가려면      리스너에 authentication 을 켜고 KafkaUser CR 을 만들 userOperator 를 되살린다
   안 한 이유   발급할 자격증명이 0건이라 2026-08-15 에 내렸다
   ```
-  ([kafka-cluster.yaml](workloads/manifests/kafka/kafka-cluster.yaml) 주석)
+  ([kafka-cluster.yaml](manifests/kafka/kafka-cluster.yaml) 주석)
 - **JDBC 평문** — `useSSL=false`가 앱의 URL에 리터럴로 있어 인프라에서 끌 수 없다. 바꾸려면 앱 이미지를 다시 구워야 한다.
 - **etcd 메트릭 포트(:2381) 무인증** — 인증 없이 읽힌다. 노드가 격리망으로 옮겨져 닿을 수 있는 범위는 `10.0.0.0/24` 안으로 줄었지만, 그 안에서는 여전히 열려 있다(노드 방화벽 미설정).
 - **공개 API에 인증·rate limit 없음** — 익명 접속을 받는 것이 이 서비스의 목적이라 접수 단계에서 거를 수 없다.
@@ -531,13 +531,21 @@ workloads/manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 ---
 
-## 저장소 구조 (실행 3계층)
+## 저장소 구조
 
-폴더는 **① 누가·언제 적용하나 ② 제어 vs 대상**으로 가른다(Argo "config↔source 분리" + Flux/RedHat 공통 골격).
+폴더마다 답하는 질문이 하나다. 판단 기준은 [`docs/구조-기준.md`](docs/구조-기준.md)에 있다.
+
+| 폴더 | 질문 | 누가 읽나 |
+|---|---|---|
+| `bootstrap/` | 빈 클러스터를 어떻게 세우나 | 사람 (한 번, 손으로) |
+| `argocd/` | 무엇을 · 어디에 · 어떤 울타리 안에서 | ArgoCD |
+| `charts/` | 배포물 — 값이 필요한 것 | ArgoCD (Helm 렌더) |
+| `manifests/` | 배포물 — 정적인 것 | ArgoCD (그대로 apply) |
+| `envs/` | 환경마다 얼마나 크게 | Helm (값으로만 참조) |
 
 ```
 cgv-infra/
-├── bootstrap/          ① 손으로 (argocd 뜰 때까지 — 순환·CRD·operator만, 9단계)
+├── bootstrap/          손으로 (argocd 뜰 때까지 — 순환·CRD·operator만, 9단계)
 │   ├── cluster/            k3s 설치·조인(SSH): config.yaml · 01-server-init · 02-server-join
 │   ├── install.sh          Calico→namespaces→storage→cert-manager→sealed-secrets→CRD→control-plane→Strimzi→argocd
 │   ├── seal-secrets.sh     초기 봉인 — 값 5개를 물어 10종을 일괄 생성
@@ -546,34 +554,38 @@ cgv-infra/
 │   ├── control-plane/      etcd 메트릭 수집 경로(셀렉터 없는 Service + 수동 Endpoints + ServiceMonitor)
 │   ├── calico/ cert-manager/ sealed-secrets/ strimzi/ argocd/ storage/ namespaces/   매니페스트·values
 │   └── root-app.yaml       app-of-apps 루트 → argocd/ 인계
-├── argocd/             ② GitOps 배선 (제어면 — "무엇을·어디에·누가")
+├── argocd/             GitOps 배선 (제어면 — "무엇을·어디에·누가")
 │   ├── projects/           bootstrap · argocd · apps · infra · secrets · cert  (AppProject = 울타리)
 │   ├── applicationsets/    apps(directory) · observability(list) · platform(list)  (App 자동 생성기)
 │   └── applications/       손으로 나열하는 16개 —
 │                           argocd · argocd-image-updater · sealed-secrets · mysql · redis · kafka
 │                           metallb-pool · dashboards · alerting · netpol · netpol-app · rbac
 │                           cert-issuers · certificates · public-guard · reset-app
-├── workloads/          ③ 배포 대상 (charts=정체성 / environments=환경값 / manifests=비-helm)
-│   ├── charts/             apps/(cgv-app 틀 + queue·booking·frontend) · data/(cgv-mysql·cgv-redis 래퍼)
-│   │                       · observability/(loki·mimir·tempo·grafana·alloy·minio·ksm·node-exporter) · platform/(metallb·traefik)
-│   ├── environments/       dev(실물)·stg·prd(골격)
-│   └── manifests/          비-helm 매니페스트 12 디렉터리 —
-│                           kafka/          Strimzi CR (클러스터·노드풀·토픽 4종)
-│                           metallb/        주소 풀 CR (10.0.0.240-250)
-│                           secrets/        SealedSecret 17종
-│                           dashboards/     Grafana 대시보드 ConfigMap 7장
-│                           netpol/         data·observability 로 들어오는 접속 제한
-│                           netpol-app/     app 네임스페이스 인·아웃
-│                           rbac/           읽기 전용 ClusterRole
-│                           alerting/       Grafana 알림 규칙·연락처
-│                           cert-issuers/   Let's Encrypt ClusterIssuer 둘
-│                           certificates/   Certificate (ticket.subinhong.dev)
-│                           public-guard/   보안 헤더 · 초기화 API 443 차단 (Traefik 미들웨어)
-│                           reset-app/      데모 데이터 주기 초기화 CronJob
-└── docs/               시크릿-계약 · 코드-반영사항
+├── charts/             배포 대상 — 값이 필요한 것
+│   ├── apps/               cgv-app(공통 틀) + queue · booking · frontend(서비스 값)
+│   ├── data/               cgv-mysql · cgv-redis (bitnami 래퍼)
+│   ├── observability/      loki · mimir · tempo · grafana · alloy · minio · ksm · node-exporter
+│   └── platform/           metallb · traefik · argocd-image-updater
+├── manifests/          배포 대상 — 정적인 것 (12 디렉터리)
+│   ├── kafka/              Strimzi CR (클러스터·노드풀·토픽 4종)
+│   ├── metallb-pool/       주소 풀 CR (10.0.0.240-250)
+│   ├── secrets/            SealedSecret 17종
+│   ├── dashboards/         Grafana 대시보드 ConfigMap 7장
+│   ├── netpol/             data·observability 로 들어오는 접속 제한
+│   ├── netpol-app/         app 네임스페이스 인·아웃
+│   ├── rbac/               읽기 전용 ClusterRole
+│   ├── alerting/           Grafana 알림 규칙·연락처
+│   ├── cert-issuers/       Let's Encrypt ClusterIssuer 둘
+│   ├── certificates/       Certificate (ticket.subinhong.dev)
+│   ├── public-guard/       보안 헤더 · 초기화 API 443 차단 (Traefik 미들웨어)
+│   └── reset-app/          데모 데이터 주기 초기화 CronJob
+├── envs/               환경값 — 배포되지 않는다.  valueFiles 로만 참조된다
+│   ├── dev/                실물 (온프레미스 k3s)
+│   └── stg/                값 골격.  배포 배선 없음
+└── docs/               구조-기준 · 시크릿-계약 · 코드-반영사항
 ```
 
-**최상위 3폴더가 곧 배포 순서**: `bootstrap`(손) → `argocd`(배선) → `workloads`(대상).
+**적용 순서**: `bootstrap`(손) → `argocd`(배선) → 그 배선이 `charts`·`manifests`를 `envs` 값과 함께 배포.
 
 `install.sh`와 `root-app.sh`가 나뉜 이유는 SealedSecret 봉인이 그 사이에 들어가야 해서다. 봉인은 sealed-secrets 컨트롤러가 떠야(install.sh 중반) 가능한데, 봉인 전에 GitOps 폭포가 시작되면 MySQL·Redis·MinIO·Grafana·LGTM이 시크릿을 못 찾아 일제히 실패한다. `root-app.sh`는 봉인본 개수를 세어 부족하면 멈춘다.
 
@@ -590,7 +602,7 @@ push ─▶ GitLab (데스크탑 192.168.0.167:8929, cgv/cgv-infra) ─ 폴링 3
 
 - **모든 Application의 `repoURL`이 GitLab을 가리킨다.** GitHub는 읽히지 않는 공개 사본이고, GitLab이 배포 상태를 정의한다.
 - **자격 = deploy token**(`read_repository`, 무만료). 저장소가 private이라 ArgoCD가 자격 없이는 못 읽는데, 그 자격도 Git에 평문으로 둘 수 없다 — SealedSecret으로 봉인해 `argocd` 네임스페이스로 배달한다(`argocd-repo-cgv-infra`). ArgoCD는 `argocd.argoproj.io/secret-type: repository` 라벨이 붙은 Secret을 저장소 자격으로 인식한다.
-- **브랜치는 `main` 하나.** 환경 분리는 이미 `workloads/environments/` 디렉터리가 하므로 브랜치를 환경 축으로 쓰면 축이 둘이 된다. 브랜치는 변경 흐름용(작업 브랜치 → MR → main)이고, `main`은 push 금지·MR만 허용이다.
+- **브랜치는 `main` 하나.** 환경 분리는 이미 `envs/` 디렉터리가 하므로 브랜치를 환경 축으로 쓰면 축이 둘이 된다. 브랜치는 변경 흐름용(작업 브랜치 → MR → main)이고, `main`은 push 금지·MR만 허용이다.
 
 ### AppProject — Application이 할 수 있는 일의 범위
 
@@ -638,11 +650,11 @@ syncPolicy:
 ① cluster/ 스크립트 (SSH, 노드에서)   → k3s 3노드 조인 (CNI 없어 NotReady)
 ② bootstrap/install.sh (9단계)        → Calico(→Ready)→namespaces→storage→cert-manager→sealed-secrets
                                           →CRD→control-plane 수집→Strimzi→argocd
-③ SealedSecret 15종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
+③ SealedSecret 17종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
                                           그중 ArgoCD 저장소 자격 한 장은 apply까지 (없으면 ⑤ 이후가 안 돈다)
 ④ bootstrap/root-app.sh               → 봉인본 개수 확인 후 root-app apply. 여기서 손 끝
 ⑤ root-app → argocd/ recurse          → AppProject·ApplicationSet·Application 생성
-⑥ ApplicationSet → 플랫폼/앱/관측 Application 자동 생성 · Application이 workloads/ 가리킴
+⑥ ApplicationSet → 플랫폼/앱/관측 Application 자동 생성 · Application이 charts·manifests 를 가리킴
 ⑦ argocd가 렌더·배포 → CGV 서비스 기동
      ※ argocd는 traefik(GitOps) 뜨기 전엔 ingress 없음 → 초기 접근 port-forward
        traefik이 뜬 뒤 argocd.cgv.lan · grafana.cgv.lan
@@ -669,7 +681,7 @@ syncPolicy:
 | 2 | 각 노드 OS prep(정적 IP·SSH키·**데이터 디스크 10장 mkfs + `/mnt/disks/<용도>` 마운트·fstab**·[cluster/README](bootstrap/cluster/README.md)) | ✅ 완료 (재부팅 검증 통과) |
 | 3 | `cluster/01-server-init.sh`(k3s-1) → `02-server-join.sh`(k3s-2·3) | ✅ 완료 (v1.36.2, etcd 3-member, CNI 전이라 NotReady) |
 | 4 | `bootstrap/install.sh` — Calico부터 argocd까지. 여기까지는 몇 번을 다시 돌려도 안전하다(전부 멱등) | ✅ 완료 |
-| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](workloads/manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격·초기화 API 토큰 = 15종 | ✅ 완료 |
+| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 7종(저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격·초기화 API 토큰·Discord webhook·Cloudflare API 토큰) = 17종. `root-app.sh`가 이 개수를 세어 부족하면 멈춘다 | ✅ 완료 |
 | 6 | `bootstrap/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ✅ 완료 |
 | 7 | `kubectl -n argocd get applications -w` 로 sync 확인 | ✅ 완료 (플랫폼·관측·미들웨어 수렴. 자원값은 실측으로 재조정) |
 | 8 | **GitOps 원본을 GitLab으로** — 저장소 이전 · deploy token 봉인 · `repoURL` 전환 · AppProject 울타리 | ✅ 완료 |

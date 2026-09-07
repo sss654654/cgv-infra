@@ -10,7 +10,7 @@
 #   비용이 이득보다 크다. 다른 네임스페이스에서 오는 접속을 막는 것이 이득의 대부분이다.
 #
 # kubelet 프로브용 ipBlock은 적지 않는다. 정책이 강제되는 상태에서 프로브가 통과하는 것을
-#   app 네임스페이스에서 확인했다(workloads/manifests/netpol-app/app-ingress.yaml 주석).
+#   app 네임스페이스에서 확인했다(manifests/netpol-app/app-ingress.yaml 주석).
 #
 # observability-host의 node-exporter는 여기에 없다. hostNetwork: true라 파드 네트워크를
 #   쓰지 않아 NetworkPolicy의 판정 대상이 아니다.

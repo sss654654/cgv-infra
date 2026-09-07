@@ -11,7 +11,7 @@ spec:
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
-    path: workloads/manifests/public-guard
+    path: manifests/public-guard
   destination:
     server: https://kubernetes.default.svc
     namespace: app

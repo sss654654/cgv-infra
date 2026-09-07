@@ -14,7 +14,7 @@ spec:
   source:
     repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
     targetRevision: main
-    path: workloads/manifests/reset-app
+    path: manifests/reset-app
   destination:
     server: https://kubernetes.default.svc
     namespace: app

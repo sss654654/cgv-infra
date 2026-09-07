@@ -21,7 +21,7 @@ spec:
     #   돌릴 때는 브랜치 삭제 전에 이 값을 main 으로 되돌린다 — 순서가 바뀌면
     #   이 Application 이 없는 리비전을 가리켜 sync 가 멈춘다.
     targetRevision: main
-    path: workloads/manifests/dashboards
+    path: manifests/dashboards
   destination:
     server: https://kubernetes.default.svc
     namespace: observability

@@ -58,7 +58,7 @@ persistence:
   enabled: false                     # 의도적 비영속 — 대시보드·데이터소스 전부 코드로 관리해 sqlite에 보존할 상태가 없음.
                                      #   재시작하면 코드에서 재프로비저닝. (UI에서 손으로 만든 대시보드는 날아간다 — as-code 강제 장치.)
 # 대시보드 배달: grafana_dashboard 라벨이 붙은 ConfigMap을 sidecar가 파일로 떨어뜨리고 Grafana가 읽는다.
-#   대시보드 정본 = workloads/manifests/dashboards/ (argocd/applications/dashboards.yaml 이 배달).
+#   대시보드 정본 = manifests/dashboards/ (argocd/applications/dashboards.yaml 이 배달).
 #   비영속과 짝이다 — 영속 저장소가 없으므로 이 경로가 유일한 대시보드 공급원이다.
 # RBAC 범위. 차트 기본값(namespaced: false)은 ClusterRole+ClusterRoleBinding을 만들어
 #   grafana 서비스어카운트가 전 네임스페이스의 configmaps·secrets를 읽게 된다
@@ -163,7 +163,7 @@ envValueFrom:
       name: grafana-discord-webhook
       key: url
 
-# 알림 프로비저닝은 별도 ConfigMap 으로 둔다(workloads/manifests/alerting).
+# 알림 프로비저닝은 별도 ConfigMap 으로 둔다(manifests/alerting).
 #   차트가 values 의 alerting 키에 Helm tpl 을 돌려, 알림 템플릿의 {{ }} 를 Grafana 가 아니라
 #   Helm 이 먼저 해석하려다 렌더가 실패한다. ConfigMap 에 두면 문자열 그대로 전달된다.
 #   위 데이터소스의 $$ 이스케이프와 같은 종류의 함정이고, 이쪽은 이스케이프로 못 피한다.
