@@ -33,7 +33,7 @@ spec:
                 - { env: dev, server: "https://kubernetes.default.svc" }
   template:
     metadata:
-      name: '{{.name}}'
+      name: '{{.name}}-{{.env}}'
       annotations:
         argocd.argoproj.io/sync-wave: '{{.wave}}'   # 앱보다 먼저(앱이 이 계층에 의존)
     spec:
@@ -43,6 +43,8 @@ spec:
         targetRevision: main
         path: '{{.chartPath}}'
         helm:
+          # Application 이름이 redis-dev 여도 Helm 릴리스 이름은 redis 로 고정한다(apps AppSet 과 같은 이유).
+          releaseName: '{{.name}}'
           # 상대경로 기준 = source.path(charts/data/<차트>). 세 단계 위가 저장소 루트다.
           valueFiles:
             - values.yaml

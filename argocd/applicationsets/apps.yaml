@@ -48,7 +48,7 @@ spec:
                 - { env: dev, server: "https://kubernetes.default.svc", registry: "192.168.0.167:5050" }
   template:
     metadata:
-      name: '{{.name}}'
+      name: '{{.name}}-{{.env}}'
       annotations:
         argocd.argoproj.io/sync-wave: "3"   # 미들웨어(-1)·관측(0~1) 뒤에 앱
         # ── image updater — 이 App의 이미지를 감시하고 새 태그를 git에 되쓴다 ──
@@ -80,6 +80,10 @@ spec:
         targetRevision: main
         path: charts/apps/cgv-app                # 공통 틀 — 세 서비스가 같은 차트를 쓴다
         helm:
+          # Application 이름이 queue-dev 여도 Helm 릴리스 이름은 queue 로 고정한다.
+          #   차트가 Release.Name 으로 selector 라벨을 만드는데 selector 는 불변이라,
+          #   릴리스 이름이 바뀌면 기존 Deployment 에 apply 가 거부된다.
+          releaseName: '{{.name}}'
           # 상대경로 기준 = source.path(charts/apps/cgv-app).
           #   차트가 이 저장소 안에 있어 단일 소스로 끝난다. 업스트림 차트를 쓰는 AppSet
           #   (platform·observability)만 값 제공용 git 소스를 따로 두고 $values 를 쓴다.

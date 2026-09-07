@@ -1,0 +1,42 @@
+# metallb — LoadBalancer 주소 할당. 온프레미스 전용이라 환경 축이 없다.
+# platform ApplicationSet 에서 갈라 나왔다. traefik 은 stg 에도 필요해 환경 축이 생기는데
+#   metallb 는 클라우드에서 관리형 로드밸런서가 그 자리를 대신하므로 여기에만 있다.
+#   matrix 는 모든 원소를 모든 환경에 곱하므로 둘이 한 AppSet 에 있으면 metallb 까지 stg 에 생긴다.
+#   반복 축이 없으면 Application 으로 둔다(docs/구조-기준.md 기준 1).
+#
+# 주소 풀(IPAddressPool CR)은 applications/metallb-pool.yaml 이 따로 배포한다.
+#   컨트롤러가 CRD 를 먼저 세워야 CR 을 만들 수 있어 wave 로 순서를 강제한다(-4 → -3).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"    # 주소 풀(-3)·traefik(-2)보다 먼저
+spec:
+  project: platform
+  sources:
+    - repoURL: https://metallb.github.io/metallb      # 업스트림 차트(직접 참조 + 버전 핀)
+      chart: metallb
+      targetRevision: "0.16.1"
+      helm:
+        valueFiles:
+          - $values/charts/platform/metallb/values.yaml
+    - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git   # 값 제공용 git 소스
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metallb-system
+  syncPolicy:
+    managedNamespaceMetadata:         # CreateNamespace=true로 만드는 ns에 PodSecurity 라벨을 같이 건다
+      labels:
+        # privileged — speaker·frr-k8s가 hostNetwork + NET_ADMIN/NET_RAW/SYS_ADMIN을 쓴다(L2 광고에 필수).
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/enforce-version: latest
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true          # metallb-system ns 자동 생성
+      - ServerSideApply=true          # 차트 CRD(IPAddressPool 등) 대비

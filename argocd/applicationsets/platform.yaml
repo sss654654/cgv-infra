@@ -1,11 +1,14 @@
-# 플랫폼 ApplicationSet — metallb·traefik를 GitOps로 관리.
-# metallb·traefik은 부트스트랩 순환에도 CRD 의존에도 해당하지 않아 GitOps로 관리한다.
-#   특히 traefik은 OTel 튜닝을 수동 helm upgrade(순단 위험) 없이 반영할 수 있다.
-# cert-manager는 제외 — 현재 소비자 없음. 존치/제거가 미결이라 Phase2까지 bootstrap에서 손으로 관리.
-# wave: metallb -4 → traefik -2. 이 wave는 이 AppSet이 만드는 App들 사이의 순서다.
-#   root 폭포에서는 AppSet 자체가 wave 0에 생성되므로, root 직속 App(metallb-pool 등)이 먼저 만들어진다
-#   — metallb-pool은 그 전제 위에서 retry를 갖고 있다(applications/metallb-pool.yaml).
-#   argocd 자체는 install.sh가 손 설치 후 kubectl로 root-app apply(ingress 불요) → 이 폭포가 metallb/traefik를 뒤이어 세움.
+# 진입 ApplicationSet — 업스트림 차트를 이 저장소의 값과 함께 올린다.
+#
+# 지금 목록에 traefik 하나뿐이다. 그래도 AppSet 인 이유는 환경 축이 있기 때문이다 —
+#   stg 클러스터가 생기면 traefik 은 양쪽에 다 있어야 한다(docs/구조-기준.md 기준 1).
+#
+# metallb 는 applications/metallb.yaml 로 갈라 나갔다. 클라우드에서는 관리형 로드밸런서가
+#   그 자리를 대신하므로 온프레미스에만 있고, matrix 는 모든 원소를 모든 환경에 곱하기 때문에
+#   둘이 한 AppSet 에 있으면 metallb 까지 stg 에 생긴다.
+#
+# 관측(observability AppSet)과 형태는 같지만 합치지 않는다 — 관측 8종은 환경 축이 없어서
+#   같은 matrix 에 넣으면 8종이 전부 stg 에 생긴다.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -20,22 +23,23 @@ spec:
   # 반면 root 직속 Application(applications/*.yaml)은 finalizer가 없어 prune돼도 리소스는 남고
   #   관리만 이탈한다 — 같은 root prune인데 두 경로의 삭제 반경이 정반대였다.
   # preserveResourcesOnDeletion: true 로 두 경로를 "관리만 이탈, 리소스는 존치"로 맞춘다.
-  #   대가: ApplicationSet을 지운 뒤 남는 Application·워크로드는 손으로 정리해야 한다.
-  # 대안이던 root-app prune:false는 argocd/ 아래 무엇을 지워도 자동 정리가 사라져 제어면 전체가
-  #   수동이 된다. 자동 정리는 남기고 워크로드 삭제만 막는 쪽을 택했다.
   syncPolicy:
     preserveResourcesOnDeletion: true
   generators:
-    - list:
-        elements:
+    - matrix:
+        generators:
           # psa: 이 ns를 만드는 주체가 Argo(CreateNamespace)라 라벨도 여기서 건다(managedNamespaceMetadata).
-          #   metallb=privileged — speaker·frr-k8s가 hostNetwork + NET_ADMIN/NET_RAW/SYS_ADMIN을 쓴다(L2 광고에 필수).
-          #   traefik=restricted — 렌더 실물이 runAsNonRoot·cap drop ALL·seccomp RuntimeDefault·8000/8443 비특권 포트라 그대로 통과.
-          - { name: metallb, repoURL: https://metallb.github.io/metallb, chart: metallb, version: "0.16.1", namespace: metallb-system, wave: "-4", psa: privileged }
-          - { name: traefik, repoURL: https://traefik.github.io/charts,  chart: traefik, version: "41.0.2", namespace: traefik,        wave: "-2", psa: restricted }
+          #   traefik=restricted — 렌더 실물이 runAsNonRoot·cap drop ALL·seccomp RuntimeDefault·8000/8443
+          #   비특권 포트라 그대로 통과한다.
+          - list:
+              elements:
+                - { name: traefik, repoURL: https://traefik.github.io/charts, chart: traefik, version: "41.0.2", namespace: traefik, wave: "-2", psa: restricted }
+          - list:
+              elements:
+                - { env: dev, server: "https://kubernetes.default.svc" }
   template:
     metadata:
-      name: '{{.name}}'
+      name: '{{.name}}-{{.env}}'
       annotations:
         argocd.argoproj.io/sync-wave: '{{.wave}}'
     spec:
@@ -45,13 +49,17 @@ spec:
           chart: '{{.chart}}'
           targetRevision: '{{.version}}'
           helm:
+            # Application 이름이 traefik-dev 여도 Helm 릴리스 이름은 traefik 으로 고정한다.
+            #   차트가 Release.Name 으로 selector 라벨(instance: traefik-traefik)을 만드는데
+            #   selector 는 불변이라, 릴리스 이름이 바뀌면 기존 Deployment 에 apply 가 거부된다.
+            releaseName: '{{.name}}'
             valueFiles:
               - $values/charts/platform/{{.name}}/values.yaml
         - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git   # 값 제공용 git 소스
           targetRevision: main
           ref: values
       destination:
-        server: https://kubernetes.default.svc
+        server: '{{.server}}'
         namespace: '{{.namespace}}'
       syncPolicy:
         managedNamespaceMetadata:         # CreateNamespace=true로 만드는 ns에 PodSecurity 라벨을 같이 건다
@@ -62,5 +70,5 @@ spec:
           prune: true
           selfHeal: true
         syncOptions:
-          - CreateNamespace=true          # metallb-system·traefik ns 자동 생성
-          - ServerSideApply=true          # 차트 CRD(metallb IPAddressPool 등) 대비
+          - CreateNamespace=true          # traefik ns 자동 생성
+          - ServerSideApply=true          # 차트 CRD(IngressRoute 등) 대비

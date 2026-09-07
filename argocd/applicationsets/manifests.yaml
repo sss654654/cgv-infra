@@ -10,8 +10,9 @@
 # 여기 모으기 전에는 같은 정보가 파일 7개에 흩어져 있었다. 어느 매니페스트가 어느 울타리에서
 #   어느 순서로 서는지 보려면 7개를 열어야 했다 — 지금은 아래 목록 한 표가 답한다.
 #
-# 환경 축은 아직 안 걸었다. stg 를 붙일 때 어떤 것이 환경별 경로를 필요로 하는지(봉인 키가 다른
-#   secrets, 도메인이 다른 certificates)가 그때 정해지므로, 안 해 본 것을 미리 구조로 만들지 않는다.
+# 환경 축은 이름까지만 걸려 있다. 경로는 아직 환경별로 안 갈렸다 —
+#   stg 를 붙일 때 어떤 것이 환경별 경로를 필요로 하는지(봉인 키가 다른 secrets,
+#   도메인이 다른 certificates)가 정해지므로, 안 해 본 것을 미리 구조로 만들지 않는다.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -26,22 +27,31 @@ spec:
   syncPolicy:
     preserveResourcesOnDeletion: true
   generators:
-    - list:
-        elements:
-          - { name: sealed-secrets, path: manifests/secrets,       project: secrets,  namespace: data,          wave: "-2" }
-          - { name: kafka,          path: manifests/kafka,         project: data,     namespace: data,          wave: "-1" }
-          # NetworkPolicy 는 네임스페이스마다 나눈다. 한 Application 의 destination.namespace 는
-          #   하나이고, AppProject 도 그 네임스페이스만 허용한다 — 한 경로에 여러 ns 의 정책을 담으면
+    - matrix:
+        generators:
+          # 대상 축 — 어느 경로를 어느 울타리에서 어느 네임스페이스에 어느 순서로.
+          #   NetworkPolicy 가 셋으로 갈린 이유: 한 Application 의 destination.namespace 는 하나이고
+          #   AppProject 도 그 네임스페이스만 허용한다. 한 경로에 여러 ns 의 정책을 담으면
           #   울타리 밖 것이 OutOfSync 로 남는다(2026-09-07 에 infra 프로젝트를 가르며 드러났다).
-          - { name: netpol-data,          path: manifests/netpol-data,          project: data,     namespace: data,          wave: "0" }
-          - { name: netpol-app,           path: manifests/netpol-app,           project: apps,     namespace: app,           wave: "0" }
-          - { name: netpol-observability, path: manifests/netpol-observability, project: platform, namespace: observability, wave: "0" }
-          - { name: rbac,           path: manifests/rbac,          project: platform, namespace: observability, wave: "0" }
-          - { name: cert-issuers,   path: manifests/cert-issuers,  project: cert,     namespace: cert-manager,  wave: "0" }
-          - { name: certificates,   path: manifests/certificates,  project: apps,     namespace: app,           wave: "0" }
+          - list:
+              elements:
+                - { name: sealed-secrets,       path: manifests/secrets,              project: secrets,  namespace: data,          wave: "-2" }
+                - { name: kafka,                path: manifests/kafka,                project: data,     namespace: data,          wave: "-1" }
+                - { name: netpol-data,          path: manifests/netpol-data,          project: data,     namespace: data,          wave: "0" }
+                - { name: netpol-app,           path: manifests/netpol-app,           project: apps,     namespace: app,           wave: "0" }
+                - { name: netpol-observability, path: manifests/netpol-observability, project: platform, namespace: observability, wave: "0" }
+                - { name: rbac,                 path: manifests/rbac,                 project: platform, namespace: observability, wave: "0" }
+                - { name: cert-issuers,         path: manifests/cert-issuers,         project: cert,     namespace: cert-manager,  wave: "0" }
+                - { name: certificates,         path: manifests/certificates,         project: apps,     namespace: app,           wave: "0" }
+          # 환경 축 — 지금은 이름에만 쓴다. 경로는 아직 환경별로 갈리지 않았다.
+          #   stg 를 붙일 때 어떤 것이 환경별 경로를 필요로 하는지(봉인 키가 다른 secrets,
+          #   도메인이 다른 certificates) 정해지면 그때 path 에도 {{.env}} 를 넣는다.
+          - list:
+              elements:
+                - { env: dev, server: "https://kubernetes.default.svc" }
   template:
     metadata:
-      name: '{{.name}}'
+      name: '{{.name}}-{{.env}}'
       annotations:
         argocd.argoproj.io/sync-wave: '{{.wave}}'
     spec:
@@ -51,7 +61,7 @@ spec:
         targetRevision: main
         path: '{{.path}}'
       destination:
-        server: https://kubernetes.default.svc
+        server: '{{.server}}'
         namespace: '{{.namespace}}'
       syncPolicy:
         automated:

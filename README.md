@@ -557,11 +557,13 @@ cgv-infra/
 ├── argocd/             GitOps 배선 (제어면 — "무엇을·어디에·누가")
 │   ├── projects/           bootstrap · argocd · apps · data · platform · secrets · cert  (AppProject = 울타리)
 │   ├── applicationsets/    반복 축(대상 또는 환경)이 있는 것 —
-│   │                       apps(서비스×환경) · data(서비스×환경) · manifests(목록)
-│   │                       platform(목록) · observability(목록)
-│   └── applications/       반복 축이 없는 것 8개 —
-│                           argocd · argocd-image-updater · mysql · metallb-pool
-│                           dashboards · alerting · public-guard · reset-app
+│   │                       apps · data · manifests · platform  (대상 × 환경 matrix)
+│   │                       observability                        (대상만. 온프레미스 전용)
+│   │                       ★ 이 AppSet 이 만드는 Application 만 이름에 -dev 접미사가 붙는다
+│   └── applications/       반복 축이 없는 것 9개 (온프레미스 전용 또는 단일) —
+│                           argocd · argocd-image-updater · mysql
+│                           metallb · metallb-pool · dashboards · alerting
+│                           public-guard · reset-app
 ├── charts/             배포 대상 — 값이 필요한 것
 │   ├── apps/               cgv-app(공통 틀) + queue · booking · frontend(서비스 값)
 │   ├── data/               cgv-mysql · cgv-redis (bitnami 래퍼)
