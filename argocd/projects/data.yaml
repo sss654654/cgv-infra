@@ -2,7 +2,8 @@
 # infra 프로젝트에서 갈라 나왔다. infra 는 data · observability · observability-host ·
 #   metallb-system · traefik 다섯 네임스페이스를 한 울타리에 묶고 있어서,
 #   traefik App 이 data 네임스페이스에 무엇이든 만들 수 있는 상태였다.
-#   울타리를 나누는 기준은 "내용이 실제로 다른 단위"다(docs/구조-기준.md 기준 5) —
+#   울타리를 나누는 기준은 "내용이 실제로 다른 단위"다
+#   (docs/구조-기준.md "무엇 단위로 나누나") —
 #   data 는 cluster-scoped 리소스를 만들 필요가 없고 업스트림 차트도 안 쓴다.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject

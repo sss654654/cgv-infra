@@ -2,7 +2,7 @@
 # platform ApplicationSet 에서 갈라 나왔다. traefik 은 stg 에도 필요해 환경 축이 생기는데
 #   metallb 는 클라우드에서 관리형 로드밸런서가 그 자리를 대신하므로 여기에만 있다.
 #   matrix 는 모든 원소를 모든 환경에 곱하므로 둘이 한 AppSet 에 있으면 metallb 까지 stg 에 생긴다.
-#   반복 축이 없으면 Application 으로 둔다(docs/구조-기준.md 기준 1).
+#   반복 축이 없으면 Application 으로 둔다(docs/구조-기준.md "Application 인가 ApplicationSet 인가").
 #
 # 주소 풀(IPAddressPool CR)은 applications/metallb-pool.yaml 이 따로 배포한다.
 #   컨트롤러가 CRD 를 먼저 세워야 CR 을 만들 수 있어 wave 로 순서를 강제한다(-4 → -3).

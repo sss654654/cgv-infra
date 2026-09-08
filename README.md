@@ -541,7 +541,8 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 | `argocd/` | 무엇을 · 어디에 · 어떤 울타리 안에서 | ArgoCD |
 | `charts/` | 배포물 — 값이 필요한 것 | ArgoCD (Helm 렌더) |
 | `manifests/` | 배포물 — 정적인 것 | ArgoCD (그대로 apply) |
-| `envs/` | 환경마다 얼마나 크게 | Helm (값으로만 참조) |
+| `envs/` | 이 환경에서 얼마나 크게 | Helm (값으로만 참조) |
+| `schemas/` | CI 가 CRD 를 검증할 스키마 | GitLab CI (kubeconform) |
 
 ```
 cgv-infra/
@@ -586,7 +587,8 @@ cgv-infra/
 ├── envs/               환경값 — 배포되지 않는다.  valueFiles 로만 참조된다
 │   ├── dev/                실물 (온프레미스 k3s)
 │   └── stg/                값 골격.  배포 배선 없음
-└── docs/               구조-기준 · 시크릿-계약 · 코드-반영사항
+├── schemas/            CI 가 쓰는 CRD 스키마 11종 (kubeconform)
+└── docs/               구조-기준 · 시크릿-계약 · 공개-차단절차
 ```
 
 **적용 순서**: `bootstrap`(손) → `argocd`(배선) → 그 배선이 `charts`·`manifests`를 `envs` 값과 함께 배포.
