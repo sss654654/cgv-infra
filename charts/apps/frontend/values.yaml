@@ -9,21 +9,31 @@ containerPort: 8080        # nginx-unprivileged 기본 리슨
 service:
   port: 8080
 
-# nginx-unprivileged uid 101. readOnlyRootFilesystem + 쓰기 경로 emptyDir(/tmp pid·temp, /var/cache/nginx).
+# nginx-unprivileged uid 101. readOnlyRootFilesystem + 쓰기 경로 emptyDir.
 securityContext:
   runAsUser: 101
   runAsGroup: 101
 
+# 쓰기 경로 셋. readOnlyRootFilesystem=true 라 여기 적힌 곳 밖에는 못 쓴다.
+#   tmp     nginx 의 pid·임시 파일
+#   cache   /api/movies 응답 캐시(proxy_cache_path 가 이 안을 가리킨다)
+#   conf    ★ 기동할 때 엔트리포인트가 /etc/nginx/templates/*.template 을 렌더해 여기에 쓴다.
+#           이 볼륨이 없으면 렌더 대상 경로가 읽기 전용이라 기동에서 죽는다.
+#           이미지가 그 경로에 파일을 안 넣으므로 빈 볼륨으로 덮어도 가려지는 것이 없다.
 volumes:
   - name: tmp
     emptyDir: {}
   - name: cache
+    emptyDir: {}
+  - name: conf
     emptyDir: {}
 volumeMounts:
   - name: tmp
     mountPath: /tmp
   - name: cache
     mountPath: /var/cache/nginx
+  - name: conf
+    mountPath: /etc/nginx/conf.d
 
 # 정적 서버 — GET / 은 index.html(200).
 livenessProbe:

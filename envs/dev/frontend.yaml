@@ -1,6 +1,11 @@
 # frontend dev 환경값. 정적 서빙 + /api/movies 캐시 프록시.
 image:
   tag: dev-101-348de6f4
+env:
+  # nginx 설정의 resolver 에 채워진다. 이 클러스터의 CoreDNS 주소다.
+  #   서비스 CIDR 10.43.0.0/16 의 열 번째. EKS 는 172.20.0.10 이라 값 파일에서 갈린다.
+  #   이 값이 없으면 렌더 결과에 빈 자리가 남아 nginx 가 설정을 못 읽는다.
+  DNS_RESOLVER: "10.43.0.10"
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling).
 resources:
   # 정적 서빙만 하던 값에서 올린다. /api/movies 가 이 nginx 를 지나게 되면서
