@@ -55,10 +55,15 @@ extraObjects:
       name: dev-apps
       namespace: argocd
     spec:
+      # namePattern 은 glob 이고 Application 이름과 맞춰야 한다.
+      # 이름은 apps ApplicationSet 이 '{{.name}}-{{.env}}' 로 만든다 — 환경 접미사가 붙는다.
+      # queue-* 로 넓히지 않는 이유: allow-tags 가 환경과 무관하게 같은 태그를 후보로 보므로,
+      #   넓히면 stg Application 이 생기는 순간 봇이 dev 태그를 envs/stg 에도 써 넣는다.
+      #   환경을 대상에 넣는 것이 사람이 한 줄 더하는 일로 남아야 승격이 걸음으로 성립한다.
       applicationRefs:
-        - namePattern: queue
+        - namePattern: queue-dev
           useAnnotations: true
-        - namePattern: booking
+        - namePattern: booking-dev
           useAnnotations: true
-        - namePattern: frontend
+        - namePattern: frontend-dev
           useAnnotations: true
