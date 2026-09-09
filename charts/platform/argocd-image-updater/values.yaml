@@ -16,6 +16,33 @@ config:
       # read_registry 전용 deploy token(dockerconfigjson 봉인본). 노드 pull 자격과 주체가 달라 가른다.
       credentials: pullsecret:argocd/image-updater-registry
 
+    # stg(EKS)가 이미지를 받아오는 곳. 이 항목은 stg Application이 생기기 전까지 아무도 부르지 않는다.
+    - name: ecr
+      prefix: 527170477076.dkr.ecr.ap-northeast-2.amazonaws.com
+      api_url: https://527170477076.dkr.ecr.ap-northeast-2.amazonaws.com
+      # ECR의 비밀번호는 12시간짜리 토큰이라 미리 만들어 둔 자격 파일로는 안 된다(위 gitlab과 갈리는 지점).
+      # ext는 스크립트를 실행해 그 출력을 자격으로 쓴다 — 스크립트가 매번 새 토큰을 받아 온다.
+      credentials: ext:/scripts/ecr-login.sh
+      # 토큰 만료(12h) 전에 스크립트를 다시 부르게 하는 값. 여유를 두 시간 둔다.
+      credsexpire: 10h
+
+# ECR 자격. 액세스 키를 파드 환경변수로 넣는다 — 키 이름이 곧 환경변수 이름이라
+# aws CLI가 그대로 집어 간다. 이 Secret은 SealedSecret(manifests/secrets/image-updater-ecr.yaml)에서 온다.
+extraEnvFrom:
+  - secretRef:
+      name: image-updater-ecr
+
+# 위 registries의 ext가 실행하는 스크립트. 차트가 ConfigMap으로 만들어 /scripts에 0777로 마운트한다.
+# aws CLI는 이미지에 들어 있다(aws-cli 2.x). image-updater는 stdout의 "아이디:비밀번호" 한 줄을 읽는다.
+# ECR은 아이디가 늘 AWS 고정이고 비밀번호 자리에 토큰이 들어간다.
+authScripts:
+  enabled: true
+  scripts:
+    ecr-login.sh: |
+      #!/bin/sh
+      set -e
+      echo "AWS:$(aws ecr get-login-password --region ap-northeast-2)"
+
 # 이 버전(v1.2)은 컨트롤러 방식이다 — ImageUpdater CR이 있어야 일을 시작한다.
 # CR 없이는 annotation이 붙어 있어도 아무것도 처리하지 않는다(로그: "No ImageUpdater CRs to process").
 # useAnnotations: 처리 대상 선정만 CR이 하고, 무엇을 어떻게 갱신할지는
