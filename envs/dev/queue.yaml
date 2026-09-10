@@ -2,7 +2,7 @@
 # 리소스는 실측 전 추정(노드설계 기준). 부하테스트 후 확정.
 
 image:
-  tag: dev-106-3b6bd07c
+  tag: dev-110-69dbb493
 # replicaCount 제거 — HPA가 대수를 소유(아래 autoscaling). HPA on이면 차트가 replicas 필드 생략.
 resources:
   # 메모리는 동시 연결 수에 비례한다. 연결 하나가 고루틴과 읽기·쓰기 버퍼를 들고,
@@ -159,3 +159,5 @@ env:
   # exemplar와 별개로, 특정 구간의 느린 요청을 훑는 것은 여전히 Tempo 검색이다:
   #   { name = "GET /api/admission/position" && duration > 1s }
   OTEL_TRACES_SAMPLER_ARG: "1.0"
+imageUpdater:
+  resolvedImage: 192.168.0.167:5050/cgv/cgv-onprem/queue-go
