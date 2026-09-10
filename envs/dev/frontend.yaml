@@ -1,6 +1,6 @@
 # frontend dev 환경값. 정적 서빙 + /api/movies 캐시 프록시.
 image:
-  tag: dev-101-348de6f4
+  tag: dev-110-69dbb493
 env:
   # nginx 설정의 resolver 에 채워진다. 이 클러스터의 CoreDNS 주소다.
   #   서비스 CIDR 10.43.0.0/16 의 열 번째. EKS 는 172.20.0.10 이라 값 파일에서 갈린다.
@@ -34,3 +34,5 @@ ingress:
   - secretName: ticket-tls # cert-manager가 발급·갱신하는 인증서(tls.crt·tls.key)
     hosts:
     - ticket.subinhong.dev # 이 SNI로 온 연결에 이 인증서를 내민다
+imageUpdater:
+  resolvedImage: 192.168.0.167:5050/cgv/cgv-onprem/frontend
