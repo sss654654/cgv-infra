@@ -1,0 +1,16 @@
+# kafka dev 환경값 — 브로커 볼륨과 토픽 파티션.
+
+storage:
+  size: 10Gi
+  # 정적 PV(bootstrap/storage/). kafkadata 디스크를 통마운트해 노드당 하나씩 미리 만들어 뒀다.
+  class: local-kafkadata
+
+# queue 의 HPA 상한이 이 환경에서 4다(노드 자리 때문에 그 위로 못 늘린다).
+#   한 그룹의 동시 소비 파드가 파티션 수를 넘지 못하므로 같은 값이다.
+#   booking 의 SPRING_KAFKA_LISTENER_CONCURRENCY 도 4 여야 짝이 맞는다.
+partitions: 4
+
+# 보존 상한 확인 — RF3 · 브로커 셋이라 한 대가 전 토픽의 파티션을 다 든다.
+#   admissions · revoked · completed 각 4파티션 × 2GiB = 24GiB
+#   + admissions.DLT 2GiB + admissions-revoked.DLT 1GiB = 27GiB
+#   kafkadata ext4 실측 가용 약 27.8GiB(디스크 명목 30G) 아래다.

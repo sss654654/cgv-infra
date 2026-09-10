@@ -1,23 +1,30 @@
-# app 네임스페이스에서 나가는 접속의 목적지를 제한한다.
-#
-# ingress(app-ingress.yaml)는 "누가 나에게 닿나"를 정한다. 파드가 침해됐을 때 그 파드가
-#   어디로 나가는지는 막지 못한다. 이 파일이 그쪽이다.
-#
-# ports에 적는 것은 목적지 파드가 여는 포트다. Service 포트가 아니다.
-#   kube-proxy가 Service 주소를 파드 주소로 바꾼 뒤에 정책이 판정한다.
-#   mysql Service 3306 -> targetPort mysql(=3306), kafka 9092 -> tcp-clients(=9092)처럼
-#   이름으로 적힌 targetPort는 파드의 containerPort를 찾아 숫자로 옮겨 적었다.
-#
-# DNS를 먼저 연다. 안 열면 이름 해석이 막혀 나머지 규칙이 전부 무의미해진다 —
-#   목적지 주소를 못 구해서 접속 자체가 시작되지 않는다. frontend의 nginx는 업스트림을
-#   요청 시점에 해석하므로(resolver 10.43.0.10) 특히 그렇다.
+{{/*
+app 네임스페이스에서 나가는 접속의 목적지를 제한한다.
+
+ingress 는 "누가 나에게 닿나" 를 정한다. 파드가 침해됐을 때 그 파드가 어디로 나가는지는
+  막지 못한다. 이 파일이 그쪽이다.
+
+ports 에 적는 것은 목적지 파드가 여는 포트다. Service 포트가 아니다 —
+  kube-proxy 가 Service 주소를 파드 주소로 바꾼 뒤에 정책이 판정한다.
+
+DNS 를 먼저 연다. 안 열면 이름 해석이 막혀 나머지 규칙이 전부 무의미해진다.
+  frontend 의 nginx 는 업스트림을 요청 시점에 해석하고, stg 에서는 RDS·ElastiCache 엔드포인트도
+  이름이라 더 그렇다. CoreDNS 는 두 환경 모두 파드라 이 규칙은 안 갈린다.
+
+MySQL·Redis 의 목적지(mysql.peers · redis.peers)만 환경이 준다.
+  dev  data 네임스페이스의 파드라 라벨로 지목된다
+  stg  RDS·ElastiCache 는 VPC 안의 ENI 라 라벨이 없다. 셀렉터는 매칭된 파드의 IP 목록으로
+       바뀌는데 그 목록이 비어 아무것도 안 열린다 → ipBlock 으로 적는다.
+       증상이 조용하다. 파드는 Running 으로 뜨고 DB 연결에서만 멈춘다.
+Kafka 는 두 환경 다 파드라 안 갈린다.
+*/}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: default-deny-egress
   namespace: app
 spec:
-  podSelector: {}          # app의 모든 파드를 판정 대상으로 만든다
+  podSelector: {}          # app 의 모든 파드를 판정 대상으로 만든다
   policyTypes: [Egress]
   egress: []               # 규칙 0개 = 이 정책만 놓고 보면 나갈 조건이 없다
 ---
@@ -37,7 +44,7 @@ spec:
             matchLabels: {k8s-app: kube-dns}
       ports:
         - {port: 53, protocol: UDP}
-        - {port: 53, protocol: TCP}      # 응답이 512바이트를 넘으면 TCP로 재질의한다
+        - {port: 53, protocol: TCP}      # 응답이 512바이트를 넘으면 TCP 로 재질의한다
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -50,9 +57,9 @@ spec:
       app.kubernetes.io/name: frontend
   policyTypes: [Egress]
   egress:
-    # nginx.conf의 location /api/movies가 응답을 캐시하며 booking으로 되보낸다.
-    # queue는 여기 없다. nginx.conf에 location /api/admission/이 있지만 Traefik이 그 경로를
-    #   queue로 직접 보내 frontend를 거치지 않는다. Ingress에서 그 규칙을 빼면 여기도 열어야 한다.
+    # nginx.conf 의 location /api/movies 가 응답을 캐시하며 booking 으로 되보낸다.
+    # queue 는 여기 없다. nginx.conf 에 location /api/admission/ 이 있지만 입구가 그 경로를
+    #   queue 로 직접 보내 frontend 를 거치지 않는다.
     - to:
         - podSelector:                                    # ns 지정 없음 = 같은 ns(app) 안
             matchLabels: {app.kubernetes.io/name: booking}
@@ -71,24 +78,19 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - namespaceSelector:                              # 한 원소 안의 셀렉터 둘 = AND
-            matchLabels: {kubernetes.io/metadata.name: data}
-          podSelector:
-            matchLabels: {app.kubernetes.io/name: mysql}
+      {{- toYaml .Values.mysql.peers | nindent 8 }}
       ports:
-        - port: 3306
-    # 26379(Sentinel)로 마스터 주소를 받고 그 주소로 6379에 다시 접속한다.
-    #   26379만 열면 마스터 조회는 되고 다음 명령에서 멈춘다.
+        {{- range .Values.mysql.ports }}
+        - port: {{ . }}
+        {{- end }}
     - to:
-        - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: data}
-          podSelector:
-            matchLabels: {app.kubernetes.io/name: redis}
+      {{- toYaml .Values.redis.peers | nindent 8 }}
       ports:
-        - port: 6379
-        - port: 26379
-    # bootstrap으로 붙은 뒤 개별 브로커 주소를 받아 다시 붙는다. 브로커 파드가 모두
-    #   app.kubernetes.io/name=kafka라 이 한 줄이 bootstrap과 브로커를 함께 덮는다.
+        {{- range .Values.redis.ports }}
+        - port: {{ . }}
+        {{- end }}
+    # bootstrap 으로 붙은 뒤 개별 브로커 주소를 받아 다시 붙는다. 브로커 파드가 모두
+    #   app.kubernetes.io/name=kafka 라 이 한 줄이 bootstrap 과 브로커를 함께 덮는다.
     - to:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: data}
@@ -117,13 +119,11 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: data}
-          podSelector:
-            matchLabels: {app.kubernetes.io/name: redis}
+      {{- toYaml .Values.redis.peers | nindent 8 }}
       ports:
-        - port: 6379
-        - port: 26379
+        {{- range .Values.redis.ports }}
+        - port: {{ . }}
+        {{- end }}
     - to:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: data}
@@ -139,11 +139,12 @@ spec:
             matchLabels: {app.kubernetes.io/name: alloy}
       ports:
         - port: 4317
+{{- if .Values.demoReset }}
 ---
 # demo-reset CronJob — 데모 데이터를 주기적으로 비운다.
 # 두 서비스를 순서대로 부른다: 대기열(queue 8090)을 먼저, 그다음 예매 기록(booking 8091).
 #   반대로 하면 예매를 지우는 동안 승격된 관객이 좌석을 잡아 잔재가 남는다.
-# DNS는 위 allow-dns-egress가 모든 파드에 걸려 있어 여기 다시 적지 않는다.
+# DNS 는 위 allow-dns-egress 가 모든 파드에 걸려 있어 여기 다시 적지 않는다.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -165,3 +166,4 @@ spec:
             matchLabels: {app.kubernetes.io/name: booking}
       ports:
         - port: 8091
+{{- end }}

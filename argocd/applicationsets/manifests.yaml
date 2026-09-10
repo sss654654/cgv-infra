@@ -31,16 +31,24 @@ spec:
     - matrix:
         generators:
           # 대상 축 — 어느 경로를 어느 울타리에서 어느 네임스페이스에 어느 순서로.
-          #   NetworkPolicy 가 셋으로 갈린 이유: 한 Application 의 destination.namespace 는 하나이고
-          #   AppProject 도 그 네임스페이스만 허용한다. 한 경로에 여러 ns 의 정책을 담으면
-          #   울타리 밖 것이 OutOfSync 로 남는다(2026-09-07 에 infra 프로젝트를 가르며 드러났다).
+          #
+          # ★ NetworkPolicy 셋이 여기서 빠졌다 (2026-09-11).
+          #   환경마다 정책이 가리키는 대상이 달라져서(stg 는 입구가 ALB, MySQL·Redis 가 관리형)
+          #   정적 매니페스트로는 표현할 자리가 없다. 차트로 옮겨 envs/<환경>/netpol.yaml 이
+          #   그 차이만 주게 했고, Application 은 환경당 하나가 됐다
+          #   (charts/platform/netpol · argocd/applications/netpol-<환경>.yaml).
+          #   셋으로 갈랐던 이유가 AppProject 울타리였는데, netpol 프로젝트가 세 네임스페이스를
+          #   허용하면서 그 이유도 없어졌다.
+          #
+          # ★ Kafka 도 같은 이유로 빠졌다 (2026-09-11).
+          #   브로커 볼륨(정적 PV ↔ EBS)과 토픽 파티션 수가 환경마다 다르다.
+          #   charts/data/cgv-kafka · argocd/applications/kafka-<환경>.yaml.
+          #
+          # 남은 다섯은 전부 환경 축이 없다 — dev 전용이거나(cert 둘 · sealed-secrets)
+          #   환경과 무관하다(rbac). 그래서 아래 환경 축은 사실상 이름을 붙이는 자리로만 남는다.
           - list:
               elements:
                 - { name: sealed-secrets,       path: manifests/secrets,              project: secrets,  namespace: data,          wave: "-2" }
-                - { name: kafka,                path: manifests/kafka,                project: data,     namespace: data,          wave: "-1" }
-                - { name: netpol-data,          path: manifests/netpol-data,          project: data,     namespace: data,          wave: "0" }
-                - { name: netpol-app,           path: manifests/netpol-app,           project: apps,     namespace: app,           wave: "0" }
-                - { name: netpol-observability, path: manifests/netpol-observability, project: platform, namespace: observability, wave: "0" }
                 - { name: rbac,                 path: manifests/rbac,                 project: platform, namespace: observability, wave: "0" }
                 - { name: cert-issuers,         path: manifests/cert-issuers,         project: cert,     namespace: cert-manager,  wave: "0" }
                 - { name: certificates,         path: manifests/certificates,         project: apps,     namespace: app,           wave: "0" }

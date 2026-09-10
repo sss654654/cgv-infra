@@ -1,0 +1,39 @@
+# kafka-dev — Strimzi 가 읽는 Kafka CR 묶음(KafkaNodePool · Kafka · KafkaTopic 다섯).
+#
+# 전에는 manifests ApplicationSet 이 정적 YAML 두 장을 배달했다. 차트로 옮긴 이유는 종류가
+#   아니라 환경마다 값이 달라져서다 — 브로커 볼륨(정적 PV ↔ EBS)과 토픽 파티션 수가 갈린다.
+#   그 둘만 envs/<환경>/kafka.yaml 이 준다.
+#
+# 개별 Application 인 이유 — 반복 축이 환경뿐이다. mysql 이 같은 자리다.
+#   data ApplicationSet 에 넣지 않는 이유는 그 AppSet 이 환경 축을 곱하기 때문이다.
+#   Kafka 는 두 환경에 다 있지만 Redis 는 stg 에서 관리형이라, 곱하면 있으면 안 되는
+#   Application 이 따라 생긴다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka-dev
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"   # 앱(wave 3)보다 먼저. booking·queue 가 브로커에 붙는다
+spec:
+  project: data
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: charts/data/cgv-kafka
+    helm:
+      releaseName: kafka
+      valueFiles:
+        - values.yaml                     # 차트 기본값 — 브로커 수·자원·리스너·보존 정책
+        - ../../../envs/dev/kafka.yaml    # 이 환경의 볼륨과 파티션
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: true       # 파일을 지우면 토픽도 사라진다 — 정본이 git 이라는 뜻
+      selfHeal: true
+    syncOptions:
+      # 빈 클러스터에서는 Strimzi CRD 가 아직 없다. 그때 dry-run 이 "종류를 모른다"로
+      #   실패하는 것을 건너뛴다. 등록돼 있으면 이 옵션은 아무 일도 하지 않는다.
+      - SkipDryRunOnMissingResource=true

@@ -1,0 +1,43 @@
+# netpol 차트 기본값 — 환경 무관한 것만 여기 있다.
+#
+# 이 차트가 만드는 것은 세 네임스페이스의 NetworkPolicy 전부다. 전에는 매니페스트 세 벌이었고
+#   Application 도 셋이었는데, 갈랐던 이유가 AppProject 울타리 하나였다. 울타리를 이 차트 전용으로
+#   두고 세 네임스페이스와 NetworkPolicy 한 종류만 허용하면 한 Application 이 셋을 다 배달한다.
+#
+# 환경마다 달라지는 것은 "무엇을 가리키나" 뿐이다. 정책 이름·포트·어느 파드를 고르나는 안 바뀐다.
+#   dev  Traefik·MySQL·Redis 가 전부 파드라 라벨로 지목한다
+#   stg  ALB 는 VPC 안의 ENI 이고 MySQL·Redis 는 관리형이라 라벨이 없다 → ipBlock 으로 적는다
+#   그 조각만 envs/<환경>/netpol.yaml 이 준다. 아래 값은 그 자리를 비워 둔 것이다.
+
+# app 네임스페이스로 밖에서 들어오는 출처. Ingress 가 만든 입구가 여기로 온다.
+#   dev = Traefik 파드 · stg = ALB 가 앉는 서브넷 대역
+ingressSource: []
+
+# observability 의 Grafana 로 밖에서 들어오는 출처.
+#   dev = Traefik 파드 · stg = Grafana 전용 Ingress 가 만든 ALB 의 서브넷 대역
+grafanaSource: []
+
+# booking 이 나가는 MySQL.
+#   inCluster 가 참이면 data 네임스페이스에 파드가 있다는 뜻이고, data 쪽 ingress 규칙도 같이 난다.
+#   거짓이면 클러스터 밖이라 나가는 규칙만 있고 들어오는 규칙은 없다.
+mysql:
+  inCluster: true
+  peers: []
+  ports: [3306]
+
+# queue·booking 이 나가는 Redis.
+#   dev 는 Sentinel HA 라 포트가 둘이다 — 26379 로 마스터 주소를 받고 그 주소로 6379 에 다시 붙는다.
+#   26379 만 열면 마스터 조회는 되고 다음 명령에서 멈춘다.
+#   stg 는 ElastiCache 단일 엔드포인트라 6379 하나다.
+redis:
+  inCluster: true
+  peers: []
+  ports: [6379, 26379]
+
+# demo-reset CronJob. 데모 데이터를 주기적으로 비운다. dev 전용이다.
+demoReset: false
+
+# grafana-image-renderer. 이 파드가 있으면 observability 의 "같은 네임스페이스 허용" 에서 빼야 한다 —
+#   그 파드는 Grafana 에서만 닿게 하는 정책이 차트에서 따로 나는데, 여기서 전체를 허용하면
+#   합집합이 되어 그 정책이 무의미해진다.
+imageRenderer: false

@@ -1,0 +1,19 @@
+# kafka stg 환경값 — 브로커 볼륨과 토픽 파티션.
+
+storage:
+  # 보존 상한 최악이 51GiB 다(아래 계산). 여유를 두고 60Gi.
+  #   180GB(브로커 셋)를 8시간 켜면 약 $0.16 이라 볼륨을 키우는 쪽이 싸다 —
+  #   보존을 줄이면 dev 와 브로커 조건이 갈려 부하 결과에서 무엇이 달랐는지 하나 더 따져야 한다.
+  size: 60Gi
+  # EBS CSI 애드온은 StorageClass 를 안 만든다. 파트 7 스크립트가 gp3 를 손으로 넣는다 —
+  #   이 이름이 없으면 PVC 가 영구 Pending 이고 브로커가 안 뜬다.
+  class: gp3
+
+# queue 의 HPA 상한이 이 환경에서 8이다(노드가 m5.xlarge 라 자리가 생겼다).
+#   booking 의 SPRING_KAFKA_LISTENER_CONCURRENCY 도 8 이어야 짝이 맞는다.
+partitions: 8
+
+# 보존 상한 확인 — RF3 · 브로커 셋이라 한 대가 전 토픽의 파티션을 다 든다.
+#   admissions · revoked · completed 각 8파티션 × 2GiB = 48GiB
+#   + admissions.DLT 2GiB + admissions-revoked.DLT 1GiB = 51GiB
+#   위 volume 60Gi 아래다.

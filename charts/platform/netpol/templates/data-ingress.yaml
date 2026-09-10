@@ -1,0 +1,91 @@
+{{/*
+data 네임스페이스로 들어오는 접속의 출처를 제한한다.
+
+Kafka 로 들어오는 것을 여는 규칙이 여기 없다. Strimzi 가 리스너마다 NetworkPolicy 를 스스로
+  만들기 때문이다. NetworkPolicy 는 허용의 합집합이라 아래 default-deny 와 그 생성분이 겹쳐
+  Kafka 만 열린다. ★ 여기에 Kafka 규칙을 더하면 Strimzi 가 좁혀 둔 것을 넓히게 된다.
+
+MySQL·Redis 규칙은 그 둘이 이 네임스페이스에 파드로 있을 때만 난다.
+  관리형으로 나간 환경에서는 고를 파드가 없어 규칙이 아무것도 안 하고, 그대로 두면
+  "booking 이 여기 있는 MySQL 파드로 붙는다" 로 읽혀 실제 경로를 가린다 —
+  그 환경에서 booking 은 클러스터 밖으로 나가고 그 길은 app 쪽 egress 와 보안 그룹이 정한다.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: data
+spec:
+  podSelector: {}          # data 의 모든 파드를 판정 대상으로 만든다
+  policyTypes: [Ingress]
+  ingress: []              # 규칙 0개 = 이 정책만 놓고 보면 통과할 조건이 없다
+{{- if .Values.mysql.inCluster }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mysql-ingress
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mysql
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:                              # 한 원소 안의 셀렉터 둘 = AND
+            matchLabels:
+              kubernetes.io/metadata.name: app            # 쿠버네티스가 모든 ns 에 자동으로 다는 라벨
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: booking
+      ports:
+        - port: 3306
+    # 9104 는 mysqld_exporter 사이드카.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - port: 9104
+{{- end }}
+{{- if .Values.redis.inCluster }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes: [Ingress]
+  ingress:
+    # 클라이언트는 26379(Sentinel)로 마스터 주소를 받고 그 주소로 6379 에 다시 접속한다.
+    #   26379 만 열면 마스터 조회는 되고 다음 명령에서 멈춘다.
+    - from:                                               # 원소가 여럿 = OR
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: app}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: queue}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: app}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: booking}
+        - podSelector:                                    # ns 지정 없음 = 같은 ns(data) 안
+            matchLabels: {app.kubernetes.io/name: redis}  # 복제·Sentinel 투표
+      ports:
+        {{- range .Values.redis.ports }}
+        - port: {{ . }}
+        {{- end }}
+    # 9121 은 redis 파드의 지표 노출 사이드카. Alloy 는 hostNetwork 를 안 써서 출발지가 파드 IP 다.
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - port: 9121
+{{- end }}

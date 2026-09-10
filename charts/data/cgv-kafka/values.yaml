@@ -1,0 +1,49 @@
+# cgv-kafka 차트 기본값 — 환경 무관한 것만 여기 있다.
+#
+# Kafka 는 관리형으로 안 옮긴다. MSK 가 하루 $3.6 으로 브로커 파드의 60배다.
+#   그래서 두 환경 모두 파드로 돌고, 갈리는 것은 볼륨과 파티션 수뿐이다.
+#
+# 이 차트가 만드는 것 — KafkaNodePool 하나 · Kafka 하나 · KafkaTopic 다섯.
+#   전에는 manifests/kafka 의 정적 YAML 두 장이었다. 차트가 된 이유는 종류가 아니라
+#   환경마다 파티션과 StorageClass 가 달라져서다.
+
+cluster:
+  name: cgv                          # bootstrap 서비스 이름이 여기서 온다 — cgv-kafka-bootstrap.data.svc:9092
+  poolName: cgv-pool
+  replicas: 3                        # 브로커 셋. RF3 이 성립하는 최소다
+  version: "4.3.0"
+  metadataVersion: "4.3-IV0"
+  # 힙 상한을 절대값으로 고정한다. MaxRAMPercentage 로 두면 limit 을 조정할 때 힙 상한이
+  #   따라 움직여, 컨테이너 사용을 힙/비힙으로 가를 수 없다.
+  #   실측(2026-08-16) 힙 사용 325Mi · 커밋 389Mi 라 512m 에 들어간다.
+  heap: 512m
+  # 브로커 resources 는 v1 API 에서 노드풀 소관이다. Kafka.spec.kafka.resources 는 스키마에
+  #   없어 서버가 거부한다("field not declared in schema" — SSA dry-run 으로 확인).
+  # request 0 이면 노드 압박 시 1순위 퇴거 대상이 되고 그러면 RF3 이 무너진다.
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: "1", memory: 1536Mi }
+
+# 브로커 볼륨 — 환경이 준다.
+#   dev  정적 PV(bootstrap/storage/) 를 미리 만들어 뒀다.  노드당 하나, 디스크 통마운트
+#   stg  EBS CSI 가 동적으로 만든다.  gp3 StorageClass 는 애드온이 안 만들어서 손으로 넣는다
+storage:
+  size: ""
+  class: ""
+
+# 토픽 파티션 — 환경이 준다.
+#   한 컨슈머 그룹의 동시 소비 파드는 파티션 수를 넘지 못한다. 그래서 queue 의 HPA 상한과 짝이다.
+#   파티션은 늘리기만 가능하고 줄일 수 없다.
+#   DLT 둘은 이 값을 안 쓴다 — 소비자가 없고 사후 조사용이라 병렬성이 필요 없어 1 고정이다.
+partitions: 0
+
+# 토픽 보존. 두 환경이 같다 — 브로커 조건을 갈라 두면 부하 결과에서 무엇이 달랐는지
+#   하나 더 따져야 한다. 용량은 볼륨 크기로 맞춘다.
+retention:
+  ms: 259200000                      # 3일
+  segmentMs: 86400000                # 24h — 세그먼트가 닫혀야 삭제 대상이 된다.
+                                     #   기본 roll 주기가 7일이라 그대로 두면 3일 보존이 최대 10일이 된다
+  bytes: 2147483648                  # 2GiB/파티션 — 시간 기준이 못 막는 유입 급증의 상한
+  dltMs: 604800000                   # 7일 — 원본(3일)보다 길어야 밤사이 쌓인 실패를 다음 날 본다
+  dltBytes: 2147483648               # 2GiB
+  revokedDltBytes: 1073741824        # 1GiB

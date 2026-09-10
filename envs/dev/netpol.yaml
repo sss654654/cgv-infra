@@ -1,0 +1,42 @@
+# netpol dev 환경값 — 정책이 가리키는 대상.
+#
+# 이 환경은 입구와 미들웨어가 전부 클러스터 안의 파드다. 그래서 전부 라벨로 지목된다.
+
+# app 으로 밖에서 들어오는 출처 = Traefik. MetalLB 가 준 주소로 들어와 Traefik 이 라우팅한다.
+ingressSource:
+  - namespaceSelector:                                # 한 원소 안의 셀렉터 둘 = AND
+      matchLabels: {kubernetes.io/metadata.name: traefik}
+    podSelector:
+      matchLabels: {app.kubernetes.io/name: traefik}
+
+# Grafana 로 들어오는 출처도 Traefik 이다. 이 라우터는 web(80)에만 붙어 있고 443 에는 없다.
+grafanaSource:
+  - namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: traefik}
+    podSelector:
+      matchLabels: {app.kubernetes.io/name: traefik}
+
+mysql:
+  inCluster: true                                     # data 네임스페이스의 파드다
+  peers:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: data}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: mysql}
+  ports: [3306]
+
+redis:
+  inCluster: true
+  peers:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: data}
+      podSelector:
+        matchLabels: {app.kubernetes.io/name: redis}
+  # Sentinel HA 라 포트가 둘이다. 26379 로 마스터 주소를 받고 그 주소로 6379 에 다시 붙는다.
+  ports: [6379, 26379]
+
+# 데모 데이터를 주기적으로 비우는 CronJob. 공개된 환경이라 좌석이 차면 방문자가 매진 화면만 본다.
+demoReset: true
+
+# 알림에 그림을 붙이는 렌더러가 이 환경에 있다.
+imageRenderer: true

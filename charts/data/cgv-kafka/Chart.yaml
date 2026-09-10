@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cgv-kafka
+description: Strimzi 오퍼레이터가 읽는 Kafka CR 묶음(KafkaNodePool · Kafka · KafkaTopic 다섯). 환경마다 달라지는 것은 브로커 볼륨과 토픽 파티션 수뿐이라 envs/<환경>/kafka.yaml 이 그것만 준다.
+type: application
+version: 0.1.0

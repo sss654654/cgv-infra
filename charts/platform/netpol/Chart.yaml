@@ -1,0 +1,5 @@
+apiVersion: v2
+name: netpol
+description: 세 네임스페이스(app·data·observability)의 NetworkPolicy 를 한 벌로 렌더한다. 환경마다 달라지는 것은 출처·목적지 조각뿐이라 envs/<환경>/netpol.yaml 이 그것만 준다.
+type: application
+version: 0.1.0

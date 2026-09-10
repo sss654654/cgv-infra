@@ -119,7 +119,7 @@ template:render:
         done
 
         # data AppSet(redis) · mysql Application: 차트마다 자기 값 + 환경 값
-        for pair in "redis:cgv-redis" "mysql:cgv-mysql"; do
+        for pair in "redis:cgv-redis" "mysql:cgv-mysql" "kafka:cgv-kafka"; do
           svc=${pair%%:*}; chart=${pair##*:}
           [ -f "envs/$e/$svc.yaml" ] || { echo "── skip  $svc @ $e (이 환경엔 없다)"; continue; }
           echo "── data  $svc @ $e"
@@ -128,6 +128,13 @@ template:render:
             -f "envs/$e/$svc.yaml" \
             > "rendered/$e-$svc.yaml"
         done
+
+        # netpol: 환경당 하나. 세 네임스페이스의 정책을 한 릴리스가 렌더한다.
+        echo "── platform  netpol @ $e"
+        helm template netpol charts/platform/netpol \
+          -f charts/platform/netpol/values.yaml \
+          -f "envs/$e/netpol.yaml" \
+          > "rendered/$e-netpol.yaml"
       done
 
       ls -la rendered/
