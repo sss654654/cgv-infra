@@ -27,9 +27,10 @@ autoscaling: # PDB는 maxUnavailable:1로 호환(identity)
 #   LB IP 직접 접근(부하 생성기가 쓰는 경로)이 끊긴다. 443 뒤 앱이 frontend 하나라
 #   이름으로 가를 대상도 없다.
 ingress:
-  annotations:
-    # 보안 헤더(manifests/public-guard/security-headers.yaml). 이 Ingress의 라우터 전부에 걸린다.
-    traefik.ingress.kubernetes.io/router.middlewares: app-security-headers@kubernetescrd
+  # 보안 헤더는 프록시가 아니라 앱(nginx)이 낸다. cgv-onprem 의 default.conf.template 이
+  #   HSTS · X-Content-Type-Options · X-Frame-Options 를 직접 싣는다.
+  #   프록시가 내면 다른 환경에서 프록시가 바뀔 때 헤더가 조용히 사라진다 — 관리형 로드밸런서는
+  #   임의 응답 헤더를 못 붙이는 것이 많다. 앱이 내면 프록시가 무엇이든 같다.
   tls:
   - secretName: ticket-tls # cert-manager가 발급·갱신하는 인증서(tls.crt·tls.key)
     hosts:
