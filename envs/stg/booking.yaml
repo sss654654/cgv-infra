@@ -1,3 +1,75 @@
-# booking — stg 환경값 (골격). 승격 시 이미지태그·replica·풀크기를 여기서 관리.
+# booking stg 환경값. dev 와 다른 값만 정의(delta).
+#
+# 마이그레이션 도구가 없다(pom 에 Flyway·Liquibase 없음). 그래서 스키마를 Hibernate 가
+#   만들고, 파드가 둘이면 DDL 이 부딪힌다 — dev 와 같은 이유로 replica 1 · Recreate 다.
+#   이것이 blue-green·canary 를 못 쓰는 선행 조건이기도 하다.
+
 image:
-  tag: stg
+  tag: PLACEHOLDER # 켜는 날 ECR 에 올린 커밋 해시. 그 뒤로는 image-updater 가 덮는다
+
+# stg 는 ECR 이고 노드 역할로 인증한다. 빈 배열로 덮지 않으면 apps/booking 의
+# gitlab-registry 가 그대로 내려온다.
+imagePullSecrets: []
+
+replicaCount: 1
+strategy:
+  type: Recreate
+
+resources:
+  # request 는 실사용에 맞춘다 — 계수 0.72 코어(회전 27.8 확정/초 기준).
+  #   이 값은 인원이 아니라 회전 속도에 비례한다. 5만이어도 정원이 1,000 이면 같다.
+  # limit 은 예상치에 안 붙인다.
+  #   CPU  0.72 코어 예상에 2000m 이면 36%. dev 와 같은 값이라 JVM 이 보는 코어 수도 2 그대로다.
+  #   메모리 dev 는 1536Mi 인데 실사용이 718Mi-1.5GB 라 98% 까지 붙는다. 1Gi 였을 때
+  #        오픈 버스트에서 OOMKill 이 두 번 났고(exit 137, 재기동 25초 만에 재발) 그래서
+  #        1536Mi 가 된 값이다. 5만이면 같은 자리를 다시 만난다 — 3Gi 로 둔다.
+  #        이 파드가 죽으면 판이 거기서 끝나므로 여유를 크게 잡는다.
+  requests: { cpu: 800m, memory: 1024Mi }
+  limits: { cpu: "2000m", memory: 3Gi }
+
+env:
+  PORT: "8091"
+
+  # ★ SPRING_PROFILES_ACTIVE 를 주지 않는다.
+  #   dev 는 redis-sentinel 프로파일로 Sentinel 에 붙는데 ElastiCache 에는 Sentinel 이 없다.
+  #   프로파일을 안 켜면 기본 경로인 host/port 를 쓴다(application.yml 의 spring.data.redis).
+  #   빈 sentinel 블록을 남기면 Spring 이 standalone 을 sentinel 모드로 오인해 깨지므로,
+  #   블록을 지우는 것이 아니라 프로파일을 안 켜는 방식이어야 한다.
+  REDIS_HOST: PLACEHOLDER # 켜는 날 terraform output handoff 의 redis_host
+  REDIS_PORT: "6379"
+
+  # RDS. 마스터 계정으로 붙는다 — dev 의 cgvapp 처럼 별도 계정을 두지 않았다.
+  #   MYSQL_PASSWORD 는 여기 없다. AWS 가 만들어 Secrets Manager 에 넣은 값을
+  #   booking-secrets 로 옮겨 envFrom 으로 들어온다(apps/booking).
+  MYSQL_HOST: PLACEHOLDER # 켜는 날 terraform output handoff 의 mysql_host
+  MYSQL_PORT: "3306"
+  MYSQL_DB: cgv
+  MYSQL_USER: cgv
+
+  KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
+
+  # 파티션 수와 같게 둔다. 그보다 크면 남는 스레드가 할당받을 파티션이 없다.
+  #   stg 는 파티션을 8 로 늘리므로 여기도 8 이다(dev 는 4).
+  SPRING_KAFKA_LISTENER_CONCURRENCY: "8"
+  SPRING_KAFKA_LISTENER_ACK_MODE: BATCH
+
+  # 입장 인증 만료. queue 가 회수 이벤트를 놓쳤을 때의 최후 방어라
+  #   queue 의 SESSION_TIMEOUT(300)보다 길어야 한다.
+  ADMITTED_TTL: "600"
+  SEAT_LOCK_TTL: "180"
+
+  DB_POOL_SIZE: "30"
+
+  DDL_AUTO: update
+  SEED_ON_START: "true"
+  VIRTUAL_THREADS: "true"
+
+  # limit 3Gi 의 50% = heap 1536Mi. dev 가 이 비율을 75 에서 50 으로 내린 이유는
+  #   limit 을 올리면서도 heap 을 768Mi 에 고정해 이전 판들과 GC 조건을 같게 두려던 것이었다.
+  #   여기서는 그 비교가 축이 아니라 heap 이 같이 커지는 것이 의도다.
+  JAVA_OPTS: "-XX:MaxRAMPercentage=50 -Djava.net.preferIPv4Stack=true"
+
+  OTLP_HTTP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318/v1/traces
+
+imageUpdater:
+  resolvedImage: 527170477076.dkr.ecr.ap-northeast-2.amazonaws.com/cgv/cgv-onprem/booking

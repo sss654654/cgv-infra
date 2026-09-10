@@ -1,4 +1,76 @@
-# queue — stg 환경값 (골격). dev와 다른 값만 정의(delta). 승격 파이프라인(GitLab MR) 붙일 때 채움.
-# ⚠️ 정의만 — 지금 appset는 envs/dev만 순회하므로 stg는 배포 비활성.
+# queue stg 환경값. dev 와 다른 값만 정의(delta).
+#
+# dev 와 갈리는 것이 셋이다.
+#   1 연결   Redis 가 Sentinel HA(파드)에서 ElastiCache(클러스터 밖 단일 엔드포인트)로 바뀐다
+#   2 스펙   노드가 m5.xlarge 라 limit 을 예상치에 안 붙인다 — 부하에서 무엇이 먼저 막히는지
+#            지목하는 것이 목적이고, limit 에서 막히면 지목한 것이 시스템이 아니라 이 숫자다
+#   3 동작   dev 값 일부가 공개 데모용이라 부하 스펙과 다르다(MAX_SESSIONS·PROCESSING_BATCH_SIZE)
+
 image:
-  tag: stg
+  tag: PLACEHOLDER # 켜는 날 ECR 에 올린 커밋 해시. 그 뒤로는 image-updater 가 덮는다
+
+# 노드에 이미지를 받아오는 자격. stg 는 ECR 이고 노드 역할로 인증하므로 필요 없다.
+# 빈 배열로 덮지 않으면 apps/queue 의 gitlab-registry 가 그대로 내려온다.
+imagePullSecrets: []
+
+resources:
+  # request 는 실사용에 맞춘다 — 5만 기준 파드당 0.39 코어.
+  #   3만 판이 무너진 원인이 request(320Mi)와 실사용(1.7GB)의 괴리였다.
+  # limit 은 예상치에 안 붙인다.
+  #   CPU  파드당 0.39 코어 예상에 1000m 이면 39%. dev 와 같은 값이라 GOMAXPROCS 도 1 그대로다.
+  #   메모리 예상은 파드당 약 190Mi(3만에서 225.6Mi)인데 1Gi 로 둔다.
+  #        연결 수 예측이 크게 빗나간 적이 있어서다 — 3만 판에서 폴링 동시요청을 458 로 봤는데
+  #        origin 연결이 23,000 까지 갔다. 이 파드의 메모리는 연결 수에 비례한다(연결당 33-64KB).
+  requests: { cpu: 400m, memory: 250Mi }
+  limits: { cpu: 1000m, memory: 1Gi }
+
+autoscaling:
+  enabled: true
+  # dev 가 max 4 인 것은 노드 자리 때문이었다(k3s-1 의 memory request 여유 181MiB).
+  # 여기는 m5.xlarge 넷이라 그 제약이 없다. Kafka 파티션을 8 로 늘려 파드 8대가
+  # 각각 파티션을 받게 한다.
+  minReplicas: 4
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+
+env:
+  PORT: "8090"
+
+  # ElastiCache — Sentinel 이 없다. REDIS_SENTINEL_ADDRS 를 안 주면 코드가 standalone 으로
+  #   붙는다(queue-go/redis/client.go). REDIS_MASTER_NAME 도 같이 뺀다 — Sentinel 있을 때만 쓰인다.
+  # 전송 구간 암호화를 안 켜서 AUTH 도 안 쓴다. 격리는 보안 그룹과 NetworkPolicy 가 맡는다.
+  REDIS_HOST: PLACEHOLDER # 켜는 날 terraform output handoff 의 redis_host
+  REDIS_PORT: "6379"
+
+  KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
+
+  # 파드 하나가 Redis 에 동시에 던지는 명령 수의 상한. dev 실측값 그대로.
+  REDIS_POOL_SIZE: "50"
+
+  # 정원. dev 는 공개 데모라 60 이지만 여기는 부하 판 값이다.
+  #   5만 기준 스펙 산정이 "정원 1,000 ÷ 체류 36초 = 초당 27.8 확정" 을 전제로 계산됐다.
+  #   이 값을 바꾸면 booking·MySQL 의 CPU 계수가 같이 어긋난다.
+  MAX_SESSIONS: "1000"
+
+  # 승격 리듬. 상한 = 배치 ÷ 주기 = 25 ÷ 0.5초 = 초당 50명.
+  #   dev 의 5 는 데모값이다(정원 60 에서 순번이 잘게 흐르도록).
+  QUEUE_PROCESS_INTERVAL: "500"
+  PROCESSING_BATCH_SIZE: "25"
+
+  # 자리를 회수하기까지 주는 시간. booking 의 ADMITTED_TTL 이 이 값보다 길어야 한다.
+  SESSION_TIMEOUT: "300"
+
+  METRICS_PORT: "9091"
+
+  # 컨테이너 limit(1Gi)의 약 78%. Go 런타임은 cgroup limit 을 스스로 읽지 않아
+  #   이 값이 없으면 GC 상한이 int64 최대가 되고 힙이 limit 을 넘긴 순간 커널이 OOMKill 한다.
+  #   dev 는 limit 256Mi 에 200MiB 였다. limit 을 올렸으므로 이 값도 같이 올린다 —
+  #   안 올리면 limit 만 커지고 힙은 200MiB 에 묶인 채다.
+  GOMEMLIMIT: "800MiB"
+
+  OTLP_GRPC_ENDPOINT: alloy.observability.svc.cluster.local:4317
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+
+imageUpdater:
+  # ECR. dev 의 GitLab 레지스트리 주소와 다르다.
+  resolvedImage: 527170477076.dkr.ecr.ap-northeast-2.amazonaws.com/cgv/cgv-onprem/queue-go

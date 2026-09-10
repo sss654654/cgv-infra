@@ -1,3 +1,73 @@
-# frontend — stg 환경값 (골격). 승격 시 이미지태그·ingress 호스트를 여기서.
+# frontend stg 환경값. 정적 서빙 + /api/movies 캐시 프록시 + 입구 Ingress.
+#
+# dev 와 갈리는 것이 진입 층이다. 집은 Cloudflare → OPNsense → MetalLB → Traefik 이 받았고
+#   여기는 ALB 하나가 받는다. 그래서 className 과 애노테이션이 통째로 바뀐다.
+#   도메인·인증서는 안 쓴다 — ALB 기본 DNS 이름과 80 뿐이라 tls 블록도 없다.
+
 image:
-  tag: stg
+  tag: PLACEHOLDER # 켜는 날 ECR 에 올린 커밋 해시. 그 뒤로는 image-updater 가 덮는다
+
+imagePullSecrets: []
+
+env:
+  # nginx 설정의 resolver 에 채워진다. 이 클러스터의 CoreDNS 주소다.
+  #   서비스 CIDR 172.20.0.0/16 의 열 번째. 집은 10.43.0.10 이라 값 파일에서 갈린다.
+  #   이 값이 없으면 렌더 결과에 빈 자리가 남아 nginx 가 설정을 못 읽는다.
+  DNS_RESOLVER: "172.20.0.10"
+
+resources:
+  # dev 와 같은 모양으로 둔다. 집에서 연결을 받아 주던 것은 Traefik 이고 여기서는 ALB 가
+  #   그 자리다 — 이 nginx 가 물려받는 것은 정적 서빙과 /api/movies 프록시뿐이라
+  #   연결 수에 비례해 늘어나는 몫이 없다.
+  # ★ cpu request 가 00 안에서 두 값으로 적혀 있다 — 파드 스펙 표는 50m, 노드 request 합산은
+  #   3×100m 이다. 노드 크기를 정한 쪽 수를 따른다.
+  requests: { cpu: 100m, memory: 64Mi }
+  limits: { cpu: 500m, memory: 128Mi }
+
+autoscaling:
+  enabled: true
+  # 캐시가 파드마다 따로 있어 대수가 늘면 booking 으로 나가는 요청도 그만큼 는다.
+  #   1대면 그 파드가 재시작할 때 첫 화면이 통째로 멈춘다.
+  minReplicas: 2
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+ingress:
+  className: alb
+  annotations:
+    # 인터넷에서 닿는 ALB. 노드가 퍼블릭 서브넷에 있고 서브넷에 kubernetes.io/role/elb 태그가
+    #   붙어 있어 컨트롤러가 놓을 자리를 찾는다.
+    alb.ingress.kubernetes.io/scheme: internet-facing
+
+    # 파드 IP 를 직접 대상으로 잡는다. VPC CNI 가 파드에 VPC 주소를 주므로 가능하고,
+    #   instance 모드처럼 NodePort 를 한 번 더 거치지 않는다.
+    alb.ingress.kubernetes.io/target-type: ip
+
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+
+    # Terraform 이 만든 보안 그룹을 쓴다. 이 애노테이션이 없으면 컨트롤러가 자기 보안 그룹을
+    #   새로 만들어 0.0.0.0/0 으로 열어 버린다 — 집 공인 IP 와 부하 발생기만 들이려고
+    #   규칙을 적어 둔 것이 무의미해진다.
+    alb.ingress.kubernetes.io/security-groups: PLACEHOLDER # terraform output expected.alb_sg
+
+    # 위에서 보안 그룹을 지정하면 컨트롤러가 노드 쪽 인바운드 규칙을 자동으로 안 붙인다.
+    #   이 값이 있어야 ALB → 파드 경로가 열린다.
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
+
+    # ★ 미해결 — 이 경로가 대상그룹 셋에 다 걸린다.
+    #   한 Ingress 가 세 서비스로 가르는 구조라(아래 paths) 대상그룹이 셋 생기는데,
+    #   준비 상태를 보는 경로가 서비스마다 다르다:
+    #     frontend /   ·   queue /health/ready   ·   booking /actuator/health/readiness
+    #   "/" 로 두면 뒤의 둘이 unhealthy 로 빠져 그 경로만 503 이 된다.
+    #   서비스별로 가르는 수단이 있는지 확인해야 한다 → 03 의 5절 5번.
+    #   ★ Service 별 애노테이션이 답이라면 차트 손질이 선행된다 —
+    #     charts/apps/cgv-app/templates/service.yaml 에 annotations 필드가 없다.
+    alb.ingress.kubernetes.io/healthcheck-path: /
+
+  # 경로 규칙은 apps/frontend 의 identity 값을 그대로 쓴다.
+  #   /api/admission → queue:8090 · /api/movies → frontend:8080 · /api → booking:8091
+  # host 를 비워 둔다 — 도메인이 없고, 적으면 그 이름의 Host 헤더로 온 것만 받아
+  #   ALB 기본 DNS 이름으로 들어오는 접근이 끊긴다.
+
+imageUpdater:
+  resolvedImage: 527170477076.dkr.ecr.ap-northeast-2.amazonaws.com/cgv/cgv-onprem/frontend

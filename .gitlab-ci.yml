@@ -51,8 +51,12 @@ variables:
   # ArgoCD 가 렌더할 때 helm.parameters 로 주는 값. 여기서는 렌더가 되는지만 보므로
   #   실제 레지스트리 주소일 필요가 없다 — 비어 있으면 차트의 required 가 걸린다.
   RENDER_REGISTRY: registry.invalid
-  # 배포 배선이 있는 환경. ApplicationSet 의 env 축과 같아야 한다.
-  ACTIVE_ENVS: "dev"
+  # 렌더 검증 대상 환경. 배포 배선(ApplicationSet 의 env 축)보다 앞서도 된다 —
+  #   값 파일이 채워진 환경은 배포 전에 미리 렌더해 두는 편이 스키마 오류를 일찍 잡는다.
+  #   stg 를 빼 뒀던 이유는 값 파일이 골격이라 "resources 가 없다"로 항상 실패해서였는데,
+  #   실물 값을 채우면서 그 이유가 없어졌다.
+  # ⚠ 환경을 새로 만들면 값 파일을 채우는 시점에 여기도 같이 늘린다.
+  ACTIVE_ENVS: "dev stg"
 
 # ── 차트 구조 ────────────────────────────────────────────────────────────────
 # Chart.yaml 이 있는 것만 대상이다. charts/ 아래 대부분은 값 파일만 있는 폴더라
@@ -97,11 +101,12 @@ template:render:
       set -e
       mkdir -p rendered
 
-      # 활성 환경만 렌더한다. ACTIVE_ENVS 는 ApplicationSet 의 환경 목록과 같아야 한다
-      #   (argocd/applicationsets/apps.yaml · data.yaml 의 env 축).
-      #   골격만 있는 환경(envs/stg)은 배포 배선이 없어 검증 대상이 아니다 —
-      #   넣으면 "resources 가 없다"로 항상 실패한다. 그건 결함이 아니라 아직 안 채운 것이다.
-      # ⚠ 환경을 활성화할 때 여기도 같이 늘린다. 안 늘리면 새 환경이 검증 밖으로 나간다.
+      # ACTIVE_ENVS 의 환경을 렌더한다. 값 조합은 ApplicationSet 의 valueFiles 순서와 같다
+      #   (argocd/applicationsets/apps.yaml · data.yaml).
+      #   값 파일이 비어 있는 환경을 넣으면 "resources 가 없다"로 항상 실패하므로,
+      #   값을 채우는 시점에 ACTIVE_ENVS 에 넣는다. 배포 배선보다 앞서도 된다.
+      # data 쪽은 그 환경에 값 파일이 없으면 건너뛴다 — stg 는 MySQL·Redis 가 관리형이라
+      #   차트가 없다.
       for e in $ACTIVE_ENVS; do
         for svc in queue booking frontend; do
           echo "── apps  $svc @ $e"
