@@ -19,7 +19,7 @@ mimir:
     distributor: { remote_timeout: null }
     ingester:
       push_grpc_method_enabled: null
-      ring: { replication_factor: 3 }        # ingester 3개(노드당 1)에 복제 — 쓰기 과반 2 성공 시 OK(etcd 쿼럼 3과 같은 논리)
+      # ring.replication_factor 는 환경 값이 준다 — ingester 대수와 짝이라 같이 움직인다
     limits:
       compactor_blocks_retention_period: 15d # 메트릭 보존 15일 — compactor가 적용·삭제(miniodata 무한증가 차단)
       # 테넌트당(복제 전) 인메모리 시리즈 상한. Mimir 기본값 150000으로는 이 클러스터의 수집량을 못 받는다.
@@ -38,21 +38,11 @@ mimir:
       max_global_exemplars_per_user: 100000
     common:
       storage:
-        backend: s3
-        s3:
-          endpoint: minio.observability.svc.cluster.local:9000
-          bucket_name: mimir
-          access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
-          secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
-          insecure: true
+        backend: s3                                # 접속 정보(s3 블록)는 환경 값이 준다
     blocks_storage: { storage_prefix: blocks }     # 한 버킷을 prefix로 분할(충돌 방지)
     ruler_storage: { storage_prefix: ruler }
-global:
-  extraEnvFrom:
-    - secretRef:
-        name: mimir-minio-credentials
-# 스토리지: 원본은 MinIO. 로컬 영속 PV는 ingester WAL(노드당 4Gi, local-ingesterwal)뿐.
-#   store_gateway(MinIO 블록 캐시)·compactor(병합 스크래치)는 재생성 가능 → emptyDir(PV 없음, 플로터).
+# 스토리지: 원본은 오브젝트 저장소. 로컬 영속 PV는 ingester WAL뿐.
+#   store_gateway(블록 캐시)·compactor(병합 스크래치)는 재생성 가능 → emptyDir(PV 없음, 플로터).
 #   size 명시 필수: 차트 기본값이 PV capacity보다 크면 영구 Pending. PV 4Gi와 짝.
 # emptyDir 상한: 두 컴포넌트의 emptyDir는 노드 부트디스크(40G, etcd·containerd와 동거)에 잡힌다.
 #   무제한이면 compactor 병합 스파이크가 부트디스크를 잠식해 DiskPressure → etcd fsync 지연·파드 퇴거로 간다.
@@ -68,15 +58,9 @@ distributor:
   # request 는 그대로 — 스케줄 여유가 노드당 수십 MiB 라 올리면 다음 배포가 앉을 자리가 준다.
   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
 ingester:
-  replicas: 3                                  # RF3와 짝 — 노드당 1(아래 anti-affinity)
-  zoneAwareReplication: { enabled: false }     # ingester수=RF(3=3)면 anti-affinity로 충분 — zone-aware는 ingester>RF일 때 물건
-  persistentVolume: { storageClass: local-ingesterwal, size: 4Gi }
-  affinity:                                    # 노드당 1 강제 — 셋이 한 노드에 몰리면 RF3가 장식(노드 죽을 때 3벌 동시 소실)
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels: { app.kubernetes.io/component: ingester }
-          topologyKey: kubernetes.io/hostname
+  # replicas · persistentVolume · affinity 는 환경 값이 준다 —
+  #   대수와 복제 계수와 배치가 한 묶음이라 같이 움직인다.
+  zoneAwareReplication: { enabled: false }     # ingester수=RF면 anti-affinity로 충분 — zone-aware는 ingester>RF일 때 물건
   # 최근 시리즈를 메모리에 적재 — 메모리 사용이 가장 큼. 상한 30만과 짝으로 잡은 값이다.
   #   request 512Mi : 실측 peak 422Mi(2026-08-17, 제어면 버킷 컷 후 시리즈 8.1만/대) + 21% 여유.
   #                 request가 실사용보다 크게 유지되는 한 eviction 랭킹에서 안전한 쪽에 남는다.

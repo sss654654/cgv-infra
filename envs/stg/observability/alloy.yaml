@@ -1,0 +1,160 @@
+# alloy stg 환경값 — 무엇을 긁는가.
+#
+# dev 에서 넷이 빠진다. 없는 것을 긁으려 들면 up=0 인 대상이 생기고, 그 0 이 대시보드에서
+#   "고장" 으로 보인다 — 실제로는 그 환경에 그 대상이 없는 것이다.
+#
+#   k3s server     ★ 제어면이 관리형이라 긁을 수 없다. apiserver·etcd·scheduler·
+#                  controller-manager 지표가 통째로 없어진다.
+#                  그래서 이 환경의 시리즈 수가 dev 보다 크게 준다(00 의 4절 산정 근거).
+#                  → 노드 지표는 kubelet 레지스트리에서만 온다. job 이름도 kubelet 이 맞다.
+#   하이퍼바이저      노드가 EC2 다. 온도·전원·SMART 를 볼 물리 호스트가 없다.
+#   MinIO          오브젝트 저장소가 S3 다. 사용량은 CloudWatch 쪽에서 본다.
+#   cert-manager   도메인도 인증서도 안 쓴다.
+#
+# 남는 것은 dev 와 같다 — 파드 로그 · 쿠버네티스 이벤트 · ServiceMonitor·PodMonitor ·
+#   kubelet · cAdvisor · Mimir remote_write · OTLP 수신.
+
+alloy:
+  configMap:
+    create: true
+    content: |-
+      // LOGS: 파드 stdout -> Loki
+      discovery.kubernetes "pods" { role = "pod" }
+      // 한 블록 안의 속성은 줄을 나눠 적는다 — Alloy 문법은 속성 뒤에 줄바꿈을 요구해서
+      // 한 줄에 둘을 쓰면 파싱이 실패하고 Alloy 가 기동하지 못한다(설정 오류라 파드가 CrashLoop).
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          target_label  = "app"
+        }
+      }
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.write.default.receiver]
+        clustering { enabled = true }
+      }
+      // LOGS: 쿠버네티스 이벤트 -> Loki (job="k8s-events")
+      // 파드가 왜 죽었는지(OOMKilling·probe 실패·BackOff·스케줄 실패)는 컨테이너 stdout 이 아니라
+      // 이벤트에 남는다. 이벤트는 약 1시간 뒤 사라지므로 Loki 에 적재해야 사후 추적이 된다.
+      // clustering: 이벤트는 클러스터 단위 스트림이라 DaemonSet 파드들이 각자 읽으면 중복된다.
+      loki.source.kubernetes_events "cluster" {
+        job_name   = "k8s-events"
+        forward_to = [loki.write.default.receiver]
+        clustering { enabled = true }
+      }
+
+      loki.write "default" {
+        endpoint { url = "http://loki-gateway.observability.svc.cluster.local/loki/api/v1/push" }
+      }
+
+      // METRICS: ServiceMonitor + PodMonitor -> Mimir remote_write
+      prometheus.operator.servicemonitors "scrape" {
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
+      prometheus.operator.podmonitors "scrape" {
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
+
+      // METRICS: kubelet + cAdvisor 직접 스크레이프
+      // kubelet 은 노드 프로세스라 Service 가 없어 ServiceMonitor 로는 못 잡는다 → 노드 주소를 직접 지목.
+      // ★ dev 와 갈리는 지점 — 여기서 오는 것이 kubelet 지표뿐이다.
+      //   제어면이 관리형이라 apiserver_* · scheduler_* · etcd_* 가 이 레지스트리에 없다.
+      //   그래서 job 이름을 kubelet 으로 둔다(dev 는 k3s-server 라는 이름을 쓴다 —
+      //   거기서는 한 프로세스가 제어면을 다 들고 있어 그 이름이 내용을 가리지 않았다).
+      discovery.kubernetes "nodes" { role = "node" }
+
+      discovery.relabel "kubelet" {
+        targets = discovery.kubernetes.nodes.targets
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_address_InternalIP"]
+          replacement   = "$1:10250"
+          target_label  = "__address__"
+        }
+      }
+
+      // 히스토그램 버킷 시리즈를 버린다. 버킷은 le 라벨마다 시리즈가 하나씩 생겨
+      //   이름 하나가 수천~수만 개로 불어난다. 대시보드가 이 계열을 쓰지 않는다.
+      //   _sum 과 _count 는 남긴다 — 평균과 비율은 그 둘로 계산되므로 분위수만 포기하는 것이다.
+      // ★ 이 환경은 ingester 가 하나라 시리즈 상한이 곧 그 한 대의 메모리다. dev 보다 더 아낀다.
+      prometheus.relabel "kubelet_drop_buckets" {
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        rule {
+          source_labels = ["__name__"]
+          regex         = "(kubelet|rest_client|workqueue)_.*_bucket"
+          action        = "drop"
+        }
+      }
+
+      prometheus.scrape "kubelet" {
+        targets      = discovery.relabel.kubelet.output
+        job_name     = "kubelet"
+        metrics_path = "/metrics"
+        scheme       = "https"
+        // kubelet 은 서비스어카운트 토큰으로 인증한다. 인증서가 노드마다 자체 서명이라
+        // 이름 검증을 끄지 않으면 x509 오류로 전부 실패한다.
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.relabel.kubelet_drop_buckets.receiver]
+        clustering { enabled = true }
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets      = discovery.relabel.kubelet.output
+        job_name     = "cadvisor"
+        // 기본값 60초로는 부하 구간이 짧을 때 컨테이너 사용량 표본이 몇 개 안 남는다.
+        // 배포 스펙을 이 값에서 역산하므로 해상도를 올린다.
+        scrape_interval = "15s"
+        metrics_path = "/metrics/cadvisor"
+        scheme       = "https"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config { insecure_skip_verify = true }
+        forward_to = [prometheus.remote_write.mimir.receiver]
+        clustering { enabled = true }
+      }
+
+      prometheus.remote_write "mimir" {
+        endpoint {
+          url = "http://mimir-gateway.observability.svc.cluster.local/api/v1/push"
+
+          // 히스토그램에 실려 온 exemplar(trace_id)를 Mimir 로 같이 보낸다. 이게 빠지면
+          //   p99 그래프의 점이 사라져 "그 요청 하나" 의 트레이스로 넘어갈 수 없다.
+          // Mimir 의 limits.max_global_exemplars_per_user 와 한 쌍이다.
+          send_exemplars = true
+        }
+      }
+
+      // TRACES: OTLP 수신 -> Tempo.
+      otelcol.receiver.otlp "default" {
+        grpc { endpoint = "0.0.0.0:4317" }
+        http { endpoint = "0.0.0.0:4318" }
+        output { traces = [otelcol.exporter.otlp.tempo.input] }
+      }
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "tempo.observability.svc.cluster.local:4317"
+          tls { insecure = true }
+        }
+      }

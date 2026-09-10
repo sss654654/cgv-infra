@@ -1,0 +1,41 @@
+# mimir stg 환경값 — 오브젝트 저장소 접속과 ingester 배치.
+#
+# dev 와 갈리는 것이 셋이다.
+#   저장소     MinIO(클러스터 안) → S3.  주소를 안 적는다 — 리전 엔드포인트를 SDK 가 스스로 찾는다.
+#   자격       SealedSecret → IRSA.  키를 파드에 넣지 않는다 → extraEnvFrom 이 없어진다.
+#   ingester   셋 → 하나, 복제 계수 3 → 1.
+#
+# ingester 를 하나로 내리는 근거 — 이 환경은 하루 살고 지운다. 복제는 노드가 죽었을 때
+#   최근 시리즈를 지키는 장치인데, 여기서 지킬 이유가 약하고 원본은 어차피 S3 에 있다.
+#   대신 같은 메모리로 시리즈를 세 배 담는다 — RF3 에서는 전역 상한이 곧 한 대가 지는 양이라
+#   상한 30만이 대당 30만이었다. RF1 이면 대당 30만을 한 대가 다 진다는 뜻은 같지만
+#   ingester 가 하나라 총 사용량이 3분의 1이 된다.
+#   ★ 노드가 죽으면 그 순간의 WAL 을 잃는다. 부하 판 중에 노드가 죽으면 그 구간 지표가 빈다 —
+#     판정 조건이 "무엇이 먼저 막히는지 지목" 이라 그 구간이 빌 수 있다는 것을 감수한다.
+
+mimir:
+  structuredConfig:
+    ingester:
+      ring:
+        replication_factor: 1
+    common:
+      storage:
+        s3:
+          bucket_name: cgv-stg-mimir-527170477076
+          region: ap-northeast-2
+          # endpoint 를 안 적는다. 적으면 그 주소로 고정돼 리전 라우팅을 잃는다.
+          insecure: false
+
+# IRSA — 역할 하나를 관측 셋이 같이 쓴다(신뢰 정책의 sub 에 mimir·loki·tempo 셋).
+# ★ 이름이 결정적이라 클러스터를 만들기 전에 적을 수 있다 — 역할에 path 를 안 준다.
+serviceAccount:
+  create: true
+  name: mimir                          # 신뢰 정책의 sub 와 글자까지 같아야 한다
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::527170477076:role/cgv-stg-obs-s3
+
+ingester:
+  replicas: 1
+  # gp3 StorageClass 는 EBS CSI 애드온이 안 만들어서 파트 7 스크립트가 넣는다.
+  persistentVolume: { storageClass: gp3, size: 10Gi }
+  # anti-affinity 를 안 건다. 대수가 하나라 흩을 대상이 없다.

@@ -1,0 +1,7 @@
+# node-exporter dev 환경값 — 없다.
+#
+# 노드 OS 지표를 내는 DaemonSet 이다. hostNetwork·hostPID·hostPath 를 써서
+# observability-host(privileged PSA) 네임스페이스에 따로 배포하는데, 그 배치는
+# 차트 값이 아니라 Application 의 destination 이 정한다.
+# 값 자체는 환경에 따라 갈릴 것이 없다.
+{}

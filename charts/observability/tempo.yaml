@@ -1,19 +1,18 @@
-# grafana/tempo 1.24.4 (Tempo 2.9.0) — Single Binary(monolithic) + MinIO S3.
+# grafana/tempo 1.24.4 (Tempo 2.9.0) — Single Binary(monolithic).
 # 차트 deprecated(grafana-community로 이관 예정) — monolithic은 이 차트가 유일. 이관 후 소스 전환 검토.
 # HTTP API 포트 = 3200 (3100 아님 — 3100은 Loki). OTLP 수신 4317(gRPC)/4318(HTTP).
-# 크레덴셜: tempo-s3-credentials(SealedSecret) 필요, 키명 S3_ACCESS_KEY / S3_SECRET_KEY (expand-env로 확장).
-# 버킷 "tempo"를 MinIO에 사전 생성 필요. jaeger receiver는 차트 버그로 끄지 못함(4317/4318만 사용, 나머지 무해).
-# 영속: monolithic이라 복제 없음 → WAL 영속 필수(tempo-wal 5G, k3s-2). retention 24h = 차트 기본값 유지.
+# jaeger receiver는 차트 버그로 끄지 못함(4317/4318만 사용, 나머지 무해).
+# 영속: monolithic이라 복제 없음 → WAL 영속 필수. retention 24h = 차트 기본값 유지.
+#
+# 환경마다 갈리는 것은 envs/<환경>/observability/tempo.yaml 에 있다 —
+#   오브젝트 저장소 접속(주소·버킷·자격) · WAL 볼륨 · 노드 고정.
 replicas: 1
 tempo:
   reportingEnabled: false
   extraArgs:
     "config.expand-env": "true"
-  extraEnvFrom:
-    - secretRef:
-        name: tempo-s3-credentials
   # 차트 기본값이 memBallastSizeMbs: 1024 다. 밸러스트는 GC 를 늦추려고 1GiB 를 가짜로
-  #   할당해 두는 옛 기법인데, GOMEMLIMIT(아래 800MiB)이 생긴 뒤로는 해가 된다 —
+  #   할당해 두는 옛 기법인데, GOMEMLIMIT(아래)이 생긴 뒤로는 해가 된다 —
   #   밸러스트가 상한보다 커서 GC 가 목표를 영원히 못 맞추고 계속 돈다.
   # 실측 2026-08-15: GC 12.58 회/초 · CPU 120m.  같은 Go 프로그램인 Loki 는 0.01 회/초 · 9m.
   #   그런데 이 파드가 실제로 하는 일은 0.83 span/초 · live traces 13개다.
@@ -24,8 +23,6 @@ tempo:
     #   메모리가 무한이라고 보고, GOGC=100 규칙(직전 GC의 살아있는 힙 × 2에서 다음 GC)으로
     #   다음 GC 목표를 2.36GB에 잡았다(실측 go_memstats_next_gc_bytes). limit 1Gi의 두 배가 넘는다.
     #   커널이 죽이는 선은 1Gi인데 런타임의 다음 GC 지점이 2.36GB라, 그 사이에서는 GC가 안 돈다.
-    #   (앞서 이 자리에 "limit 근처에서 GC가 몰려 돌아 /ready가 늦는다"고 적혀 있었으나 근거가 없어 지운다 —
-    #    Go 런타임은 cgroup을 읽지 않아 limit 근접을 감지할 수 없고, 그 시점의 GC 실측도 없다.)
     # limit 아래로 정한다. 나머지는 고루틴 스택·런타임 메타데이터·OS 버퍼 몫.
     - name: GOMEMLIMIT
       value: "2600MiB"
@@ -41,22 +38,13 @@ tempo:
     #   live traces는 초당 트레이스 수 × trace_idle_period(5초)라 만 단위로 올라간다.
     #   2026-08-22 표본 0.05 판에서 live traces 10,000일 때 이 파드가 747MiB였다 — 아래
     #   max_traces_per_user 50,000을 그 비율로 밀면 3GiB대다.
-    # request는 256Mi 그대로 둔다. k3s-2의 memory request가 allocatable의 90%라 올릴 자리가
-    #   없다(여유 약 480Mi). limit은 스케줄러 예산 밖이라 올려도 다른 파드 자리를 안 뺏는다.
-    #   ⚠ 대신 실사용이 request를 크게 넘는 동안 이 파드가 노드 퇴거 1순위가 된다. 부하 판에서
-    #     tempo_discarded_spans_total과 이 파드 메모리를 같이 보고, 서면 그때 다시 정한다.
+    # ⚠ 실사용이 request를 크게 넘는 동안 이 파드가 노드 퇴거 1순위가 된다. 부하 판에서
+    #   tempo_discarded_spans_total과 이 파드 메모리를 같이 보고, 서면 그때 다시 정한다.
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 3Gi }
   storage:
     trace:
-      backend: s3
-      s3:
-        bucket: tempo
-        endpoint: minio.observability.svc.cluster.local:9000
-        access_key: ${S3_ACCESS_KEY}
-        secret_key: ${S3_SECRET_KEY}
-        insecure: true
-        forcepathstyle: true
+      backend: s3                     # 접속 정보(s3 블록)는 환경 값이 준다
       wal:
         path: /var/tempo/wal
   receivers:
@@ -80,13 +68,6 @@ tempo:
     defaults:
       ingestion:
         max_traces_per_user: 50000
-nodeSelector:
-  cgv.io/data: obs                  # tempo-wal 디스크가 있는 k3s-2에 핀(PV nodeAffinity와 이중 안전)
-persistence:
-  enabled: true
-  storageClassName: local-tempowal  # 정적 PV — tempo-wal(5G) 통마운트(디스크1=FS1=PV1, per-FS 관측)
-  accessModes: [ReadWriteOnce]
-  size: 4Gi                         # PV 4Gi와 짝(오버서브 금지)
 
 # self-metric: Tempo 자신의 수집·S3 쓰기 상태.
 serviceMonitor:

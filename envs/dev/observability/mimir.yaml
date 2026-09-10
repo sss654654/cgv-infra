@@ -1,0 +1,39 @@
+# mimir dev 환경값 — 오브젝트 저장소 접속과 ingester 배치.
+#
+# 이 환경의 오브젝트 저장소는 클러스터 안의 MinIO 다. 평문 http 라 insecure 를 켠다.
+# 자격은 SealedSecret 이 넣고 ${} 로 치환된다.
+#
+# ingester 셋 · 복제 계수 3 · 노드당 하나가 한 묶음이다.
+#   ingester 수 = RF 라 전역 시리즈 상한이 곧 ingester 한 대가 지는 양이 된다.
+
+mimir:
+  structuredConfig:
+    ingester:
+      ring:
+        replication_factor: 3          # 쓰기 과반 2 성공 시 OK (etcd 쿼럼 3과 같은 논리)
+    common:
+      storage:
+        s3:
+          endpoint: minio.observability.svc.cluster.local:9000
+          bucket_name: mimir
+          access_key_id: ${MIMIR_S3_ACCESS_KEY_ID}
+          secret_access_key: ${MIMIR_S3_SECRET_ACCESS_KEY}
+          insecure: true               # 평문 http
+
+global:
+  extraEnvFrom:
+    - secretRef:
+        name: mimir-minio-credentials  # 키명 MIMIR_S3_ACCESS_KEY_ID · MIMIR_S3_SECRET_ACCESS_KEY
+
+ingester:
+  replicas: 3
+  # ingester WAL. 정적 PV — ingesterwal 디스크를 노드마다 통마운트해 뒀다.
+  #   size 명시 필수: 차트 기본값이 PV capacity 보다 크면 영구 Pending. PV 4Gi 와 짝.
+  persistentVolume: { storageClass: local-ingesterwal, size: 4Gi }
+  # 노드당 하나 강제 — 셋이 한 노드에 몰리면 RF3 가 장식이 된다(노드가 죽을 때 세 벌이 같이 사라진다).
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels: { app.kubernetes.io/component: ingester }
+          topologyKey: kubernetes.io/hostname

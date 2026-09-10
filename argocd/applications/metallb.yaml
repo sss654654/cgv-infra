@@ -21,7 +21,7 @@ spec:
       targetRevision: "0.16.1"
       helm:
         valueFiles:
-          - $values/charts/platform/metallb/values.yaml
+          - $values/charts/platform/metallb.yaml
     - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git   # 값 제공용 git 소스
       targetRevision: main
       ref: values

@@ -1,0 +1,29 @@
+# loki dev 환경값 — 오브젝트 저장소 접속과 WAL 볼륨.
+#
+# 이 환경의 오브젝트 저장소는 클러스터 안의 MinIO 다. 평문 http 라 insecure 를 켜고,
+#   경로 방식 주소를 쓴다 — MinIO 는 가상 호스트 방식을 기본으로 안 받는다.
+# 자격은 값에 안 적는다. accessKeyId/secretAccessKey 를 생략하면 AWS SDK 기본 체인이
+#   환경변수(AWS_ACCESS_KEY_ID · AWS_SECRET_ACCESS_KEY)에서 읽고, 그 값을 SealedSecret 이 넣는다.
+
+loki:
+  storage:
+    bucketNames:
+      chunks: loki
+      ruler: loki
+    s3:
+      endpoint: minio.observability.svc.cluster.local:9000
+      insecure: true                  # 평문 http
+      s3ForcePathStyle: true          # 경로 방식 주소
+
+singleBinary:
+  extraEnvFrom:
+    - secretRef:
+        name: loki-s3-credentials     # 키명 AWS_ACCESS_KEY_ID · AWS_SECRET_ACCESS_KEY
+  # WAL 을 담는 볼륨. monolithic 이라 복제가 없어 이게 유일한 사본이다.
+  persistence:
+    enabled: true
+    storageClass: local-lokiwal       # 정적 PV — loki-wal(5G) 통마운트(디스크1=FS1=PV1, per-FS 관측)
+    size: 4Gi                         # PV 4Gi 와 짝(FS 실크기 기준, 오버서브 금지)
+  # 그 정적 PV 가 있는 노드에 고정한다. PV 의 nodeAffinity 와 이중 안전.
+  nodeSelector:
+    cgv.io/data: obs

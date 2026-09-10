@@ -30,7 +30,7 @@
 ## 파일 이름
 
 `<서비스>.yaml`. 폴더가 이미 환경을 말하므로 접두어를 붙이지 않는다.
-같은 이름이 층을 관통한다 — `charts/apps/queue/values.yaml` · `envs/dev/queue.yaml`.
+같은 이름이 층을 관통한다 — `charts/apps/queue.yaml` · `envs/dev/queue.yaml`.
 
 ## 환경을 하나 더 켜려면
 

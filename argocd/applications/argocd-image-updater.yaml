@@ -20,7 +20,7 @@ spec:
       targetRevision: 1.2.4
       helm:
         valueFiles:
-          - $values/charts/platform/argocd-image-updater/values.yaml
+          - $values/charts/platform/argocd-image-updater.yaml
     - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
       targetRevision: main
       ref: values                       # 차트를 렌더할 때 값만 제공. 이 소스 자체는 배포하지 않는다

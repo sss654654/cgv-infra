@@ -1,0 +1,37 @@
+# loki stg 환경값 — 오브젝트 저장소 접속과 WAL 볼륨.
+#
+# dev 와 갈리는 것이 셋이다.
+#   저장소   MinIO(클러스터 안) → S3.  주소를 안 적는다 — 리전 엔드포인트를 SDK 가 스스로 찾는다.
+#           TLS 라 insecure 를 끄고, S3 는 가상 호스트 방식이 기본이라 강제 경로 방식도 끈다.
+#   자격     SealedSecret → IRSA.  키를 파드에 넣지 않는다.
+#           SDK 기본 체인이 환경변수 대신 SA 토큰을 STS 로 교환해 쓴다 —
+#           그래서 extraEnvFrom 이 통째로 없어진다.
+#   볼륨     정적 PV → EBS.  노드 고정도 없어진다.
+#
+# 버킷 하나를 chunks 와 ruler 가 같이 쓴다. 룰을 안 써서 ruler 쪽에 쌓이는 것이 없다.
+
+loki:
+  storage:
+    bucketNames:
+      chunks: cgv-stg-loki-527170477076
+      ruler: cgv-stg-loki-527170477076
+    s3:
+      region: ap-northeast-2
+      # endpoint 를 안 적는다. 적으면 그 주소로 고정돼 리전 라우팅을 잃는다.
+      insecure: false
+      s3ForcePathStyle: false
+
+# IRSA — 역할 하나를 관측 셋이 같이 쓴다(신뢰 정책의 sub 에 mimir·loki·tempo 셋).
+# ★ 이름이 결정적이라 클러스터를 만들기 전에 적을 수 있다 — 역할에 path 를 안 준다.
+serviceAccount:
+  create: true
+  name: loki                          # 신뢰 정책의 sub 와 글자까지 같아야 한다
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::527170477076:role/cgv-stg-obs-s3
+
+singleBinary:
+  # WAL 볼륨. gp3 StorageClass 는 EBS CSI 애드온이 안 만들어서 파트 7 스크립트가 넣는다.
+  persistence:
+    enabled: true
+    storageClass: gp3
+    size: 10Gi

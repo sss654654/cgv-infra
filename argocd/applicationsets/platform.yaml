@@ -55,7 +55,7 @@ spec:
             #   selector 는 불변이라, 릴리스 이름이 바뀌면 기존 Deployment 에 apply 가 거부된다.
             releaseName: '{{.name}}'
             valueFiles:
-              - $values/charts/platform/{{.name}}/values.yaml
+              - $values/charts/platform/{{.name}}.yaml
         - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git   # 값 제공용 git 소스
           targetRevision: main
           ref: values

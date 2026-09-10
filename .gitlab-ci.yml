@@ -77,7 +77,7 @@ lint:charts:
       echo "── charts/apps/cgv-app (queue@dev 값 조합)"
       helm lint charts/apps/cgv-app \
         -f charts/apps/cgv-app/values.yaml \
-        -f charts/apps/queue/values.yaml \
+        -f charts/apps/queue.yaml \
         -f envs/dev/queue.yaml \
         --set image.registry=$RENDER_REGISTRY
       for c in charts/data/cgv-mysql charts/data/cgv-redis; do
@@ -112,7 +112,7 @@ template:render:
           echo "── apps  $svc @ $e"
           helm template "$svc" charts/apps/cgv-app \
             -f charts/apps/cgv-app/values.yaml \
-            -f "charts/apps/$svc/values.yaml" \
+            -f "charts/apps/$svc.yaml" \
             -f "envs/$e/$svc.yaml" \
             --set image.registry=$RENDER_REGISTRY \
             > "rendered/$e-$svc.yaml"

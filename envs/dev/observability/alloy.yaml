@@ -1,72 +1,12 @@
-# grafana/alloy 1.10.1 (Alloy v1.17.1) — DaemonSet 수집기. 관측의 심장.
-# 파이프라인: 파드 로그 → Loki / ServiceMonitor·PodMonitor 스크레이프 → Mimir remote_write / (선택)OTLP → Tempo.
-# clustering ON 필수 — DaemonSet 3파드가 target을 gossip으로 샤딩(안 하면 3배 중복 수집).
-# ServiceMonitor/PodMonitor CRD는 이 차트가 설치하지 않음 → bootstrap의 prometheus-operator-crds가 제공해야 함.
-# push URL은 형제 차트의 게이트웨이 서비스명 가정 — 배포 후 확인(특히 mimir-gateway). SealedSecret 불필요(내부 http 무인증).
-# 트레이스 블록은 선택 — 앱이 Tempo로 직접 전송하면 otelcol 블록+extraPorts 삭제.
-controller:
-  type: daemonset
-# RBAC — 차트 기본 rules를 그대로 두면 alloy SA에 전 네임스페이스 configmaps/secrets get·list·watch가 붙는다
-# (= data ns의 mysql-secret·redis-secret, app ns의 booking-secrets/queue-secrets까지 읽힌다).
-# 차트가 그 규칙에 붙여둔 용도는 remote.kubernetes.* 컴포넌트인데, 아래 configMap.content에 그 컴포넌트가 없다.
-# 그래서 기본 rules에서 configmaps/secrets 한 줄만 뺀 목록을 명시한다. 나머지 줄은 차트 기본과 동일.
-# alloy는 노드·전 네임스페이스 파드를 발견해야 하므로 rbac.namespaces(Role 한정)로는 못 좁힌다 → ClusterRole 유지.
-# 되살려야 하는 조건: ServiceMonitor/PodMonitor가 basicAuth·bearerTokenSecret·tlsConfig로 Secret을 참조하면
-#   alloy가 그 Secret을 직접 Get 해서 스크레이프 설정을 만든다. 권한이 없으면 그 대상만 스크레이프에서 빠지고
-#   alloy 로그에 Get 실패가 남는다(파드는 계속 뜬다). 현재 대상은 전부 무인증 http.
-rbac:
-  create: true
-  rules:
-    - apiGroups: ["", "discovery.k8s.io", "networking.k8s.io"]
-      resources: ["endpoints", "endpointslices", "ingresses", "pods", "services"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: [""]
-      resources: ["pods", "pods/log", "namespaces"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: ["monitoring.grafana.com"]
-      resources: ["podlogs"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: ["monitoring.coreos.com"]
-      resources: ["prometheusrules"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: ["monitoring.coreos.com"]
-      resources: ["alertmanagerconfigs"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: ["monitoring.coreos.com"]
-      resources: ["podmonitors", "servicemonitors", "probes", "scrapeconfigs"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: [""]
-      resources: ["events"]
-      verbs: ["get", "list", "watch"]
-    - apiGroups: ["apps", "extensions"]
-      resources: ["replicasets"]
-      verbs: ["get", "list", "watch"]
-    # kubelet·cAdvisor 직접 스크레이프용. kubelet은 노드 프로세스라 Service가 없어
-    # ServiceMonitor로 가리킬 수 없다 → role=node 발견 + /metrics·/metrics/cadvisor를 직접 긁는다.
-    #   nodes                : discovery.kubernetes role=node 가 노드 목록을 읽는다
-    #   nodes/metrics·proxy  : kubelet 엔드포인트에 접근한다
-    - apiGroups: [""]
-      resources: ["nodes", "nodes/metrics", "nodes/proxy"]
-      verbs: ["get", "list", "watch"]
-    - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
-      verbs: ["get"]
-serviceAccount: { create: true }
-crds: { create: false }
+# alloy dev 환경값 — 무엇을 긁는가.
+#
+# 이 환경에서만 있는 대상 넷을 주소로 직접 지목한다.
+#   k3s server   제어면이 노드 프로세스라 긁을 수 있다
+#   하이퍼바이저   Proxmox 호스트의 node-exporter (온도·전원·SMART)
+#   MinIO        오브젝트 저장소 사용량
+#   cert-manager 인증서 만료 시각
+
 alloy:
-  clustering: { enabled: true }
-  mounts: { varlog: false, dockercontainers: false }
-  resources:
-    # request 640Mi: 버킷 컷 후 실측(2026-08-17) working_set 390/467/638Mi — 노드마다 다르고
-    #   최대는 파드가 가장 많은 노드다(스크레이프 타깃 수가 노드의 파드 수를 따라간다).
-    #   DaemonSet이라 한 값이 세 노드에 다 걸리므로 최대 노드 기준으로 잡는다.
-    #   실사용보다 낮게 두면 압박 시 이 파드가 먼저 밀려나고, 그 노드의 메트릭·로그가 통째로 끊긴다.
-    requests: { cpu: 100m, memory: 640Mi }
-    # limit 1Gi: 실측 peak 638Mi가 768Mi의 83%로 임박이었다. 부하에서 로그·시리즈가 늘면
-    #   OOMKill로 그 노드 관측이 끊긴다. limit은 스케줄링에 쓰이지 않아 다른 파드를 밀어내지 않는다.
-    limits: { memory: 1Gi }
-  extraPorts:
-    - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP }
-    - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
   configMap:
     create: true
     content: |-
@@ -284,8 +224,3 @@ alloy:
           tls { insecure = true }
         }
       }
-
-# self-metric: Alloy 자신의 상태(remote_write 성공·실패·큐 길이, 각 컴포넌트 건강).
-# 이게 없으면 "메트릭이 안 보인다"의 원인이 수집인지 저장인지 못 가린다 — 배선 디버깅의 전제다.
-serviceMonitor:
-  enabled: true

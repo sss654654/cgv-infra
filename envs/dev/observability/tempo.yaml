@@ -1,0 +1,31 @@
+# tempo dev 환경값 — 오브젝트 저장소 접속과 WAL 볼륨.
+#
+# 이 환경의 오브젝트 저장소는 클러스터 안의 MinIO 다. 평문 http 라 insecure 를 켜고,
+#   경로 방식 주소(버킷을 호스트가 아니라 경로에 두는 형태)를 쓴다 —
+#   MinIO 는 가상 호스트 방식 주소를 기본으로 안 받는다.
+# 자격은 SealedSecret 이 배달하고 config.expand-env 가 ${} 를 치환한다.
+
+tempo:
+  extraEnvFrom:
+    - secretRef:
+        name: tempo-s3-credentials     # 키명 S3_ACCESS_KEY · S3_SECRET_KEY
+  storage:
+    trace:
+      s3:
+        bucket: tempo
+        endpoint: minio.observability.svc.cluster.local:9000
+        access_key: ${S3_ACCESS_KEY}
+        secret_key: ${S3_SECRET_KEY}
+        insecure: true                 # 평문 http
+        forcepathstyle: true           # 경로 방식 주소
+
+# WAL 을 담는 볼륨. monolithic 이라 복제가 없어 이게 유일한 사본이다.
+persistence:
+  enabled: true
+  storageClassName: local-tempowal     # 정적 PV — tempo-wal(5G) 통마운트(디스크1=FS1=PV1, per-FS 관측)
+  accessModes: [ReadWriteOnce]
+  size: 4Gi                            # PV 4Gi 와 짝(오버서브 금지)
+
+# 그 정적 PV 가 있는 노드에 고정한다. PV 의 nodeAffinity 와 이중 안전.
+nodeSelector:
+  cgv.io/data: obs

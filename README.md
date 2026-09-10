@@ -217,7 +217,7 @@ MetalLB cgv-pool 10.0.0.240-250  →  Traefik  →  경로별 앱
   4  → 그 밖 전부 (인터넷)           허용      이미지 허브 · apt · NTP · Discord
   ```
   1·2가 3보다 위에 있어야 성립한다. 3이 위로 가면 배포가 함께 멈춘다.
-- **Ingress** — Traefik(LoadBalancer)에 MetalLB가 IP를 할당하고, 경로로 앱을 가른다([frontend/values.yaml](charts/apps/frontend/values.yaml)).
+- **Ingress** — Traefik(LoadBalancer)에 MetalLB가 IP를 할당하고, 경로로 앱을 가른다([frontend.yaml](charts/apps/frontend.yaml)).
   frontend Ingress에는 `host`를 적지 않는다 — 적으면 그 이름으로 온 요청만 받아 LB IP 직접 접근이 끊긴다.
 - **관리 UI(`argocd.cgv.lan`·`grafana.cgv.lan`)는 `web` 엔트리포인트에만 붙는다.**
 

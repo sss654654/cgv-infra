@@ -94,7 +94,7 @@ spec:
           #   (platform·observability)만 값 제공용 git 소스를 따로 두고 $values 를 쓴다.
           valueFiles:
             - values.yaml                             # 차트 기본값
-            - '../{{.name}}/values.yaml'              # 이 서비스가 무엇인가 (환경 무관)
+            - '../{{.name}}.yaml'                     # 이 서비스가 무엇인가 (환경 무관)
             - '../../../envs/{{.env}}/{{.name}}.yaml' # 이 환경에서 얼마나 크게
           # 위 환경 목록의 registry 를 렌더로 내려보낸다. parameters 는 valueFiles 보다 나중에
           #   적용되므로, 값 파일에 같은 키를 또 두지 않는다.
