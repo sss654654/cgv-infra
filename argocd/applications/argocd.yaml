@@ -1,6 +1,6 @@
 # ArgoCD 자신을 GitOps로 관리한다. 차트는 업스트림에서, 값은 이 저장소에서 읽는다.
 #
-# 최초 설치는 bootstrap/install.sh의 helm이 한다 — 클러스터가 비어 있을 때는 배포할 주체가
+# 최초 설치는 bootstrap/k3s/install.sh의 helm이 한다 — 클러스터가 비어 있을 때는 배포할 주체가
 # 없기 때문이다. 이 App은 그렇게 만들어진 리소스를 이어받아, 이후 값 변경이 helm 명령이 아닌
 # git 커밋으로 흐르게 한다.
 #
@@ -21,7 +21,7 @@ spec:
       targetRevision: 10.1.4
       helm:
         valueFiles:
-          - $values/bootstrap/argocd/values.yaml   # 아래 ref: values 소스를 가리킨다
+          - $values/bootstrap/k3s/argocd-values.yaml   # 아래 ref: values 소스를 가리킨다
     - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
       targetRevision: main
       ref: values                                 # 차트를 렌더할 때 값만 제공. 이 소스 자체는 배포하지 않는다

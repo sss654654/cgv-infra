@@ -27,7 +27,7 @@ nodeSelector:
 existingSecret: minio-root-secret
 persistence:
   enabled: true
-  storageClass: local-miniodata      # 정적 PV(bootstrap/storage/) — miniodata 디스크 통마운트(k3s-3)
+  storageClass: local-miniodata      # 정적 PV(bootstrap/k3s/storage/) — miniodata 디스크 통마운트(k3s-3)
   accessMode: ReadWriteOnce
   size: 100Gi                        # 디스크 실크기와 일치(전용 통마운트 — LGTM truth라 제일 크다. 유일하게 차오름 = 관측 1순위)
 resources:

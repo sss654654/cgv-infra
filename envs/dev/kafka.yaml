@@ -2,7 +2,7 @@
 
 storage:
   size: 10Gi
-  # 정적 PV(bootstrap/storage/). kafkadata 디스크를 통마운트해 노드당 하나씩 미리 만들어 뒀다.
+  # 정적 PV(bootstrap/k3s/storage/). kafkadata 디스크를 통마운트해 노드당 하나씩 미리 만들어 뒀다.
   class: local-kafkadata
 
 # queue 의 HPA 상한이 이 환경에서 4다(노드 자리 때문에 그 위로 못 늘린다).

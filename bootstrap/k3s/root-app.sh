@@ -19,8 +19,8 @@ command -v kubectl >/dev/null || { echo "kubectl 없음." >&2; exit 1; }
 kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
   echo "argocd가 없다. install.sh를 먼저 완주해라." >&2; exit 1; }
 
-# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 17종이 커밋돼 있어야 한다.
-#   seal-secrets.sh가 일괄로 만드는 10종(observability 6 · data 2 · app 2) + 낱개로 더한 7종:
+# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 18종이 커밋돼 있어야 한다.
+#   seal-secrets.sh가 일괄로 만드는 10종(observability 6 · data 2 · app 2) + 낱개로 더한 8종:
 #   grafana-discord-webhook(Grafana 알림 발송 URL. 없으면 Grafana가 FailedMount로 기동하지 못한다),
 #   app-admin-token(booking·queue 초기화 API 인증 · demo-reset CronJob),
 #   argocd-repo-cgv-infra(ArgoCD의 저장소 자격. 읽기·쓰기 통합 — image updater write-back 겸용),
@@ -29,15 +29,17 @@ kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
 #                   kubectl create secret docker-registry로 만든다),
 #   image-updater-registry(argocd-image-updater가 레지스트리 태그를 폴링하는 자격.
 #                          gitlab-registry와 같은 dockerconfigjson, ns만 argocd),
+#   image-updater-ecr(argocd-image-updater가 ECR 태그를 폴링할 때 쓰는 액세스 키.
+#                     ECR 비밀번호는 12시간 토큰이라 저장해 둘 수 없어, 이 키로 매번 토큰을 받는다),
 #   cloudflare-api-token(cert-manager ns. ClusterIssuer의 DNS-01 solver가 읽는다).
 # 파일이 부족한 채로 apply하면 argocd는 성공으로 보이는데 워크로드만 조용히 실패한다.
 #
 # ⚠️ argocd-repo-cgv-infra는 이 스크립트 전에 손으로 apply해야 한다. 그 Secret이 없으면
 #    ArgoCD가 저장소를 못 읽어 sealed-secrets App을 sync할 수 없고, 그 App이 배달하는 것이
 #    바로 그 Secret이라 순환에 걸린다(docs/시크릿-계약.md 조건부 항목).
-SECRET_DIR="../manifests/secrets"
+SECRET_DIR="../../manifests/secrets"
 COUNT=$(find "$SECRET_DIR" -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l)
-EXPECTED=17
+EXPECTED=18
 if [ "$COUNT" -lt "$EXPECTED" ]; then
   echo "SealedSecret 봉인본이 ${COUNT}개다(필요 ${EXPECTED}종). ${SECRET_DIR}/ 확인." >&2
   echo "계약: docs/시크릿-계약.md · 봉인법: manifests/secrets/README.md" >&2
@@ -47,8 +49,10 @@ if [ "$COUNT" -lt "$EXPECTED" ]; then
 fi
 
 # 봉인본이 git에 push돼 있어야 argocd가 본다(로컬 파일이 아니라 repoURL을 읽는다).
-if git -C .. rev-parse --git-dir >/dev/null 2>&1; then
-  if [ -n "$(git -C .. status --porcelain "$SECRET_DIR" 2>/dev/null)" ]; then
+# -C 를 붙이지 않는다. 경로 인자(pathspec)는 git 이 선 위치 기준으로 풀리는데,
+#   -C 로 다른 폴더에 세우면 $SECRET_DIR(이 스크립트 위치 기준 상대 경로)이 엉뚱한 곳을 가리킨다.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  if [ -n "$(git status --porcelain "$SECRET_DIR" 2>/dev/null)" ]; then
     echo "경고: ${SECRET_DIR}에 커밋되지 않은 변경이 있다. argocd는 원격 repo를 읽으므로 push까지 해야 반영된다." >&2
   fi
 fi
@@ -61,7 +65,7 @@ fi
 #   저장소 자격(argocd-repo-cgv-infra)과 같은 유형의 순환이라 같은 방식으로 푼다 —
 #   한 번만 손으로 세우고, 그 뒤로는 GitOps가 같은 것을 관리한다.
 echo "AppProject bootstrap 선행 apply (root가 참조하는 프로젝트)."
-kubectl apply -f ../argocd/projects/bootstrap.yaml
+kubectl apply -f ../../argocd/projects/bootstrap.yaml
 
 echo "root-app apply → argocd/ 하위(AppProject·ApplicationSet·Application)를 argocd가 인계한다."
 kubectl apply -f root-app.yaml

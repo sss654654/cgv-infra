@@ -21,7 +21,7 @@
 #        한 번 통과하면 이후로는 봉인본의 애노테이션이 Secret에 남아 계속 통과한다.
 set -euo pipefail
 cd "$(dirname "$0")"
-OUT="../manifests/secrets"
+OUT="../../manifests/secrets"
 
 USAGE="사용법: $0 [-a 애노테이션 key=value]... <이름> <네임스페이스> [라벨 key=value ...]"
 ANNOTATIONS=()

@@ -78,7 +78,7 @@ spec:
           ref: values
       destination:
         server: '{{.server}}'
-        namespace: '{{.namespace}}'      # 두 ns 모두 bootstrap/namespaces가 라벨과 함께 미리 만든다(CreateNamespace 불요)
+        namespace: '{{.namespace}}'      # 두 ns 모두 bootstrap/k3s/namespaces.yaml 이 라벨과 함께 미리 만든다(CreateNamespace 불요)
       syncPolicy:
         automated:
           prune: true

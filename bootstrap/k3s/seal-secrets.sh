@@ -10,7 +10,7 @@
 #   lgtm 비번   = minio-lgtm-user = loki/mimir/tempo S3 SECRET (ACCESS_KEY는 고정 "lgtm-user")
 set -euo pipefail
 cd "$(dirname "$0")"
-OUT="../manifests/secrets"
+OUT="../../manifests/secrets"
 
 command -v kubeseal >/dev/null || { echo "kubeseal 없음" >&2; exit 1; }
 [ -d "$OUT" ] || { echo "$OUT 폴더 없음" >&2; exit 1; }

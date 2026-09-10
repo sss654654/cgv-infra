@@ -28,7 +28,7 @@ mysql:
     podManagementPolicy: OrderedReady
     persistence:
       enabled: true
-      storageClass: local-mysqldata   # 정적 PV(bootstrap/storage/) — mysqldata 디스크 통마운트(k3s-1)
+      storageClass: local-mysqldata   # 정적 PV(bootstrap/k3s/storage/) — mysqldata 디스크 통마운트(k3s-1)
       size: 8Gi                       # PV capacity 20Gi ≥ 요청 8Gi → 바인딩. 실상한 = 디스크 20G
     nodeSelector:
       cgv.io/data: db                 # mysqldata LV가 있는 k3s-1에 핀

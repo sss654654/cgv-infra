@@ -1,6 +1,6 @@
 # SealedSecret 봉인 (배포 전 필수)
 
-sealed-secrets 컨트롤러 up(install.sh [5/9]) 후, `docs/시크릿-계약.md` 표대로 각 Secret을 kubeseal로 봉인해
+sealed-secrets 컨트롤러 up(`bootstrap/k3s/install.sh` [5/9]) 후, `docs/시크릿-계약.md` 표대로 각 Secret을 kubeseal로 봉인해
 이 폴더에 `<name>.yaml`로 저장. `argocd/applications/sealed-secrets.yaml`이 sync-wave -2로 배달(앱보다 먼저).
 
 예 (mysql-secret):
@@ -22,10 +22,10 @@ app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/
 
 필요 목록(dev HA, 10종): `mysql-secret`·`redis-secret`(data) · `booking-secrets`·`queue-secrets`(app) · `minio-root-secret`·`minio-lgtm-user`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
 
-여기에 일곱 장이 더 있어 **총 17종**이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래는 나중에 더해진 것이라 낱개로 만든다. 아래 셋(`argocd-repo-cgv-infra`·`argocd-secret`·`gitlab-registry`)은 만드는 방법이 각각 다르고, 나머지 넷은 `seal-one.sh`로 이름·네임스페이스만 바꿔 만든다.
+여기에 여덟 장이 더 있어 **총 18종**이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래는 나중에 더해진 것이라 낱개로 만든다. 아래 넷(`argocd-repo-cgv-infra`·`argocd-secret`·`gitlab-registry`·`image-updater-registry`)은 만드는 방법이 각각 다르고, 나머지 넷은 `seal-one.sh`로 이름·네임스페이스만 바꿔 만든다.
 
 ```
-image-updater-registry   argocd         argocd-image-updater 가 레지스트리 태그를 폴링하는 자격
+image-updater-ecr        argocd         argocd-image-updater 가 ECR 태그를 폴링할 때 토큰을 받는 액세스 키
 app-admin-token          app            데이터 초기화 API 인증.  demo-reset CronJob 도 같은 값을 쓴다
 cloudflare-api-token     cert-manager   DNS-01 챌린지 레코드를 만드는 자격.
                                         범위는 한 존의 DNS:Edit·Zone:Read 뿐이고,
@@ -37,6 +37,7 @@ grafana-discord-webhook  observability  알림 발신 대상.  없으면 Grafana
 - **`argocd-secret`** — GitLab webhook의 발신자 확인용 키 하나를 **기존 Secret에 얹는다.** argo-cd 차트가 만들고 argocd-server가 `admin.password`·`server.secretkey`를 채워 쓰는 Secret이라, `template.metadata.annotations`의 `patch`가 그 키들을 보존한다. **⚠️ 컨트롤러는 이 애노테이션을 봉인본이 아니라 클러스터의 Secret에서 읽으므로, 배달 전에 손으로 한 번 붙여야 한다.** 안 붙이면 `already exists and is not managed by SealedSecret`으로 거부한다.
 
 ```bash
+# bootstrap/k3s/ 에서 친다 — seal-one.sh 가 ../../manifests/secrets 로 쓴다
 kubectl -n argocd annotate secret argocd-secret sealedsecrets.bitnami.com/patch=true   # 선행
 ./seal-one.sh -a sealedsecrets.bitnami.com/patch=true argocd-secret argocd
 ```

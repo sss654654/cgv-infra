@@ -12,8 +12,8 @@
    - k3s-2: kafkadata 30G · ingesterwal 5G · lokiwal 5G · tempowal 5G
    - k3s-3: kafkadata 30G · ingesterwal 5G · miniodata 100G
 2. **OS prep**: 정적 IP(`10.0.0.11-13`, 게이트웨이·DNS는 OPNsense `10.0.0.1`), SSH키, unattended-upgrades.
-   **데이터 디스크를 `/mnt/disks/<용도>`에 마운트** — 각 디스크를 `mkfs.ext4` 후 fstab UUID로 마운트(통마운트, 서브디렉터리 mkdir 없음). local-path는 config.yaml에서 disable — PVC는 정적 PV(`bootstrap/storage/`, install.sh [3/9]가 apply)에 바인딩된다.
-3. 세 노드에 `bootstrap/cluster/`의 네 파일(config.yaml·registries.yaml·01·02)을 같은 디렉터리로 복사 — 스크립트가 옆의 config.yaml을 `/etc/rancher/k3s/`로 옮긴다.
+   **데이터 디스크를 `/mnt/disks/<용도>`에 마운트** — 각 디스크를 `mkfs.ext4` 후 fstab UUID로 마운트(통마운트, 서브디렉터리 mkdir 없음). local-path는 config.yaml에서 disable — PVC는 정적 PV(`bootstrap/k3s/storage/`, install.sh [3/9]가 apply)에 바인딩된다.
+3. 세 노드에 `bootstrap/k3s/cluster/`의 네 파일(config.yaml·registries.yaml·01·02)을 같은 디렉터리로 복사 — 스크립트가 옆의 config.yaml을 `/etc/rancher/k3s/`로 옮긴다.
    **`registries.yaml`은 손으로 옮긴다** — `sudo cp registries.yaml /etc/rancher/k3s/`.
    k3s가 기동할 때만 읽으므로 이미 떠 있으면 `sudo systemctl restart k3s`까지 해야 반영된다.
    이 파일이 없으면 GitLab 레지스트리가 평문(http)이라 kubelet이 `http: server gave HTTP

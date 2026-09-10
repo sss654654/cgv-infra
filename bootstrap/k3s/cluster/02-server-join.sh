@@ -41,4 +41,4 @@ INSTALL_K3S_VERSION="$K3S_VERSION" \
 echo
 echo "완료. k3s-1에서 확인:"
 echo "  kubectl get nodes -L cgv.io/data     # 노드 수와 라벨(db·obs·obj)을 함께 본다"
-echo "  (CNI 없어 NotReady 정상 → cgv-infra/bootstrap/install.sh의 Calico가 Ready로)"
+echo "  (CNI 없어 NotReady 정상 → cgv-infra/bootstrap/k3s/install.sh의 Calico가 Ready로)"

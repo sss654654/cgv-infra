@@ -6,7 +6,7 @@ resources:
 watchNamespaces:
   - data
 
-# data 네임스페이스는 PodSecurity enforce=restricted다(bootstrap/namespaces/namespaces.yaml).
+# data 네임스페이스는 PodSecurity enforce=restricted다(bootstrap/k3s/namespaces.yaml).
 # 차트 기본값은 podSecurityContext·securityContext가 빈 맵({})이라 오퍼레이터 파드가 admission에서 거부된다
 # (allowPrivilegeEscalation != false · unrestricted capabilities · runAsNonRoot != true · seccompProfile 미설정).
 # 거부되면 Deployment는 생기고 파드만 0개라, helm --wait이 타임아웃날 때까지 원인이 안 보인다.

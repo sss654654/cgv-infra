@@ -4,7 +4,7 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
 온프레미스 k3s 클러스터에 GitOps로 배포·운영하는 인프라 코드.
 물리 노드부터 CNI·LB·Ingress·스토리지·관측·미들웨어·시크릿까지 직접 구성한다.
 
-이 repo로 노드 프로비저닝부터 CGV 서비스 기동까지 재현한다: 노드 프로비저닝 스크립트(`bootstrap/cluster/`) → 플랫폼 부트스트랩(`bootstrap/install.sh`) → GitOps 선언(`argocd/` + `charts`·`manifests`·`envs`).
+이 repo로 노드 프로비저닝부터 CGV 서비스 기동까지 재현한다: 노드 프로비저닝 스크립트(`bootstrap/k3s/cluster/`) → 플랫폼 부트스트랩(`bootstrap/k3s/install.sh`) → GitOps 선언(`argocd/` + `charts`·`manifests`·`envs`).
 
 **동작 중인 서비스: [ticket.subinhong.dev](https://ticket.subinhong.dev)** — 클러스터가 노트북 한 대 위에 있어 23:30에 꺼지고 07:30에 켜진다. 그 사이에는 응답하지 않는다.
 
@@ -134,7 +134,7 @@ kubelet이 파드를 축출했다 — 애플리케이션 한계가 아니라 물
 ```
 
 - **3노드 전부 k3s `server`**(control-plane+worker) → embedded **etcd 쿼럼 3**. 노드 하나 죽어도 쿼럼 2 유지(HA). 워커 전용 노드 없음.
-- **k3s 번들 컴포넌트 전부 교체**: `flannel-backend: none`→**Calico**, `servicelb` disable→**MetalLB**, `traefik` disable→**자체 Traefik**. (`bootstrap/cluster/config.yaml`)
+- **k3s 번들 컴포넌트 전부 교체**: `flannel-backend: none`→**Calico**, `servicelb` disable→**MetalLB**, `traefik` disable→**자체 Traefik**. (`bootstrap/k3s/cluster/config.yaml`)
 - **네임스페이스와 PodSecurity** — 프로파일은 그 ns에 실제로 뜨는 파드 스펙을 렌더해서 정했다.
 
   | ns | 프로파일 | 이유 |
@@ -237,7 +237,7 @@ MetalLB cgv-pool 10.0.0.240-250  →  Traefik  →  경로별 앱
 외장 USB SSD (단일 물리)
  └ Proxmox 호스트가 용도별 LV로 분할 → 각 노드 VM에 디스크로 attach
     └ 노드 OS가 각 디스크를 mkfs 후 /mnt/disks/<용도> 에 마운트(fstab UUID)
-       └ 정적 PV(bootstrap/storage/pvs.yaml)가 그 마운트 지점을 가리킴
+       └ 정적 PV(bootstrap/k3s/storage/pvs.yaml)가 그 마운트 지점을 가리킴
           └ SC 6종(no-provisioner·WaitForFirstConsumer)이 용도별 PVC↔PV 바인딩을 가름
              └ PV nodeAffinity → stateful 파드가 자기 디스크 노드에 뜸
 ```
@@ -363,7 +363,7 @@ GOMEMLIMIT            800MiB → 2600MiB
 | CRD 경유 | 앱(queue·booking) · kube-state-metrics · node-exporter · LGTM 각 컴포넌트 · Redis exporter | ServiceMonitor / PodMonitor 소비 |
 | 직접 scrape | **k3s server**(`:10250/metrics`) · **cAdvisor**(`:10250/metrics/cadvisor`) · **MinIO 버킷 사용량** | `role=node` 발견 + 노드 주소 직접 지목 |
 
-노드 프로세스는 대상을 가리킬 Service가 없다 — CRD 경로로는 원리적으로 못 잡는다. etcd(`:2381`)만 예외로, 셀렉터 없는 Service + 수동 Endpoints를 만들어 ServiceMonitor로 붙였다(`bootstrap/control-plane/`).
+노드 프로세스는 대상을 가리킬 Service가 없다 — CRD 경로로는 원리적으로 못 잡는다. etcd(`:2381`)만 예외로, 셀렉터 없는 Service + 수동 Endpoints를 만들어 ServiceMonitor로 붙였다(`bootstrap/k3s/etcd-metrics.yaml`).
 
 **노드 주소를 직접 지목하는 이유**는 기본 `kubernetes` Service가 살아 있는 apiserver만 엔드포인트로 유지하기 때문이다. 노드가 죽으면 대상 자체가 목록에서 빠져 `up=0`이 아니라 아예 없어진다 — "죽었다"를 표현하지 못한다. 고정 주소면 대상이 남아 `up=0`으로 나온다.
 
@@ -450,7 +450,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 - **공개 경로 앞단** ([public-guard](manifests/public-guard/))
   - `admin-api-deny` — 초기화 API(`/api/admin`·`/api/admission/reset`)를 **443에서만** 끊는다. 실제로 부르는 것은 클러스터 안의 CronJob 하나이고 그것은 Service를 직접 부르므로, 밖에서 살아 있을 이유가 없다. 80에는 걸지 않아 격리망 안에서 손으로 부르는 경로는 남는다.
 - **관리 UI가 443에 없다** — 두 Ingress를 `web` 엔트리포인트에만 붙여 WireGuard 터널로만 닿게 했다. 엔트리포인트를 안 적으면 왜 443에 붙는지는 위 [네트워크](#네트워크)에 있다.
-- **SealedSecret 17종** — 암호는 kubeseal로 봉인하고 암호문만 Git에 둔다([docs/시크릿-계약](docs/시크릿-계약.md)).
+- **SealedSecret 18종** — 암호는 kubeseal로 봉인하고 암호문만 Git에 둔다([docs/시크릿-계약](docs/시크릿-계약.md)).
   ```
   data           mysql-secret · redis-secret
   observability  grafana-admin · grafana-discord-webhook · loki-s3-credentials
@@ -546,7 +546,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 ```
 cgv-infra/
-├── bootstrap/          손으로 (argocd 뜰 때까지 — 순환·CRD·operator만, 9단계)
+├── bootstrap/          손으로 — k3s/ (빈 노드에서 허브까지 9단계) · eks/ (빈 EKS 를 허브에 붙이기)
 │   ├── cluster/            k3s 설치·조인(SSH): config.yaml · 01-server-init · 02-server-join
 │   ├── install.sh          Calico→namespaces→storage→cert-manager→sealed-secrets→CRD→control-plane→Strimzi→argocd
 │   ├── seal-secrets.sh     초기 봉인 — 값 5개를 물어 10종을 일괄 생성
@@ -573,7 +573,7 @@ cgv-infra/
 ├── manifests/          배포 대상 — 정적인 것 (12 디렉터리)
 │   ├── kafka/              Strimzi CR (클러스터·노드풀·토픽 4종)
 │   ├── metallb-pool/       주소 풀 CR (10.0.0.240-250)
-│   ├── secrets/            SealedSecret 17종
+│   ├── secrets/            SealedSecret 18종
 │   ├── dashboards/         Grafana 대시보드 ConfigMap 7장
 │   ├── netpol-data/        data 네임스페이스로 들어오는 접속 제한
 │   ├── netpol-app/         app 네임스페이스 인·아웃
@@ -595,7 +595,7 @@ cgv-infra/
 
 `install.sh`와 `root-app.sh`가 나뉜 이유는 SealedSecret 봉인이 그 사이에 들어가야 해서다. 봉인은 sealed-secrets 컨트롤러가 떠야(install.sh 중반) 가능한데, 봉인 전에 GitOps 폭포가 시작되면 MySQL·Redis·MinIO·Grafana·LGTM이 시크릿을 못 찾아 일제히 실패한다. `root-app.sh`는 봉인본 개수를 세어 부족하면 멈춘다.
 
-> 손으로 하는 구간의 전모 — 9단계가 각각 왜 GitOps가 아닌지, SealedSecret이 무엇이고 왜 별도 구간인지, 봉인에서 틀리기 쉬운 세 지점 — 은 [`bootstrap/README.md`](bootstrap/README.md)에 있다.
+> 손으로 하는 구간의 전모 — 9단계가 각각 왜 GitOps가 아닌지, SealedSecret이 무엇이고 왜 별도 구간인지, 봉인에서 틀리기 쉬운 세 지점 — 은 [`bootstrap/k3s/README.md`](bootstrap/k3s/README.md)에 있다.
 
 ---
 
@@ -631,14 +631,14 @@ Application 하나는 반드시 프로젝트 하나에 속하고, 그 프로젝�
 
 ### ArgoCD가 자기를 관리한다
 
-`argo-cd` 차트는 `install.sh`가 `helm install`로 처음 넣는다 — 클러스터가 비어 있을 때는 배포할 주체가 없다. 그 뒤 `argocd` Application이 같은 리소스를 이어받아, 값 변경이 `helm upgrade`가 아니라 `bootstrap/argocd/values.yaml` 커밋으로 흐른다.
+`argo-cd` 차트는 `install.sh`가 `helm install`로 처음 넣는다 — 클러스터가 비어 있을 때는 배포할 주체가 없다. 그 뒤 `argocd` Application이 같은 리소스를 이어받아, 값 변경이 `helm upgrade`가 아니라 `bootstrap/k3s/argocd-values.yaml` 커밋으로 흐른다.
 
 ```yaml
 sources:
   - repoURL: https://argoproj.github.io/argo-helm   # 차트
     chart: argo-cd
     targetRevision: 10.1.4                          # 설치된 버전과 같게
-    helm: { valueFiles: [ $values/bootstrap/argocd/values.yaml ] }
+    helm: { valueFiles: [ $values/bootstrap/k3s/argocd-values.yaml ] }
   - repoURL: <GitLab>                               # 값
     ref: values                                     # 이 소스는 배포되지 않는다
 syncPolicy:
@@ -656,11 +656,11 @@ syncPolicy:
 
 ```
 ① cluster/ 스크립트 (SSH, 노드에서)   → k3s 3노드 조인 (CNI 없어 NotReady)
-② bootstrap/install.sh (9단계)        → Calico(→Ready)→namespaces→storage→cert-manager→sealed-secrets
+② bootstrap/k3s/install.sh (9단계)        → Calico(→Ready)→namespaces→storage→cert-manager→sealed-secrets
                                           →CRD→control-plane 수집→Strimzi→argocd
-③ SealedSecret 17종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
+③ SealedSecret 18종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
                                           그중 ArgoCD 저장소 자격 한 장은 apply까지 (없으면 ⑤ 이후가 안 돈다)
-④ bootstrap/root-app.sh               → 봉인본 개수 확인 후 root-app apply. 여기서 손 끝
+④ bootstrap/k3s/root-app.sh               → 봉인본 개수 확인 후 root-app apply. 여기서 손 끝
 ⑤ root-app → argocd/ recurse          → AppProject·ApplicationSet·Application 생성
 ⑥ ApplicationSet → 플랫폼/앱/관측 Application 자동 생성 · Application이 charts·manifests 를 가리킴
 ⑦ argocd가 렌더·배포 → CGV 서비스 기동
@@ -686,11 +686,11 @@ syncPolicy:
 | | 단계 | 상태 |
 |---|---|---|
 | 1 | **Proxmox** 설치(외장 SSD) + VM 3개 + 용도별 LV + 네트워크(vmbr) | ✅ 완료 |
-| 2 | 각 노드 OS prep(정적 IP·SSH키·**데이터 디스크 10장 mkfs + `/mnt/disks/<용도>` 마운트·fstab**·[cluster/README](bootstrap/cluster/README.md)) | ✅ 완료 (재부팅 검증 통과) |
+| 2 | 각 노드 OS prep(정적 IP·SSH키·**데이터 디스크 10장 mkfs + `/mnt/disks/<용도>` 마운트·fstab**·[cluster/README](bootstrap/k3s/cluster/README.md)) | ✅ 완료 (재부팅 검증 통과) |
 | 3 | `cluster/01-server-init.sh`(k3s-1) → `02-server-join.sh`(k3s-2·3) | ✅ 완료 (v1.36.2, etcd 3-member, CNI 전이라 NotReady) |
-| 4 | `bootstrap/install.sh` — Calico부터 argocd까지. 여기까지는 몇 번을 다시 돌려도 안전하다(전부 멱등) | ✅ 완료 |
-| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 7종(저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격·초기화 API 토큰·Discord webhook·Cloudflare API 토큰) = 17종. `root-app.sh`가 이 개수를 세어 부족하면 멈춘다 | ✅ 완료 |
-| 6 | `bootstrap/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ✅ 완료 |
+| 4 | `bootstrap/k3s/install.sh` — Calico부터 argocd까지. 여기까지는 몇 번을 다시 돌려도 안전하다(전부 멱등) | ✅ 완료 |
+| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 8종(저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격 둘(GitLab·ECR)·초기화 API 토큰·Discord webhook·Cloudflare API 토큰) = 18종. `root-app.sh`가 이 개수를 세어 부족하면 멈춘다 | ✅ 완료 |
+| 6 | `bootstrap/k3s/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ✅ 완료 |
 | 7 | `kubectl -n argocd get applications -w` 로 sync 확인 | ✅ 완료 (플랫폼·관측·미들웨어 수렴. 자원값은 실측으로 재조정) |
 | 8 | **GitOps 원본을 GitLab으로** — 저장소 이전 · deploy token 봉인 · `repoURL` 전환 · AppProject 울타리 | ✅ 완료 |
 | 9 | **ArgoCD self-managed 인수인계** — `argocd` Application이 helm이 만든 리소스를 이어받음 | ✅ 완료 |
@@ -714,7 +714,7 @@ kubeconfig 탐색   $KUBECONFIG → /etc/rancher/k3s/k3s.yaml → ~/.kube/config
 **4번(install.sh)과 5번(봉인) 사이에 손이 한 번 더 들어가는 것이 설계다.** `kubeseal`은 sealed-secrets 컨트롤러(install.sh 5단계)가 떠야 공개키를 얻으므로, 봉인은 install.sh가 끝난 뒤에만 가능하다. 그래서 GitOps 인계를 `root-app.sh`로 분리했고, 그 스크립트가 봉인본 개수를 세어 부족하면 인계를 막는다.
 
 > **파일은 `git clone`으로 가져간다.** Windows 작업트리는 `core.autocrlf`로 CRLF를 가질 수 있고, 그 트리에서 scp로 직접 복사하면 셸이 `$'do\r'` 같은 문법 오류로 죽는다. `.gitattributes`가 저장소 안 내용을 LF로 고정하므로 clone/pull로 받으면 그 문제가 없다.
-> `install.sh`는 `bootstrap/` 트리 전체(calico·namespaces·storage·control-plane·각 values·root-app.yaml)를 상대경로로 읽는다 — 스크립트 한 파일만 옮기면 안 된다.
+> `install.sh`는 `bootstrap/k3s/` 안의 형제 파일(calico·namespaces·storage/·etcd-metrics·각 -values·root-app.yaml)을 상대경로로 읽는다 — 스크립트 한 파일만 옮기면 안 된다.
 
 ---
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# install.sh — 부트스트랩(set-once). argocd 밖 인프라를 순서대로 깐다.
+# install.sh — k3s 클러스터 부트스트랩(set-once). 빈 노드에서 허브(ArgoCD)가 서기까지 argocd 밖 인프라를 순서대로 깐다.
+# 읽는 파일은 전부 이 폴더(bootstrap/k3s/)의 형제다 — 아래에서 자기 위치로 cd 한 뒤 상대 경로로 읽는다.
 # 전제: 각 노드에 k3s가 cluster/config.yaml로 설치·조인됨(CNI 전이라 NotReady 상태).
 # 실행 위치는 kubectl·helm이 있고 클러스터에 닿는 곳이면 된다 — $KUBECONFIG를 쓰고, 없으면 k3s 기본 경로로 떨어진다.
 # GitOps 인계(root-app apply)는 이 스크립트에 없다 — SealedSecret 봉인이 선행돼야 하므로 root-app.sh로 분리했다.
@@ -51,7 +52,7 @@ kubectl wait --for=condition=Established --timeout=120s \
   crd/installations.operator.tigera.io crd/apiservers.operator.tigera.io
 kubectl apply --server-side --force-conflicts -f "${CALICO_MANIFESTS}/tigera-operator.yaml"
 kubectl -n tigera-operator rollout status deploy/tigera-operator --timeout=300s
-kubectl apply -f calico/custom-resources.yaml
+kubectl apply -f calico.yaml
 # 상류 custom-resources.yaml에 있는 Goldmane·Whisker CR은 우리 파일에 없다 —
 # 흐름 로그 수집기와 UI라 8GB 노드에서 RAM만 먹고, 관측은 LGTM이 맡는다.
 # 오퍼레이터가 Installation CR을 reconcile해 calico-system ns와 DaemonSet을 만들 때까지 기다린다.
@@ -68,7 +69,7 @@ kubectl wait --for=condition=Ready nodes --all --timeout=180s
 echo "[2/9] 네임스페이스 + PodSecurity 라벨 (app·data·argocd·cert-manager=restricted, observability=baseline, observability-host=privileged)"
 # 아래 [4]cert-manager·[8]argocd의 --create-namespace보다 먼저 돌아야 그 두 ns가 라벨을 달고 만들어진다.
 # (helm --create-namespace는 ns가 이미 있으면 아무것도 안 한다 = 여기서 만든 라벨이 유지된다.)
-kubectl apply -f namespaces/
+kubectl apply -f namespaces.yaml
 
 echo "[3/9] StorageClass 6종 + 정적 PV 10개 — 워크로드(GitOps 폭포의 mysql·kafka·관측)보다 먼저 있어야 바인딩 가능"
 # 선행(손작업): 각 노드에 데이터 디스크 mkfs·/mnt/disks/<용도> 마운트·fstab 완료 상태(storage/pvs.yaml 헤더).
@@ -84,13 +85,13 @@ helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
 # --timeout 10m은 되살릴 때를 위해 둔다 — 파드 3개(controller·webhook·cainjector)가 각기 다른
 # 이미지를 받고, VM 3대가 USB SSD 한 장을 공유한 채 동시에 pull하면 helm 기본 5분을 넘긴다.
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
-  -f cert-manager/values.yaml --wait --timeout 10m --version v1.21.0   # crds.enabled=true는 values로 이관. 버전 핀
+  -f cert-manager-values.yaml --wait --timeout 10m --version v1.21.0   # crds.enabled=true는 values로 이관. 버전 핀
 
 echo "[5/9] sealed-secrets 컨트롤러 (개인키 백업 필수 — 분실 시 기존 봉인본 전체 복호화 불가)"
 # helm repo(bitnami-labs.github.io/sealed-secrets)가 404 → GitHub 릴리스 tgz 직접 참조(버전이 URL에 핀)
 helm upgrade --install sealed-secrets \
   https://github.com/bitnami-labs/sealed-secrets/releases/download/helm-v2.18.6/sealed-secrets-2.18.6.tgz \
-  -n kube-system -f sealed-secrets/values.yaml --wait --timeout 5m   # 파드 1개·이미지 1개 → 기본 5분으로 충분
+  -n kube-system -f sealed-secrets-values.yaml --wait --timeout 5m   # 파드 1개·이미지 1개 → 기본 5분으로 충분
 # <TODO> kubeseal 개인키를 클러스터 밖에 암호화 백업
 
 echo "[6/9] prometheus-operator CRDs (ServiceMonitor/PodMonitor — Alloy가 읽음). 오퍼레이터 아님, CRD만."
@@ -101,14 +102,14 @@ helm upgrade --install prometheus-operator-crds prometheus-community/prometheus-
 
 # control-plane 메트릭 수집 경로(etcd). 셀렉터 없는 Service + 수동 Endpoints + ServiceMonitor.
 # ServiceMonitor CRD가 방금 생겼으므로 여기서 apply한다. observability 네임스페이스는 [2/9]에서 생성됨.
-# apiserver 쪽은 인증이 필요해 Alloy 설정에 직접 두었다(alloy/values.yaml).
-kubectl apply -f control-plane/
+# apiserver 쪽은 인증이 필요해 Alloy 수집 설정에 직접 두었다(envs/dev/observability/alloy.yaml).
+kubectl apply -f etcd-metrics.yaml
 
 echo "[7/9] Strimzi 오퍼레이터 1.1.0 (KafkaCluster/Topic CR 감시. data ns watch)"
 helm repo add strimzi https://strimzi.io/charts --force-update >/dev/null
 # --timeout 10m: 오퍼레이터 이미지가 크고(수백 MB) 첫 실행은 디스크 경합이 겹친다.
 helm upgrade --install strimzi strimzi/strimzi-kafka-operator -n data --create-namespace --wait --timeout 10m \
-  --version 1.1.0 -f strimzi/values.yaml          # watchNamespaces는 values 파일로 전달(--set 사용 안 함)
+  --version 1.1.0 -f strimzi-values.yaml          # watchNamespaces는 values 파일로 전달(--set 사용 안 함)
 
 # MySQL도 GitOps로 이동 — argocd/applications/mysql.yaml(wave -1, prune=false, 벤더 차트 cgv-mysql).
 #   mysql-secret은 sealed-secrets App(wave -2)이 선배달 → 수동 apply 게이트 불필요. 봉인·커밋은 root-app 전 필수(secrets/README.md).
@@ -116,7 +117,7 @@ helm upgrade --install strimzi strimzi/strimzi-kafka-operator -n data --create-n
 echo "[8/9] argocd"
 helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
 # --timeout 15m: 파드 5개가 서로 다른 이미지 4종(argocd·redis·haproxy 계열)을 받는다. 이 단계가 pull이 가장 많다.
-helm upgrade --install argocd argo/argo-cd -n argocd --create-namespace -f argocd/values.yaml --wait --timeout 15m \
+helm upgrade --install argocd argo/argo-cd -n argocd --create-namespace -f argocd-values.yaml --wait --timeout 15m \
   --version 10.1.4                              # 버전 핀
 
 echo "[9/9] argocd 준비 대기"

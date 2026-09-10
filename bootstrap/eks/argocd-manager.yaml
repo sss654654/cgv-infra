@@ -1,0 +1,42 @@
+# 허브(ArgoCD)가 이 클러스터를 부를 때 쓰는 신원. register.sh 가 EKS 에 apply 한다.
+#
+# IAM 인증을 안 쓰고 ServiceAccount 토큰을 쓰는 이유 — 허브가 집 k3s 에 있다.
+#   ArgoCD 의 EKS IAM 인증(awsAuthConfig)은 ArgoCD 파드가 AWS 자격을 가져야 하는데,
+#   k3s 파드에는 IRSA 같은 경로가 없다. 장기 키를 파드에 넣는 것 말고는 방법이 없어 토큰으로 간다.
+#
+# 이름은 argocd cluster add 가 만드는 것과 같게 둔다(argocd-manager · kube-system).
+#   스크립트가 막히면 그 명령으로 대신할 수 있고, 그때 무엇이 생기는지 이름으로 알아볼 수 있다.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-manager
+  namespace: kube-system
+---
+# cluster-admin 이다. 허브가 이 클러스터에 CRD · ClusterRole · Namespace 를 만든다.
+#   무엇을 어디에 만들 수 있는지는 이 RBAC 가 아니라 허브의 AppProject
+#   (destinations · clusterResourceWhitelist)가 가른다 — dev 의 in-cluster 와 같은 구조다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argocd-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: argocd-manager
+    namespace: kube-system
+---
+# 쿠버네티스 1.24 부터 ServiceAccount 를 만들어도 토큰 Secret 이 저절로 생기지 않는다.
+#   이 타입의 Secret 을 만들면 토큰 컨트롤러가 token · ca.crt 를 채운다.
+#   만료가 없는 토큰이다. 클러스터를 지우면 같이 사라진다.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-manager-token
+  namespace: kube-system
+  annotations:
+    kubernetes.io/service-account.name: argocd-manager
+type: kubernetes.io/service-account-token
