@@ -35,17 +35,18 @@ spec:
                 - { name: booking,  image: cgv/cgv-onprem/booking }
                 - { name: frontend, image: cgv/cgv-onprem/frontend }
           # 환경 축 — 한 줄이 곧 환경의 정의다.
-          #   env      값 파일 폴더 이름
-          #   server   배포 대상 클러스터
-          #   registry 이 클러스터가 이미지를 받아오는 곳
-          # registry 를 envs/ 값 파일이 아니라 여기 두는 이유:
-          #   image-updater 가 폴링할 주소는 ApplicationSet 이 애노테이션을 만들 때 정해지는데,
+          #   env        값 파일 폴더 이름
+          #   server     배포 대상 클러스터
+          #   registry   이 클러스터가 이미지를 받아오는 곳
+          #   allowTags  이 환경이 배포 후보로 볼 태그 형식
+          # registry 와 allowTags 를 envs/ 값 파일이 아니라 여기 두는 이유:
+          #   image-updater 가 쓰는 값은 ApplicationSet 이 애노테이션을 만들 때 정해지는데,
           #   그 시점에 Helm 값 파일은 아직 읽히지 않는다(평가 주체가 다르다).
-          #   양쪽에 적으면 같은 주소가 두 곳에 생기므로, 여기를 정본으로 두고
+          #   양쪽에 적으면 같은 값이 두 곳에 생기므로, 여기를 정본으로 두고
           #   렌더에는 helm.parameters 로 내려보낸다.
           - list:
               elements:
-                - { env: dev, server: "https://kubernetes.default.svc", registry: "192.168.0.167:5050" }
+                - { env: dev, server: "https://kubernetes.default.svc", registry: "192.168.0.167:5050", allowTags: "^(dev|main)-[0-9]+-[0-9a-f]+$" }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -56,8 +57,16 @@ spec:
         # newest-build: 빌드 시각 기준 최신. 태그(dev-<파이프라인번호>-<해시>)가 사전순 정렬이
         #   안 되는 형태라(dev-9 > dev-15) 시각으로 고른다.
         argocd-image-updater.argoproj.io/app.update-strategy: newest-build
-        # dev 계열만 후보로. MR 파이프라인의 ci-pipeline-* 나 손으로 올린 태그는 배포 후보가 아니다.
-        argocd-image-updater.argoproj.io/app.allow-tags: 'regexp:^dev-[0-9]+-[0-9a-f]+$'
+        # 이 환경이 후보로 볼 태그 형식. MR 파이프라인의 태그나 손으로 올린 태그는 배포 후보가 아니다.
+        # 환경 축이 준다 — 환경마다 보는 레지스트리가 다르고 태그 형식도 다르기 때문이다.
+        #   dev 는 GitLab 레지스트리의 <브랜치>-<파이프라인>-<커밋> 을 본다.
+        #   다른 환경은 배포용 레지스트리의 커밋 해시만 보게 되므로 형식 자체가 갈린다
+        #   → 한 환경의 태그가 다른 환경으로 새어 들어갈 경로가 구조적으로 없다.
+        # ⚠ 전환 기간에는 dev 가 (dev|main) 둘 다 받는다. cgv-onprem 의 trunk 를 dev 에서 main 으로
+        #   옮기는 중이라, 좁혀 두면 옮긴 직후 새 태그를 못 잡아 배포가 조용히 멈춘다
+        #   (2026-09-07 에 Application 이름 변경으로 namePattern 이 안 맞아 사흘 멈춘 적이 있다).
+        #   옮기고 확인한 뒤 ^main- 으로 좁힌다.
+        argocd-image-updater.argoproj.io/app.allow-tags: 'regexp:{{.allowTags}}'
         # 발견한 태그를 어느 헬름 값에 쓸지 — 환경 값 파일의 image.tag 한 줄.
         argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
         # image-name 은 끌 수 없다. 비워 두거나 생략해도 updater 가 기본값으로 이미지 이름을 쓴다.
