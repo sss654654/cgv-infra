@@ -54,8 +54,8 @@ spec:
         argocd.argoproj.io/sync-wave: "3"   # 미들웨어(-1)·관측(0~1) 뒤에 앱
         # ── image updater — 이 App의 이미지를 감시하고 새 태그를 git에 되쓴다 ──
         argocd-image-updater.argoproj.io/image-list: 'app={{.registry}}/{{.image}}'
-        # newest-build: 빌드 시각 기준 최신. 태그(dev-<파이프라인번호>-<해시>)가 사전순 정렬이
-        #   안 되는 형태라(dev-9 > dev-15) 시각으로 고른다.
+        # newest-build: 빌드 시각 기준 최신. 태그(main-<파이프라인번호>-<해시>)가 사전순 정렬이
+        #   안 되는 형태라(main-9 > main-15) 시각으로 고른다.
         argocd-image-updater.argoproj.io/app.update-strategy: newest-build
         # 이 환경이 후보로 볼 태그 형식. MR 파이프라인의 태그나 손으로 올린 태그는 배포 후보가 아니다.
         # 환경 축이 준다 — 환경마다 보는 레지스트리가 다르고 태그 형식도 다르기 때문이다.

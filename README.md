@@ -103,7 +103,7 @@ kubelet이 파드를 축출했다 — 애플리케이션 한계가 아니라 물
 - **OPNsense = 별도 VM**(k3s 노드 아님) — `vmbr0`·`vmbr1` 양쪽에 NIC을 하나씩 가진 유일한 기계이고, 격리망의 게이트웨이·방화벽·DNS·WireGuard 종단을 겸한다.
 - **GitLab = 데스크탑**(클러스터 밖, Docker) — ArgoCD가 읽는 저장소가 여기다(아래 [GitOps 원본](#gitops-원본--gitlab)).
   GitHub에는 push 미러로 공개 사본만 나간다. 노드에서 이 주소(`:8929`·`:5050`)로 나가는 길은 OPNsense 허용 규칙 두 줄이다.
-- **CI 러너·Container Registry = 같은 데스크탑 GitLab.** 파이프라인이 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) 이미지를 레지스트리에 올리고, 각 노드의 `registries.yaml`이 그 레지스트리를 신뢰한다.
+- **CI 러너·Container Registry = 같은 데스크탑 GitLab.** 파이프라인이 불변 태그(`main-<파이프라인번호>-<커밋해시>`) 이미지를 레지스트리에 올리고, 각 노드의 `registries.yaml`이 그 레지스트리를 신뢰한다.
 
 ---
 
@@ -526,7 +526,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
   ```
   대신 좌석 오염은 주기 초기화(CronJob)가 받고 대량 트래픽은 엣지가 앞에서 받는다. 이 결정은 **엣지를 우회할 수 없다는 전제** 위에 서고, 그 전제는 OPNsense의 출발지 제한이 지킨다.
 - **관리 UI에 다중 인증 없음** — Grafana·ArgoCD는 443에서 빠져 있고 WireGuard 터널로만 닿지만, 터널 안에서는 계정 비밀번호 하나가 방어선이다.
-- **stg/prd 이미지 승격 경로 미구현** — dev는 CI가 만드는 불변 태그(`dev-<파이프라인번호>-<커밋해시>`) + image-updater write-back으로 전환 완료. stg/prd로 이미지를 올리는 경로는 아직 없다.
+- **stg 배포 대상 클러스터 없음** — dev는 CI가 만드는 불변 태그(`main-<파이프라인번호>-<커밋해시>`) + image-updater write-back으로 전환 완료. stg로 이미지를 올리는 경로는 만들어 검증했다(`publish-ecr` 수동 job이 같은 이미지를 커밋 해시 이름으로 ECR에 올린다). 그 이미지를 받을 클러스터가 아직 없다.
 - **sealed-secrets 개인키 자동 백업 미구현** — 수동 반출 사본은 확보(2026-08-09). 재설치 절차에 반출 단계가 코드로 없어, 잊으면 Git의 봉인본 전체가 복호화 불가다.
 
 ---
@@ -742,7 +742,7 @@ kubeconfig 탐색   $KUBECONFIG → /etc/rancher/k3s/k3s.yaml → ~/.kube/config
 | **[7부](https://zed6740.tistory.com/215)**<br>플랫폼 부트스트랩 | kubelet 자원 예약 3줄<br>`install.sh` 9단계 완주<br>SealedSecret 10종 봉인<br>`root-app.sh`로 GitOps 인계<br>MetalLB → Traefik `.240` · 파드 69개 | `allocatable = Capacity − 예약 − eviction`<br>requests vs limits — 뭐가 cgroup에 걸리나<br>손에 남길 것의 기준 셋<br>PodSecurity 3수준과 restricted 4줄<br>비대칭 키 봉인 · 개인키 분실의 의미 |
 | **[8부](https://zed6740.tistory.com/217)**<br>관측 파이프라인 | 사본 진단 — `:6443` = `:10250` 179,225줄<br>apiserver scrape 제거 · `job=k3s-server`<br>시리즈 상한 150k → 300k · ingester 2Gi<br>3축 12패널 대시보드 as-code<br>자원값 3건 교정(전부 `exit 137`) | 스크레이프 · 시리즈 · 카디널리티<br>Mimir 쓰기 / 읽기 경로<br>인제스터만 HA가 필요한 이유<br>head 절단 vs 블록 생성<br>상한 포화와 OOMKilled의 감별<br>실패 카운터 ≠ 고장 |
 | **[9부](https://zed6740.tistory.com/218)**<br>GitLab 세우기 | GitLab CE 기동 — 최소 4GB를 2.7GiB로<br>저장소 이전 · GitHub push 미러<br>보호 브랜치 · 스쿼시 + FF<br>deploy token 봉인 · `repoURL` 전환<br>AppProject 울타리 · ArgoCD self-managed | push형 vs pull형 CD<br>webhook은 설정 이전에 네트워크 문제<br>GitLab 부품 9개와 요청의 길<br>머지 3요소 — Merge commit · FF · 스쿼시<br>기계 자격 5종<br>부트스트랩 순환 |
-| **[10부](https://zed6740.tistory.com/221)**<br>CI 와 CD | 그룹 러너(docker executor) · Container Registry<br>5단 파이프라인 — check·test·build·scan·publish<br>불변 태그 `dev-<파이프라인>-<커밋>`<br>노드 `registries.yaml` · image-updater write-back<br>캐시 정비 — 파이프라인 6:06 → 0:46 | CI 게이트와 빈 단계의 값<br>불변 태그 vs latest — 무엇이 롤백을 만드나<br>러너 캐시 3층(볼륨·레이어·BuildKit)<br>write-back이 GitOps 정본을 지키는 방식 |
+| **[10부](https://zed6740.tistory.com/221)**<br>CI 와 CD | 그룹 러너(docker executor) · Container Registry<br>5단 파이프라인 — check·test·build·scan·publish<br>불변 태그 `dev-<파이프라인>-<커밋>`<br>노드 `registries.yaml` · image-updater write-back<br>캐시 3층 도입 — 파이프라인 10:15 → 1:54 | CI 게이트와 빈 단계의 값<br>불변 태그 vs latest — 무엇이 롤백을 만드나<br>러너 캐시 3층(볼륨·레이어·BuildKit)<br>write-back이 GitOps 정본을 지키는 방식 |
 | **[11부](https://zed6740.tistory.com/222)**<br>앱 검증과 시뮬레이터 | 앱 흐름 문서화 · E2E 전 분기 검증<br>프론트를 대기열 시뮬레이터로 재작성<br>정원·좌석 테스트 → CI test 게이트<br>NetworkPolicy — 기본 차단 + 지정 출처<br>`ADMIN_TOKEN` 초기화 API | 폴링 대기열의 상태 전이<br>API 계약을 게이트로 남기는 조건<br>NetworkPolicy는 겹치면 허용의 합집합<br>라벨 셀렉터가 못 막는 것 |
 | **[13-1부](https://zed6740.tistory.com/226)**<br>네트워크 격리 | 공개 전 구성의 공백 점검<br>OPNsense VM · `vmbr1` 격리망<br>노드 3대를 `10.0.0.11-13`으로 이전<br>WireGuard 관리 터널 · 임시 통로 폐쇄<br>도메인 구입 · DDNS로 공인 IP 추적 | 물리 NIC 유무가 격리를 만든다<br>NAT 두 겹과 목적지 변환<br>캡슐화 — 패킷을 패킷에 넣는다<br>출발지 주소 대신 공개키 서명<br>이전이 드러낸 옛 주소들 |
 | **[13-2부](https://zed6740.tistory.com/228)**<br>클러스터 내부 보안과 감시 | NetworkPolicy — app 인·아웃 · observability<br>API 서버 권한을 실제 사용 범위로<br>읽기 전용 자격 신설<br>booking의 MySQL 계정을 전용 계정으로<br>Redis 계측이 명령 인자를 안 싣게<br>하이퍼바이저 판 · 알림 · 야간 스케줄 | 정책이 판정하는 방식<br>세그먼테이션과 인증은 다른 층<br>누가 무엇을 할 수 있나를 세는 법<br>node-exporter가 재는 층 |
