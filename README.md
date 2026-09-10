@@ -446,8 +446,8 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
   ```
   기본 차단 위에 지정 출처만 여는 구조다. mysql·redis 차트가 만들던 넓은 정책(`allowExternal: true`라 `from` 절 없이 렌더)은 껐다 — NetworkPolicy는 겹치면 허용의 합집합이라, 넓은 쪽이 남아 있으면 좁은 정책을 더해도 좁아지지 않는다. 라벨 없는 파드에서 접속이 막히는 것을 차단 실증으로 확인했다.
   ⚠️ **세그먼테이션은 인증이 아니다.** 정책은 라벨로 상대를 가르므로, 그 라벨을 달 수 있는 쪽은 통과한다(라벨만 단 파드가 통과하는 것을 실측으로 확인). 신원 확인은 mTLS·SASL의 몫이고 지금은 없다.
+- **보안 헤더는 앱이 낸다** — HSTS(3600초) · `nosniff` · `X-Frame-Options: DENY`를 frontend의 nginx가 직접 싣는다. 프록시(Traefik 미들웨어)로 붙이던 것을 앱으로 내렸다 — 프록시가 바뀌는 환경에서는 관리형 로드밸런서가 임의 응답 헤더를 못 붙이는 것이 많아, 프록시가 내면 그때 조용히 사라진다. 두 곳이 같이 내던 동안은 앱 쪽이 잘못돼도 프록시가 덮어 드러나지 않았다.
 - **공개 경로 앞단** ([public-guard](manifests/public-guard/))
-  - `security-headers` — HSTS(3600초) · `nosniff` · `X-Frame-Options: DENY`를 Traefik 미들웨어로 붙인다.
   - `admin-api-deny` — 초기화 API(`/api/admin`·`/api/admission/reset`)를 **443에서만** 끊는다. 실제로 부르는 것은 클러스터 안의 CronJob 하나이고 그것은 Service를 직접 부르므로, 밖에서 살아 있을 이유가 없다. 80에는 걸지 않아 격리망 안에서 손으로 부르는 경로는 남는다.
 - **관리 UI가 443에 없다** — 두 Ingress를 `web` 엔트리포인트에만 붙여 WireGuard 터널로만 닿게 했다. 엔트리포인트를 안 적으면 왜 443에 붙는지는 위 [네트워크](#네트워크)에 있다.
 - **SealedSecret 17종** — 암호는 kubeseal로 봉인하고 암호문만 Git에 둔다([docs/시크릿-계약](docs/시크릿-계약.md)).
