@@ -46,7 +46,7 @@ spec:
           #   렌더에는 helm.parameters 로 내려보낸다.
           - list:
               elements:
-                - { env: dev, server: "https://kubernetes.default.svc", registry: "192.168.0.167:5050", allowTags: "^(dev|main)-[0-9]+-[0-9a-f]+$" }
+                - { env: dev, server: "https://kubernetes.default.svc", registry: "192.168.0.167:5050", allowTags: "^main-[0-9]+-[0-9a-f]+$" }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -62,10 +62,6 @@ spec:
         #   dev 는 GitLab 레지스트리의 <브랜치>-<파이프라인>-<커밋> 을 본다.
         #   다른 환경은 배포용 레지스트리의 커밋 해시만 보게 되므로 형식 자체가 갈린다
         #   → 한 환경의 태그가 다른 환경으로 새어 들어갈 경로가 구조적으로 없다.
-        # ⚠ 전환 기간에는 dev 가 (dev|main) 둘 다 받는다. cgv-onprem 의 trunk 를 dev 에서 main 으로
-        #   옮기는 중이라, 좁혀 두면 옮긴 직후 새 태그를 못 잡아 배포가 조용히 멈춘다
-        #   (2026-09-07 에 Application 이름 변경으로 namePattern 이 안 맞아 사흘 멈춘 적이 있다).
-        #   옮기고 확인한 뒤 ^main- 으로 좁힌다.
         argocd-image-updater.argoproj.io/app.allow-tags: 'regexp:{{.allowTags}}'
         # 발견한 태그를 어느 헬름 값에 쓸지 — 환경 값 파일의 image.tag 한 줄.
         argocd-image-updater.argoproj.io/app.helm.image-tag: image.tag
