@@ -1,7 +1,4 @@
-# kube-state-metrics stg 환경값 — 놓일 노드만 다르다.
+# kube-state-metrics stg 환경값 — 없다.
 #
-# 어느 환경이든 같은 API 를 읽고 같은 지표를 낸다. 수집 설정은 dev 와 같다.
-# 관측 노드에만 놓는다 — 노드그룹이 taint 로 앱 파드를 막고(cgv-terraform modules/eks),
-#   관측 파드는 toleration 으로 들어가 nodeSelector 로 거기에만 선다. 이유는 mimir.yaml 머리말.
-nodeSelector: { workload: observability }
-tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
+# 어느 환경이든 같은 API 를 읽고 같은 지표를 낸다. dev 와 같은 값으로 돈다.
+{}

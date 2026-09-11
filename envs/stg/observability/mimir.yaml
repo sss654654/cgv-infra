@@ -34,47 +34,8 @@ serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::527170477076:role/cgv-stg-obs-s3
 
-# ---------- 관측 노드에 놓는다 ----------
-# 관측 노드그룹(m5.xlarge 1대)에 taint workload=observability:NoSchedule 가 걸려 있다
-#   (cgv-terraform modules/eks). 앱 파드를 막는 장치라, 관측 파드는 toleration 으로 들어가고
-#   nodeSelector 로 거기에만 선다. toleration 만 있으면 앱 노드에도 뜨고, nodeSelector 만 있으면
-#   taint 에 막혀 Pending 이다 — 둘이 한 쌍이다.
-# 가르는 이유 — 3만 판에서 앱과 한 노드에 있던 Mimir · Loki · Tempo 가 노드 메모리 압박으로 같이
-#   재시작해, 무너지는 순간의 지표가 안 남았다. 재려던 그 순간이 가장 안 보이는 구조였다.
-# 이 차트는 컴포넌트마다 따로 받는다. 켜 둔 여덟 전부에 준다.
-
-distributor:
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
 ingester:
   replicas: 1
-  # gp3 StorageClass 는 EBS CSI 애드온이 안 만든다 — 허브가 cluster-stg 로 넣는다(manifests/storage-ebs).
+  # gp3 StorageClass 는 EBS CSI 애드온이 안 만들어서 파트 7 스크립트가 넣는다.
   persistentVolume: { storageClass: gp3, size: 10Gi }
   # anti-affinity 를 안 건다. 대수가 하나라 흩을 대상이 없다.
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
-querier:
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
-query_frontend:
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
-query_scheduler:
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
-store_gateway:
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
-compactor:
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
-gateway:
-  nodeSelector: { workload: observability }
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]

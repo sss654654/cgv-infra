@@ -18,31 +18,10 @@ k3s 쪽이 9단계인데 여기가 둘인 이유는 [../README.md](../README.md)
 1  terraform apply                               cgv-terraform/envs/stg
 2  aws eks update-kubeconfig --region ap-northeast-2 --name cgv-stg --alias cgv-stg
 3  HUB_CONTEXT=<허브 컨텍스트> ./register.sh        ← 이 폴더
-4  stg 를 켜는 커밋 → main                        아래 「stg 를 켜는 커밋」
-5  허브가 배달한다 (sync-wave 순)
-     -5 AppProject
-     -4 네임스페이스 · gp3 StorageClass · prometheus CRD      cluster-stg · prometheus-crds-stg
-     -3 Strimzi · ALB Controller                              strimzi-stg · alb-controller-stg
-     -1 Kafka                                                 kafka-stg
-      0 NetworkPolicy                                         netpol-stg
-      1 관측 (LGTM · Grafana · Alloy · exporter 둘 · CloudWatch exporter)
-      2 대시보드 넷                                            dashboards-stg
-      3 앱 셋                                                  queue-stg · booking-stg · frontend-stg
-6  ./secrets.sh                                  ← 이 폴더.  네임스페이스가 생길 때까지 기다린다
+4  허브가 stg 를 가리키는 Application 을 sync 한다
+     네임스페이스(PSA 라벨) → CRD · 오퍼레이터 · StorageClass → 관측 · 앱    sync-wave 순
+5  ./secrets.sh                                  ← 이 폴더.  네임스페이스가 생길 때까지 기다린다
 ```
-
-### stg 를 켜는 커밋
-
-stg 를 가리키는 선언(위 5의 Application 과 AppProject 의 stg 자리)은 대상 주소가 `https://STG_EKS_ENDPOINT` 로 적혀 있다. EKS API 주소는 클러스터를 만들어야 정해져서, 그날 이 자리를 바꾸고 main 에 넣는다. 주소가 없는 채로 main 에 있으면 허브에 대상 없는 Application 이 오류로 떠 있게 된다.
-
-```bash
-EKS=$(kubectl config view --context cgv-stg --minify -o jsonpath='{.clusters[0].cluster.server}')
-grep -rl 'https://STG_EKS_ENDPOINT' argocd | xargs sed -i "s#https://STG_EKS_ENDPOINT#${EKS}#g"
-grep -rn STG_EKS_ENDPOINT argocd       # 아무것도 안 나와야 한다
-grep -rn PLACEHOLDER envs/stg          # 그날 값 — terraform output handoff · expected 로 채운다
-```
-
-wave 는 만드는 순서만 정한다. 허브에 Application 헬스 체크 설정이 없어서 앞 wave 의 sync 가 끝나기를 기다리지 않는다. 그래서 stg Application 에는 전부 `retry` 가 있다 — 앞의 것이 덜 선 채로 먼저 돌다 실패하면(ServiceMonitor 종류를 모른다 · 네임스페이스가 없다) 다시 시도한다. 자동 sync 는 실패한 커밋을 스스로 다시 시도하지 않는다.
 
 `--alias` 를 주는 이유 — 안 주면 컨텍스트 이름이 클러스터 ARN 이 된다. 두 스크립트는 `cgv-stg` 를 기본으로 찾는다(`EKS_CONTEXT` 로 바꿀 수 있다).
 
@@ -100,17 +79,9 @@ EKS                                      허브 (argocd ns)
 ## 지울 때
 
 ```
-1  kubectl --context <허브> -n argocd delete secret cluster-cgv-stg
-     허브가 stg 에 닿지 못하게 된다 — 다음 단계에서 지운 것을 되살리는 주체가 없어진다
-2  kubectl --context cgv-stg delete namespace app data observability observability-host
-     Ingress 가 지워지며 ALB Controller(kube-system)가 자기가 만든 ALB · 대상그룹을 지운다
-     PVC 가 지워지며 EBS CSI 가 볼륨을 지운다(gp3 의 reclaimPolicy Delete)
-     → 콘솔에서 ALB 와 EBS 볼륨이 없어진 것을 확인한다
+1  stg Application 을 지운다                  ALB Controller 가 자기가 만든 ALB 를 먼저 정리한다
+2  kubectl --context <허브> -n argocd delete secret cluster-cgv-stg
 3  terraform destroy
-4  stg 를 켠 커밋을 되돌린다(git revert).  허브에 대상 없는 stg Application 이 오류로 남아 있다
-     곧 다시 켤 거면 되돌리지 않고 그날 주소만 바꿔도 된다
 ```
 
-**stg Application 을 지우는 것으로는 정리가 안 된다.** AppSet 이 `preserveResourcesOnDeletion` 이고 root 직속 Application 에는 finalizer 가 없어서, Application 이 지워져도 클러스터의 Ingress · PVC 는 남는다. 그래서 2 에서 클러스터에 직접 지운다.
-
-2 를 건너뛰면 ALB 와 EBS 볼륨이 Terraform state 밖에 남는다. ALB 의 ENI 가 서브넷에 물려 있으면 3 이 `DependencyViolation` 으로 막히고, 볼륨은 지워질 때까지 요금이 붙는다.
+1 을 건너뛰면 ALB 가 state 밖에 남아 서브넷 삭제가 막힐 수 있다. 2 를 1 보다 먼저 하면 stg Application 이 대상 클러스터를 잃어 지워지지 않고 남는다.

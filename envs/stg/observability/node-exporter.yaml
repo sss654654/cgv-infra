@@ -1,6 +1,4 @@
 # node-exporter stg 환경값 — 없다.
 #
 # 노드가 EC2 로 바뀌어도 읽는 곳(/proc·/sys)과 내는 지표가 같다.
-# 관측 노드의 taint(workload=observability:NoSchedule)도 따로 적을 것이 없다 — 차트 기본 toleration 이
-#   NoSchedule 을 전부 넘겨서(operator: Exists) 관측 노드를 포함한 모든 노드에 하나씩 뜬다.
 {}

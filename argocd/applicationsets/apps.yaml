@@ -1,6 +1,7 @@
 # 앱 ApplicationSet — cgv-app 차트 하나로 queue · booking · frontend Application 을 만든다.
 # 축이 둘이다: 서비스(대상) × 환경. matrix 제너레이터가 둘을 곱한다.
-#   환경 목록이 dev · stg 둘이라 Application 은 6개다(queue-dev … frontend-stg).
+#   지금 환경 목록에 dev 한 줄뿐이라 Application 은 3개다. stg 클러스터가 생기면
+#   환경 목록에 한 줄을 더해 6개가 된다 — 이 파일 말고 고칠 곳이 없다.
 #
 # 서비스 목록을 디렉터리 순회에서 명시 목록으로 바꿨다.
 #   순회 방식은 charts/apps/* 아래 폴더가 있으면 앱으로 쳤고, 그래서 공통 틀 cgv-app 을
@@ -46,9 +47,6 @@ spec:
           - list:
               elements:
                 - { env: dev, server: "https://kubernetes.default.svc", registry: "192.168.0.167:5050", allowTags: "^main-[0-9]+-[0-9a-f]+$" }
-                # stg 는 ECR 에서 커밋 해시만 본다 — CI 의 publish-ecr 이 $CI_COMMIT_SHORT_SHA(8자)로 올린다.
-                #   server 는 켜는 날 EKS API 주소로 바꾼다(bootstrap/eks/README.md).
-                - { env: stg, server: "https://STG_EKS_ENDPOINT", registry: "527170477076.dkr.ecr.ap-northeast-2.amazonaws.com", allowTags: "^[0-9a-f]{8}$" }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -110,9 +108,3 @@ spec:
         automated:
           prune: true
           selfHeal: true
-        # wave 는 만드는 순서만 정한다 — 허브에 Application 헬스 체크 설정이 없어서 앞 wave(CRD ·
-        #   Kafka)의 sync 가 끝나기를 기다리지 않는다. 빈 클러스터에서 먼저 돌다 ServiceMonitor 종류를
-        #   모른다고 실패하면, 자동 sync 는 같은 커밋을 다시 시도하지 않는다. 그래서 여기서 다시 시도한다.
-        retry:
-          limit: 10
-          backoff: { duration: 20s, factor: 2, maxDuration: 3m }

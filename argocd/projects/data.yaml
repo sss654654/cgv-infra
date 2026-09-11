@@ -19,10 +19,6 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: data
-    # stg(EKS) — kafka-stg 하나. MySQL · Redis 는 stg 에서 관리형(RDS · ElastiCache)이라 안 온다.
-    #   켜는 날 EKS API 주소로 바꾼다.
-    - server: https://STG_EKS_ENDPOINT
-      namespace: data
   # 미들웨어는 cluster-scoped 리소스를 만들지 않는다. StatefulSet · Service · PVC · Secret ·
   #   Kafka CR · PodMonitor 는 전부 네임스페이스 범위다. CRD 는 bootstrap 이 미리 세운다.
   #   여기서 막히면 ArgoCD 가 "resource not permitted in project" 로 명시적으로 실패한다.

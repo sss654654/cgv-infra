@@ -127,4 +127,4 @@ EOF
 echo
 echo "등록했다. 허브는 이 클러스터를 가리키는 Application 이 생길 때 처음 연결한다."
 echo "  확인: kubectl --context ${HUB_CONTEXT} -n argocd get secret -l argocd.argoproj.io/secret-type=cluster"
-echo "  지울 때: kubectl --context ${HUB_CONTEXT} -n argocd delete secret cluster-${CLUSTER_NAME}  (순서는 README 「지울 때」)"
+echo "  지울 때: stg Application 을 먼저 지우고 → kubectl --context ${HUB_CONTEXT} -n argocd delete secret cluster-${CLUSTER_NAME}"

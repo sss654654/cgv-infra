@@ -14,12 +14,6 @@
 # 남는 것은 dev 와 같다 — 파드 로그 · 쿠버네티스 이벤트 · ServiceMonitor·PodMonitor ·
 #   kubelet · cAdvisor · Mimir remote_write · OTLP 수신.
 
-# DaemonSet 이라 모든 노드에 하나씩 떠야 그 노드의 파드 로그를 읽는다.
-#   관측 노드에는 taint(workload=observability:NoSchedule)가 있어서 toleration 이 없으면 거기만 빠지고,
-#   그러면 Mimir · Loki · Tempo 자신의 로그가 안 모인다. nodeSelector 는 주지 않는다 — 전 노드다.
-controller:
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
-
 alloy:
   configMap:
     create: true

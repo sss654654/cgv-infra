@@ -27,13 +27,6 @@ spec:
       namespace: data
     - server: https://kubernetes.default.svc
       namespace: observability
-    # stg(EKS). 켜는 날 EKS API 주소로 바꾼다.
-    - server: https://STG_EKS_ENDPOINT
-      namespace: app
-    - server: https://STG_EKS_ENDPOINT
-      namespace: data
-    - server: https://STG_EKS_ENDPOINT
-      namespace: observability
   namespaceResourceWhitelist:
     - group: networking.k8s.io
       kind: NetworkPolicy
