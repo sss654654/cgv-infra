@@ -54,14 +54,11 @@ ingress:
     #   이 값이 있어야 ALB → 파드 경로가 열린다.
     alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
 
-    # ★ 미해결 — 이 경로가 대상그룹 셋에 다 걸린다.
-    #   한 Ingress 가 세 서비스로 가르는 구조라(아래 paths) 대상그룹이 셋 생기는데,
+    # 대상그룹 헬스체크 경로. 이 Ingress 가 세 서비스로 가르므로(아래 paths) 대상그룹이 셋 생기고,
     #   준비 상태를 보는 경로가 서비스마다 다르다:
     #     frontend /   ·   queue /health/ready   ·   booking /actuator/health/readiness
-    #   "/" 로 두면 뒤의 둘이 unhealthy 로 빠져 그 경로만 503 이 된다.
-    #   서비스별로 가르는 수단이 있는지 확인해야 한다 → 03 의 5절 5번.
-    #   ★ Service 별 애노테이션이 답이라면 차트 손질이 선행된다 —
-    #     charts/apps/cgv-app/templates/service.yaml 에 annotations 필드가 없다.
+    #   여기 적은 / 는 frontend 몫이다. queue·booking 은 각자 Service 애노테이션으로 자기 경로를 준다
+    #   (envs/stg/queue.yaml · booking.yaml). ALB Controller 는 Service 쪽을 Ingress 쪽보다 우선한다.
     alb.ingress.kubernetes.io/healthcheck-path: /
 
   # 경로 규칙은 apps/frontend 의 identity 값을 그대로 쓴다.

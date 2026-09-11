@@ -11,6 +11,13 @@ image:
 # gitlab-registry 가 그대로 내려온다.
 imagePullSecrets: []
 
+# ALB 대상그룹 헬스체크 경로. 한 Ingress(envs/stg/frontend.yaml)가 세 서비스로 가르고,
+#   Ingress 에 적은 / 는 frontend 의 준비 경로다. 이 값이 없으면 booking 대상그룹도 / 로 검사한다.
+#   readinessProbe 와 같은 경로다 — MySQL·Redis 가 안 닿으면 not-ready 가 되고 ALB 도 이 파드를 뺀다.
+service:
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
+
 replicaCount: 1
 strategy:
   type: Recreate

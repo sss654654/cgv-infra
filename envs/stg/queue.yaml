@@ -13,6 +13,14 @@ image:
 # 빈 배열로 덮지 않으면 apps/queue 의 gitlab-registry 가 그대로 내려온다.
 imagePullSecrets: []
 
+# ALB 대상그룹 헬스체크 경로. 한 Ingress(envs/stg/frontend.yaml)가 세 서비스로 가르고,
+#   Ingress 에 적은 / 는 frontend 의 준비 경로다. 대상그룹마다 자기 서비스의 준비 경로를 봐야
+#   준비 안 된 파드가 빠진다 — 이 값이 없으면 queue 대상그룹도 / 로 검사한다.
+#   readinessProbe 와 같은 경로라 종료 중(503)인 파드를 kubelet 과 ALB 가 같은 기준으로 뺀다.
+service:
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /health/ready
+
 resources:
   # request 는 실사용에 맞춘다 — 5만 기준 파드당 0.39 코어.
   #   3만 판이 무너진 원인이 request(320Mi)와 실사용(1.7GB)의 괴리였다.

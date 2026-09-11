@@ -38,6 +38,9 @@ service:
   enabled: true
   type: ClusterIP
   port: 80                  # 인스턴스가 앱 포트로 지정
+  # Service 에 붙는 애노테이션. 비어 있으면 필드 자체가 렌더되지 않는다.
+  #   ALB Controller 는 대상그룹 설정(헬스체크 경로 등)을 여기서 읽고, Ingress 의 같은 애노테이션보다 우선한다.
+  annotations: {}
 
 # 메트릭 스크레이프 (ServiceMonitor/PodMonitor + Alloy).
 #  kind=ServiceMonitor : 본 앱 포트의 path를 긁음 (booking /actuator/prometheus).
