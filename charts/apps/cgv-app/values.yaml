@@ -127,7 +127,9 @@ ingress:
   tls: []
 
 migration:
-  enabled: false          # booking DDL none + 배포 Job (PreSync)
+  # 마이그레이션을 앱과 따로 PreSync Job 으로 돌리는 자리. booking 은 Flyway 를 앱 기동 때 돌려서 쓰지 않는다.
+  #   DDL 권한을 앱 계정(데이터 읽기 · 쓰기)과 나누게 되면(prd) 여기로 옮긴다 — 그때 DDL 권한은 Job 만 갖는다.
+  enabled: false
   command: []
 
 partOf: cgv

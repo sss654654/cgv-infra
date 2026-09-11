@@ -299,7 +299,7 @@ operator  Strimzi                  CR 을 감시할 주체가 먼저 있어야 �
   토픽을 선언으로 소유하는 이유 — 선언이 없으면 앱이 붙을 때 브로커가 파티션 1로 만들고, 파티션은 줄일 수 없어 그 값이 굳는다.
   - DLT는 쿠버네티스 객체 이름에 대문자를 못 써서(RFC 1123) `metadata.name: admissions-dlt` · `spec.topicName: admissions.DLT`로 나눠 적는다. 앱이 쓰는 이름은 `topicName` 쪽이다.
   - **브로커 `resources`는 `KafkaNodePool` 소관**이다. `Kafka.spec.kafka.resources`는 v1 스키마에 없어 서버가 거부한다.
-- **MySQL** — booking 확정 예매. 스키마 마이그레이션(Flyway)은 앱 코드 과제(#2), dev는 ddl-auto=update.
+- **MySQL** — booking 확정 예매. 스키마와 시드는 booking 의 Flyway 가 기동 때 적용한다(ddl-auto=validate). Flyway 도입 전 테이블이 있던 dev DB 는 V1 을 baseline 으로 기록했다.
   - `auth.username: cgvapp` — booking이 접속하는 계정. 권한이 `cgv` 데이터베이스 안으로 한정돼, 그 파드가 침해돼도 다른 데이터베이스·사용자 관리·`SHUTDOWN`·`FILE`에 닿지 않는다.
     ⚠️ 이 칸에 `root`를 넣으면 컨테이너가 `root user is already created`로 기동을 거부한다 — 그 칸은 root와 별개인 "추가로 만들 일반 유저"다.
   - `podManagementPolicy: OrderedReady`를 명시한다. 차트 기본값이 빈 문자열로 렌더되는데 서버는 기본값으로 채워 저장해서, 명시하지 않으면 git과 live가 영원히 달라 `OutOfSync`로 남는다.
