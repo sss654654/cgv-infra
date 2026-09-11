@@ -12,29 +12,44 @@ dex:
 notifications:
   enabled: false
 
-# applicationSet은 켜둔 채로 둔다 — argocd/applicationsets/ 3개(apps·observability·platform)를 이게 처리한다.
+# applicationSet은 켜둔 채로 둔다 — argocd/applicationsets/ 다섯(apps·data·manifests·observability·platform)을 이게 처리한다.
 # 차트 기본 resources가 빈 맵이라 그대로 두면 BestEffort로 떠서 메모리 압박 때 가장 먼저 evict된다.
 # 이게 죽으면 AppSet이 만드는 Application이 갱신되지 않는데 기존 App은 살아 있어 증상이 잘 안 보인다.
+#
+# 자원 산정의 출발점 — 14일 최대 working set(2026-09-11, Mimir 의 container_memory_working_set_bytes).
+#   그때 허브가 관리하던 것은 클러스터 하나 · Application 29개다. stg(EKS)를 켜면 클러스터가 둘,
+#   Application 이 47개가 된다(stg 18). 아래 셋은 그 차이를 받도록 다시 잡은 값이다.
+#   노드 request 는 이미 allocatable 의 86-93% 가 차 있어서(k3s-1 여유 361Mi) request 는 조금만,
+#   순간 부하는 limit 이 받게 한다.
+#
+# applicationSet — 14일 최대 123Mi. 상한 128Mi 의 96% 로, stg 전에도 이미 한도에 붙어 있었다.
+#   stg 를 켜면 AppSet 이 만드는 Application 이 17 → 28 개가 된다.
 applicationSet:
   resources:
-    requests: { cpu: 25m, memory: 64Mi }
-    limits:   { cpu: 100m, memory: 128Mi }
+    requests: { cpu: 25m, memory: 128Mi }
+    limits:   { cpu: 100m, memory: 256Mi }
 
 # 리소스 — 파드 5개(controller·server·repoServer·redis·applicationSet). evict 방지 목적.
-# controller는 App 전체의 라이브 상태 캐시를 들고 비교·적용을 돈다. App 19개 기준
-# limit 448Mi는 OOMKilled 루프(exit 137, 2026-07-28 실측) — repoServer와 같은 병.
+# controller 는 관리하는 클러스터마다 모든 객체의 라이브 상태를 캐시에 들고 비교·적용을 돈다.
+#   App 19개 때 limit 448Mi 는 OOMKilled 루프였다(exit 137, 2026-07-28 실측) — repoServer와 같은 병.
+#   14일 최대 597Mi(클러스터 하나 · App 29개). 캐시는 클러스터의 객체 수에 비례하는데 stg 의 객체 수는
+#   아직 못 쟀다 — dev 와 비슷하다고 보면 캐시가 두 배가 된다.
+#   → limit 1Gi → 1536Mi, GOMEMLIMIT 384MiB → 768MiB, request 384Mi → 512Mi.
 controller:
   resources:
-    requests: { cpu: 100m, memory: 384Mi }
-    limits:   { cpu: 500m, memory: 1Gi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits:   { cpu: 500m, memory: 1536Mi }
   # Go 런타임은 cgroup limit을 읽지 않는다 — 기본 GC 규칙(직전 살아있는 양의 두 배에서 회수)만으로는
   #   RSS가 살아있는 양(실측 127Mi)의 3배(359-487Mi)까지 부푼다. GC 헤드룸과 미반납 페이지 몫.
-  # GOMEMLIMIT 384MiB: 힙+고루틴 스택+런타임 메타의 목표. limit 1Gi 아래 여유를 두고 잡는다.
+  # GOMEMLIMIT: 힙+고루틴 스택+런타임 메타의 목표. limit 아래 여유를 두고 잡는다.
+  #   384MiB 일 때 RSS 최대가 597Mi 였다 — 힙 밖의 몫이 약 213Mi 다.
+  #   캐시가 두 배면 힙 목표도 두 배(768MiB)가 필요하고, RSS 최대는 768 + 213 = 약 981Mi 로 본다.
+  #   limit 1536Mi 가 그것을 받는다.
   # GOGC 50: 회수 지점을 살아있는 양의 1.5배로 내린다. 메모리를 줄이는 대신 GC CPU를 더 쓴다.
-  # 적용 후 24시간 + sync 폭풍 1회를 관측해 RSS가 내려오는지 확인하고 request를 재산정한다.
+  # stg 를 켠 날 kubectl top 과 14일 최대로 다시 본다.
   env:
     - { name: GOGC, value: "50" }
-    - { name: GOMEMLIMIT, value: "384MiB" }
+    - { name: GOMEMLIMIT, value: "768MiB" }
 server:
   # 이름으로 접근한다 — Traefik이 Host 헤더를 보고 이 서비스로 보낸다.
   # 이걸 켜기 전에는 port-forward가 유일한 경로였고, 외부에서 오는 요청(webhook)은 닿을 수 없었다.
@@ -61,11 +76,17 @@ server:
 # repoServer는 git을 읽어 매니페스트를 렌더하는 담당. root-app 인계 직후 App 19개의 차트를
 # 동시에 렌더하는데(mimir-distributed 포함), limit 256Mi로는 OOMKilled 루프에 빠져
 # sync 전체가 정체된다(2026-07-28 실측 — exit 137 반복). 렌더 동시성의 최대 부하 기준으로 상향.
+#
+# 새 커밋이 오면 Application 전부를 다시 렌더한다. 14일 최대 668Mi(App 29개).
+#   stg 를 켜면 같은 차트(mimir-distributed 등)를 stg 값으로 한 번 더 렌더해 동시 렌더가 29 → 47 이 된다.
+#   App 수에 비례한다고 보면 668 × 47 / 29 = 약 1083Mi — limit 1Gi 를 넘는다. → limit 1536Mi.
+#   request 는 그대로 둔다. 평소 47Mi 이고 스파이크는 커밋 직후 잠깐이라 예약을 올리지 않는다.
+#   그래도 넘으면 다음 손잡이는 reposerver.parallelism.limit(동시 렌더 수 상한)이다 —
+#   메모리를 App 수가 아니라 동시성으로 묶는다. 대신 커밋 뒤 반영이 늦어진다.
 repoServer:
   resources:
-    # 부하 판 실측 134Mi. 렌더 스파이크(App 19개 동시 갱신)는 limit 1Gi 가 받는다.
     requests: { cpu: 50m, memory: 192Mi }
-    limits:   { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: 500m, memory: 1536Mi }
 redis:
   resources:
     requests: { cpu: 10m, memory: 50Mi }

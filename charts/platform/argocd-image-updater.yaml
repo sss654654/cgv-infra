@@ -26,6 +26,15 @@ config:
       # 토큰 만료(12h) 전에 스크립트를 다시 부르게 하는 값. 여유를 두 시간 둔다.
       credsexpire: 10h
 
+# 자원. 없으면 BestEffort 라 노드 메모리 압박 때 가장 먼저 쫓겨난다 — 그러면 새 이미지가 git 에
+#   안 쓰여 배포 사이클이 조용히 멈춘다(ArgoCD 쪽은 Synced 그대로라 증상이 안 보인다).
+#   14일 최대 working set 96-118Mi(파드 셋, 2026-09-11 Mimir 조회).
+#   stg 를 켜면 폴링하는 레지스트리가 1 → 2(ECR), 대상 Application 이 3 → 6 이 되고,
+#   ECR 토큰을 받는 aws CLI 가 이 컨테이너 안에서 10시간마다 뜬다. 그 몫을 limit 이 받는다.
+resources:
+  requests: { cpu: 10m, memory: 128Mi }
+  limits:   { cpu: 200m, memory: 384Mi }
+
 # ECR 자격. 액세스 키를 파드 환경변수로 넣는다 — 키 이름이 곧 환경변수 이름이라
 # aws CLI가 그대로 집어 간다. 이 Secret은 SealedSecret(manifests/secrets/image-updater-ecr.yaml)에서 온다.
 extraEnvFrom:
