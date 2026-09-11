@@ -1,0 +1,25 @@
+# 업스트림 차트 목록 — ArgoCD 는 이 차트들을 원래 저장소가 아니라 GitLab 레지스트리의 사본에서 받는다.
+#   사본 위치: 192.168.0.167:5050/cgv/cgv-infra/charts/<차트>:<버전>  (OCI)
+#   이 파일이 바뀐 파이프라인에서 CI 의 mirror:charts 가 없는 버전만 원래 저장소에서 받아 올린다.
+#   CI 의 template:render-upstream 은 ArgoCD 파일(applicationsets · applications)의 버전이
+#   여기와 같은지 먼저 본다 — 버전을 올릴 때는 두 곳을 같이 고친다.
+#   이유와 순서: docs/구조-기준.md "업스트림 차트를 받는 방식".
+#
+# 차트                                        버전      원래 저장소
+argo-cd                                       10.1.4    https://argoproj.github.io/argo-helm
+argocd-image-updater                          1.2.4     https://argoproj.github.io/argo-helm
+metallb                                       0.16.1    https://metallb.github.io/metallb
+traefik                                       41.0.2    https://traefik.github.io/charts
+loki                                          18.5.0    https://grafana-community.github.io/helm-charts
+mimir-distributed                             6.1.0     https://grafana.github.io/helm-charts
+tempo                                         1.24.4    https://grafana.github.io/helm-charts
+grafana                                       10.5.15   https://grafana.github.io/helm-charts
+alloy                                         1.10.1    https://grafana.github.io/helm-charts
+kube-state-metrics                            7.8.1     https://prometheus-community.github.io/helm-charts
+prometheus-node-exporter                      4.56.1    https://prometheus-community.github.io/helm-charts
+minio                                         5.4.0     https://charts.min.io/
+# stg 에만 있는 것 — Application 은 stg 를 켜는 커밋에 있다. 사본은 미리 올려 둔다.
+aws-load-balancer-controller                  1.13.4    https://aws.github.io/eks-charts
+prometheus-operator-crds                      30.0.1    https://prometheus-community.github.io/helm-charts
+strimzi-kafka-operator                        1.1.0     https://strimzi.io/charts
+prometheus-yet-another-cloudwatch-exporter    0.47.0    https://prometheus-community.github.io/helm-charts

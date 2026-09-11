@@ -3,6 +3,7 @@
 #   charts/observability/<이름>.yaml        환경 무관
 #   envs/<환경>/observability/<이름>.yaml   그 환경에서 갈리는 것
 # 버전은 helm 으로 검증해 고정. loki 는 grafana-community 리포(포크됨).
+# 차트는 GitLab 레지스트리에 둔 사본에서 받는다. 원래 저장소와 버전 목록은 charts/upstream-charts.txt.
 #
 # ★ releaseName 을 Application 이름과 분리한다 (2026-09-11).
 #   ArgoCD 는 releaseName 이 없으면 Application 이름을 Helm 릴리스 이름으로 쓴다.
@@ -37,13 +38,13 @@ spec:
           #   그 하나 때문에 Grafana(관리자 자격)까지 privileged로 두지 않으려는 분리다.
           - list:
               elements:
-                - { name: loki,               repoURL: https://grafana-community.github.io/helm-charts,    chart: loki,                     version: "18.5.0",  namespace: observability }
-                - { name: mimir,              repoURL: https://grafana.github.io/helm-charts,             chart: mimir-distributed,        version: "6.1.0",   namespace: observability }
-                - { name: tempo,              repoURL: https://grafana.github.io/helm-charts,             chart: tempo,                    version: "1.24.4",  namespace: observability }
-                - { name: grafana,            repoURL: https://grafana.github.io/helm-charts,             chart: grafana,                  version: "10.5.15", namespace: observability }
-                - { name: alloy,              repoURL: https://grafana.github.io/helm-charts,             chart: alloy,                    version: "1.10.1",  namespace: observability }
-                - { name: kube-state-metrics, repoURL: https://prometheus-community.github.io/helm-charts, chart: kube-state-metrics,       version: "7.8.1",   namespace: observability }
-                - { name: node-exporter,      repoURL: https://prometheus-community.github.io/helm-charts, chart: prometheus-node-exporter, version: "4.56.1",  namespace: observability-host }
+                - { name: loki,               chart: loki,                     version: "18.5.0",  namespace: observability }
+                - { name: mimir,              chart: mimir-distributed,        version: "6.1.0",   namespace: observability }
+                - { name: tempo,              chart: tempo,                    version: "1.24.4",  namespace: observability }
+                - { name: grafana,            chart: grafana,                  version: "10.5.15", namespace: observability }
+                - { name: alloy,              chart: alloy,                    version: "1.10.1",  namespace: observability }
+                - { name: kube-state-metrics, chart: kube-state-metrics,       version: "7.8.1",   namespace: observability }
+                - { name: node-exporter,      chart: prometheus-node-exporter, version: "4.56.1",  namespace: observability-host }
           # 환경 축 — 한 줄이 곧 환경의 정의다.
           #   ★ 켜는 날 stg 한 줄을 더한다. server 는 그때 받은 EKS 주소다.
           #     지금 넣으면 없는 클러스터를 가리키는 Application 일곱이 계속 실패 상태로 남는다.
@@ -54,7 +55,7 @@ spec:
     #   matrix 에 두면 환경 축을 곱해 stg 에도 생기므로 따로 뺀다.
     - list:
         elements:
-          - { name: minio, repoURL: https://charts.min.io/, chart: minio, version: "5.4.0", namespace: observability, env: dev, server: "https://kubernetes.default.svc" }
+          - { name: minio, chart: minio, version: "5.4.0", namespace: observability, env: dev, server: "https://kubernetes.default.svc" }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -63,7 +64,9 @@ spec:
     spec:
       project: platform
       sources:
-        - repoURL: '{{.repoURL}}'          # 업스트림 차트(직접 참조)
+        # 업스트림 차트의 사본. GitLab 레지스트리(OCI)라 oci:// 없이 적는다.
+        #   무엇이 올라가 있는지는 charts/upstream-charts.txt, 받는 자격은 argocd-repo-charts(manifests/secrets).
+        - repoURL: 192.168.0.167:5050/cgv/cgv-infra/charts
           chart: '{{.chart}}'
           targetRevision: '{{.version}}'
           helm:

@@ -22,9 +22,10 @@ app ns 2종·observability ns 6종·data ns 2종이므로 `-n` 값을 표(`docs/
 
 필요 목록(dev HA, 10종): `mysql-secret`·`redis-secret`(data) · `booking-secrets`·`queue-secrets`(app) · `minio-root-secret`·`minio-lgtm-user`·`loki-s3-credentials`·`mimir-minio-credentials`·`tempo-s3-credentials`·`grafana-admin`(observability).
 
-여기에 여덟 장이 더 있어 **총 18종**이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래는 나중에 더해진 것이라 낱개로 만든다. 아래 넷(`argocd-repo-cgv-infra`·`argocd-secret`·`gitlab-registry`·`image-updater-registry`)은 만드는 방법이 각각 다르고, 나머지 넷은 `seal-one.sh`로 이름·네임스페이스만 바꿔 만든다.
+여기에 아홉 장이 더 있어 **총 19종**이다. 위 10종은 `seal-secrets.sh`가 일괄로 만들고, 아래는 나중에 더해진 것이라 낱개로 만든다. 아래 넷(`argocd-repo-cgv-infra`·`argocd-secret`·`gitlab-registry`·`image-updater-registry`)은 만드는 방법이 각각 다르고, 나머지 다섯은 `seal-one.sh`로 이름·네임스페이스만 바꿔 만든다(키는 `docs/시크릿-계약.md` 표).
 
 ```
+argocd-repo-charts       argocd         ArgoCD 가 GitLab 레지스트리에서 업스트림 차트의 사본을 받는 자격(read_registry)
 image-updater-ecr        argocd         argocd-image-updater 가 ECR 태그를 폴링할 때 토큰을 받는 액세스 키
 app-admin-token          app            데이터 초기화 API 인증.  demo-reset CronJob 도 같은 값을 쓴다
 cloudflare-api-token     cert-manager   DNS-01 챌린지 레코드를 만드는 자격.

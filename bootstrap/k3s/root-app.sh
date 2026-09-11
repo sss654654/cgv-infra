@@ -19,11 +19,12 @@ command -v kubectl >/dev/null || { echo "kubectl 없음." >&2; exit 1; }
 kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
   echo "argocd가 없다. install.sh를 먼저 완주해라." >&2; exit 1; }
 
-# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 18종이 커밋돼 있어야 한다.
-#   seal-secrets.sh가 일괄로 만드는 10종(observability 6 · data 2 · app 2) + 낱개로 더한 8종:
+# 봉인본 개수 검사 — 계약(docs/시크릿-계약.md)이 요구하는 19종이 커밋돼 있어야 한다.
+#   seal-secrets.sh가 일괄로 만드는 10종(observability 6 · data 2 · app 2) + 낱개로 더한 9종:
 #   grafana-discord-webhook(Grafana 알림 발송 URL. 없으면 Grafana가 FailedMount로 기동하지 못한다),
 #   app-admin-token(booking·queue 초기화 API 인증 · demo-reset CronJob),
 #   argocd-repo-cgv-infra(ArgoCD의 저장소 자격. 읽기·쓰기 통합 — image updater write-back 겸용),
+#   argocd-repo-charts(ArgoCD가 GitLab 레지스트리에서 업스트림 차트의 사본을 받는 자격. read_registry),
 #   argocd-secret(webhook 발신자 확인 키를 기존 Secret에 얹는다),
 #   gitlab-registry(노드가 이미지를 받아오는 자격. dockerconfigjson이라 seal-one.sh가 아니라
 #                   kubectl create secret docker-registry로 만든다),
@@ -39,7 +40,7 @@ kubectl -n argocd get deploy/argocd-server >/dev/null 2>&1 || {
 #    바로 그 Secret이라 순환에 걸린다(docs/시크릿-계약.md 조건부 항목).
 SECRET_DIR="../../manifests/secrets"
 COUNT=$(find "$SECRET_DIR" -maxdepth 1 -name '*.yaml' 2>/dev/null | wc -l)
-EXPECTED=18
+EXPECTED=19
 if [ "$COUNT" -lt "$EXPECTED" ]; then
   echo "SealedSecret 봉인본이 ${COUNT}개다(필요 ${EXPECTED}종). ${SECRET_DIR}/ 확인." >&2
   echo "계약: docs/시크릿-계약.md · 봉인법: manifests/secrets/README.md" >&2

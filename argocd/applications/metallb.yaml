@@ -16,7 +16,7 @@ metadata:
 spec:
   project: platform
   sources:
-    - repoURL: https://metallb.github.io/metallb      # 업스트림 차트(직접 참조 + 버전 핀)
+    - repoURL: 192.168.0.167:5050/cgv/cgv-infra/charts   # 업스트림 차트의 사본(OCI). 목록은 charts/upstream-charts.txt
       chart: metallb
       targetRevision: "0.16.1"
       helm:

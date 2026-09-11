@@ -15,7 +15,7 @@ metadata:
 spec:
   project: argocd
   sources:
-    - repoURL: https://argoproj.github.io/argo-helm
+    - repoURL: 192.168.0.167:5050/cgv/cgv-infra/charts   # 업스트림 차트의 사본(OCI). 목록은 charts/upstream-charts.txt
       chart: argocd-image-updater
       targetRevision: 1.2.4
       helm:

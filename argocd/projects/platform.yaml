@@ -3,7 +3,7 @@
 #   이쪽은 업스트림 차트를 쓰고 cluster-scoped 리소스(CRD · ClusterRole)를 만들어야 한다.
 # 관측(observability · observability-host)과 진입(metallb-system · traefik)을 한 프로젝트에 둔다.
 #   clusterResourceWhitelist 는 양쪽 다 */* 다 — 둘 다 CRD 와 ClusterRole 을 만든다.
-#   가르면 sourceRepos(관측 4 / 진입 2)와 destinations(2 / 2)는 좁아진다. 그 이득을 지금 취하지 않는
+#   가르면 destinations(2 / 2)는 좁아진다(sourceRepos 는 양쪽 다 이 저장소 + 차트 레지스트리로 같다). 그 이득을 지금 취하지 않는
 #   이유는 traefik 차트가 observability 네임스페이스에 객체를 만드는 경로가 없고, ArgoCD 사용자가
 #   하나여서 팀 격리 축이 없기 때문이다. 관측을 다른 사람이 맡게 되면 그때 가른다
 #   (docs/구조-기준.md "무엇 단위로 나누나").
@@ -17,13 +17,8 @@ metadata:
 spec:
   description: 진입(metallb · traefik)과 관측(LGTM · Alloy · exporter)
   sourceRepos:
-    - http://192.168.0.167:8929/cgv/cgv-infra.git
-    - https://grafana-community.github.io/helm-charts   # 관측 업스트림 차트(멀티소스)
-    - https://grafana.github.io/helm-charts
-    - https://charts.min.io/
-    - https://prometheus-community.github.io/helm-charts
-    - https://metallb.github.io/metallb
-    - https://traefik.github.io/charts
+    - http://192.168.0.167:8929/cgv/cgv-infra.git       # 값 파일
+    - 192.168.0.167:5050/cgv/cgv-infra/charts           # 업스트림 차트의 사본(GitLab 레지스트리). 원래 저장소는 열지 않는다
   destinations:
     - server: https://kubernetes.default.svc
       namespace: observability

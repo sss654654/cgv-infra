@@ -7,9 +7,12 @@
 # 클러스터에 접근하지 않는다. 러너는 데스크탑이고 kubeconfig 가 없다.
 #   그래서 CRD 스키마를 schemas/ 에 파일로 갖고 있다(아래 validate job 주석).
 #
-# stage 를 하나로 두는 이유: 셋이 서로 독립이고 전부 몇 초짜리다. 순서를 강제할 이유가 없다.
+# stage 는 둘이다. validate 의 job 들은 서로 독립이고 전부 몇 초짜리라 순서를 강제하지 않는다.
+#   mirror 는 업스트림 차트 목록이 바뀐 커밋에만 생긴다. 새 버전을 레지스트리에 올린 뒤에
+#   validate 의 렌더가 그 버전을 받게 하려고 앞에 둔다(아래 "업스트림 차트").
 
 stages:
+  - mirror
   - validate
 
 default:
@@ -57,6 +60,8 @@ variables:
   #   실물 값을 채우면서 그 이유가 없어졌다.
   # ⚠ 환경을 새로 만들면 값 파일을 채우는 시점에 여기도 같이 늘린다.
   ACTIVE_ENVS: "dev stg"
+  # 업스트림 차트 사본이 있는 곳. ArgoCD Application 의 repoURL(192.168.0.167:5050/cgv/cgv-infra/charts)과 같다.
+  CHARTS: $CI_REGISTRY_IMAGE/charts
 
 # ── 차트 구조 ────────────────────────────────────────────────────────────────
 # Chart.yaml 이 있는 것만 대상이다. charts/ 아래 대부분은 값 파일만 있는 폴더라
@@ -175,3 +180,139 @@ validate:manifests:
         -schema-location default \
         -schema-location "$TPL" \
         manifests/ rendered/
+
+# ── 업스트림 차트 ────────────────────────────────────────────────────────────
+# 외부 차트(관측 · 진입 · ArgoCD 자신 · stg 전용)는 원래 저장소가 아니라 이 프로젝트의 GitLab
+#   레지스트리에 둔 사본에서 받는다. 목록과 버전은 charts/upstream-charts.txt 한 곳에 있다.
+#   이유와 버전 올리는 순서: docs/구조-기준.md "업스트림 차트를 받는 방식".
+#
+# 레지스트리 자격. helm 3.16 의 push 에는 자격 인자가 없고 registry login 에는 평문 http 를
+#   고르는 옵션이 없어서, helm 이 읽는 자격 파일(도커 config 와 같은 형식)을 직접 쓴다.
+#   CI_REGISTRY_USER · CI_REGISTRY_PASSWORD 는 GitLab 이 job 마다 주는 이 프로젝트 레지스트리 자격이다.
+.chart-registry:
+  image:
+    name: $HELM_IMAGE
+    entrypoint: [""]
+  before_script:
+    - |
+      set -e
+      mkdir -p "$HOME/.config/helm/registry"
+      AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > "$HOME/.config/helm/registry/config.json"
+
+# 목록 파일이 바뀐 파이프라인에서만 생긴다 — 버전을 올리거나 차트를 더한 커밋이다.
+#   레지스트리에 이미 있는 버전은 건너뛰고, 없는 것만 원래 저장소에서 받아 올린다.
+#   원래 저장소(인터넷)에 붙는 job 은 이것 하나다. 목록이 안 바뀐 파이프라인에는 없다.
+mirror:charts:
+  extends: .chart-registry
+  stage: mirror
+  interruptible: false        # 올리는 도중에 새 커밋이 와도 취소하지 않는다
+  rules:
+    - changes:
+        - charts/upstream-charts.txt
+  script:
+    - |
+      set -e
+      grep -v -e '^#' -e '^[[:space:]]*$' charts/upstream-charts.txt | while read -r chart version repo; do
+        if helm show chart "oci://$CHARTS/$chart" --version "$version" --plain-http >/dev/null 2>&1; then
+          echo "── 있음  $chart $version"
+          continue
+        fi
+        echo "── 올림  $chart $version  ← $repo"
+        # 빈 폴더에 받고 거기 생긴 파일을 올린다. 받은 파일 이름은 저장소가 정한다 —
+        #   strimzi 는 strimzi-kafka-operator-helm-3-chart-1.1.0.tgz 로 준다.
+        #   레지스트리에 올라가는 이름은 파일 이름이 아니라 차트 안의 Chart.yaml name 이다.
+        d=$(mktemp -d)
+        helm pull "$chart" --repo "$repo" --version "$version" -d "$d"
+        helm push "$d"/*.tgz "oci://$CHARTS" --plain-http
+        rm -rf "$d"
+      done
+
+# 업스트림 차트를 ArgoCD 와 같은 릴리스 이름 · 네임스페이스 · 값 조합으로 렌더한다.
+#   먼저 ArgoCD 파일에 적힌 차트 버전이 목록에 있는지 본다. 없으면 여기서 렌더한 것과
+#   ArgoCD 가 받는 것이 달라지거나, 레지스트리에 그 버전이 없어 ArgoCD 가 받지 못한다.
+# 렌더 결과는 validate:manifests(kubeconform)에 넘기지 않는다. 차트가 만드는 CRD 인스턴스
+#   (IngressClassParams 등)는 schemas/ 에 스키마가 없어 -strict 에서 실패하고, 차트 템플릿 자체는
+#   제작사가 검증한다. 여기서 보는 것은 이 저장소의 값으로 렌더가 되는가다.
+# ⚠ 렌더가 통과해도 차트가 모르는 키(오타 · 잘못된 들여쓰기)는 오류 없이 무시된다.
+#   그런 값이 실제로 들어갔는지는 아티팩트(rendered-upstream/)를 열어 봐야 드러난다.
+template:render-upstream:
+  extends: .chart-registry
+  stage: validate
+  script:
+    - |
+      set -e
+      LIST=charts/upstream-charts.txt
+      mkdir -p rendered-upstream
+
+      # 1) ArgoCD 파일의 버전이 목록에 있는가.
+      #   ApplicationSet 원소는 한 줄(chart: X, version: "Y"), Application 은 chart: 다음의 targetRevision: 이다.
+      {
+        grep -rhoE 'chart: *[A-Za-z0-9._-]+, *version: *"[^"]+"' argocd/ \
+          | sed -E 's/chart: *([^,]+), *version: *"([^"]+)"/\1 \2/'
+        find argocd -name '*.yaml' -exec awk '
+          FNR == 1 { c = "" }
+          /^[[:space:]]*(-[[:space:]]*)?chart:/ { c = $NF; next }
+          c != "" && /targetRevision:/ { v = $2; gsub(/"/, "", v); print c, v; c = "" }
+        ' {} +
+      } | grep -v '{{' | sort -u > used.txt
+      FAIL=0
+      while read -r c v; do
+        if awk -v c="$c" -v v="$v" '$1 == c && $2 == v { f = 1 } END { exit !f }' "$LIST"; then
+          echo "── 목록과 같다  $c $v"
+        else
+          echo "── 목록에 없다  $c $v  → $LIST 에 넣는다(넣으면 mirror:charts 가 올린다)"
+          FAIL=1
+        fi
+      done < used.txt
+      [ "$FAIL" = 0 ]
+
+      # 2) 렌더
+      ver()  { awk -v c="$1" '$1 == c { print $2 }' "$LIST"; }
+      kube() { case "$1" in dev) echo 1.36.2 ;; stg) echo 1.33.0 ;; esac; }   # dev = k3s · stg = EKS
+      render() {   # <환경> <릴리스> <차트> <네임스페이스> [값 파일 ...]
+        e=$1; rel=$2; chart=$3; ns=$4; shift 4
+        v=$(ver "$chart")
+        set -- $(for f in "$@"; do printf -- '-f %s ' "$f"; done)
+        echo "── $rel @ $e  ($chart $v)"
+        helm template "$rel" "oci://$CHARTS/$chart" --version "$v" --plain-http \
+          -n "$ns" --kube-version "$(kube "$e")" "$@" > "rendered-upstream/$e-$rel.yaml"
+      }
+
+      # 관측 — observability ApplicationSet. 값은 환경 무관 · 환경별 두 층이다.
+      #   그 환경의 값 파일이 없으면 그 환경에 없는 것이다(minio 는 dev 에만, cloudwatch-exporter 는 stg 에만).
+      for e in $ACTIVE_ENVS; do
+        for pair in loki:loki mimir:mimir-distributed tempo:tempo grafana:grafana alloy:alloy \
+            kube-state-metrics:kube-state-metrics node-exporter:prometheus-node-exporter \
+            minio:minio cloudwatch-exporter:prometheus-yet-another-cloudwatch-exporter; do
+          name=${pair%%:*}; chart=${pair##*:}
+          [ -f "envs/$e/observability/$name.yaml" ] || continue
+          ns=observability
+          if [ "$name" = node-exporter ]; then ns=observability-host; fi
+          render "$e" "$name" "$chart" "$ns" "charts/observability/$name.yaml" "envs/$e/observability/$name.yaml"
+        done
+      done
+
+      # 허브(온프레미스 클러스터)에만 있는 것
+      render dev traefik              traefik              traefik        charts/platform/traefik.yaml
+      render dev metallb              metallb              metallb-system charts/platform/metallb.yaml
+      render dev argocd               argo-cd              argocd         bootstrap/k3s/argocd-values.yaml
+      render dev argocd-image-updater argocd-image-updater argocd         charts/platform/argocd-image-updater.yaml
+
+      # stg 에만 있는 것 — 그 Application 파일이 있을 때만 렌더한다(stg 를 켜는 커밋에 있다)
+      if [ -f argocd/applications/alb-controller-stg.yaml ]; then
+        render stg aws-load-balancer-controller aws-load-balancer-controller kube-system \
+          charts/platform/aws-load-balancer-controller.yaml envs/stg/aws-load-balancer-controller.yaml
+      fi
+      if [ -f argocd/applications/strimzi-stg.yaml ]; then
+        render stg strimzi strimzi-kafka-operator data charts/data/strimzi.yaml
+      fi
+      if [ -f argocd/applications/prometheus-crds-stg.yaml ]; then
+        render stg prometheus-operator-crds prometheus-operator-crds kube-system
+      fi
+
+      ls -la rendered-upstream/
+  artifacts:
+    paths:
+      - rendered-upstream/   # 값이 실제로 들어갔는지(nodeSelector · toleration · IRSA 역할 등)는 여기서 본다
+    expire_in: 1 day

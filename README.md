@@ -450,7 +450,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 - **공개 경로 앞단** ([public-guard](manifests/public-guard/))
   - `admin-api-deny` — 초기화 API(`/api/admin`·`/api/admission/reset`)를 **443에서만** 끊는다. 실제로 부르는 것은 클러스터 안의 CronJob 하나이고 그것은 Service를 직접 부르므로, 밖에서 살아 있을 이유가 없다. 80에는 걸지 않아 격리망 안에서 손으로 부르는 경로는 남는다.
 - **관리 UI가 443에 없다** — 두 Ingress를 `web` 엔트리포인트에만 붙여 WireGuard 터널로만 닿게 했다. 엔트리포인트를 안 적으면 왜 443에 붙는지는 위 [네트워크](#네트워크)에 있다.
-- **SealedSecret 18종** — 암호는 kubeseal로 봉인하고 암호문만 Git에 둔다([docs/시크릿-계약](docs/시크릿-계약.md)).
+- **SealedSecret 19종** — 암호는 kubeseal로 봉인하고 암호문만 Git에 둔다([docs/시크릿-계약](docs/시크릿-계약.md)).
   ```
   data           mysql-secret · redis-secret
   observability  grafana-admin · grafana-discord-webhook · loki-s3-credentials
@@ -573,7 +573,7 @@ cgv-infra/
 ├── manifests/          배포 대상 — 정적인 것 (12 디렉터리)
 │   ├── kafka/              Strimzi CR (클러스터·노드풀·토픽 4종)
 │   ├── metallb-pool/       주소 풀 CR (10.0.0.240-250)
-│   ├── secrets/            SealedSecret 18종
+│   ├── secrets/            SealedSecret 19종
 │   ├── dashboards/         Grafana 대시보드 ConfigMap 7장
 │   ├── netpol-data/        data 네임스페이스로 들어오는 접속 제한
 │   ├── netpol-app/         app 네임스페이스 인·아웃
@@ -617,10 +617,10 @@ Application 하나는 반드시 프로젝트 하나에 속하고, 그 프로젝�
 | 프로젝트 | 무엇의 울타리 | 허용 저장소 | 네임스페이스 | 만들 수 있는 것 |
 |---|---|---|---|---|
 | `bootstrap` | root Application | GitLab | `argocd` | `argoproj.io`의 AppProject·Application·ApplicationSet만. **cluster 범위 0** |
-| `argocd` | ArgoCD 자신 | GitLab + argo-helm | `argocd` | 전부 — 차트가 CRD·ClusterRole·ClusterRoleBinding을 만든다 |
+| `argocd` | ArgoCD 자신 | GitLab + 차트 레지스트리 | `argocd` | 전부 — 차트가 CRD·ClusterRole·ClusterRoleBinding을 만든다 |
 | `apps` | queue·booking·frontend | GitLab | `app` | ns 범위 전부 |
 | `data` | mysql·redis·kafka | GitLab | `data` | ns 범위 전부. **cluster 범위 0** |
-| `platform` | 진입(metallb·traefik)·관측(LGTM) | GitLab + 업스트림 차트 6 | `observability`·`observability-host`·`metallb-system`·`traefik` | 전부 |
+| `platform` | 진입(metallb·traefik)·관측(LGTM) | GitLab + 차트 레지스트리 | `observability`·`observability-host`·`metallb-system`·`traefik` | 전부 |
 | `secrets` | SealedSecret 배달 | GitLab | `data`·`app`·`observability`·`argocd`·`cert-manager` | **`SealedSecret`만** |
 | `cert` | 인증서 발급자 배달 | GitLab | `cert-manager` | **`ClusterIssuer`만**. 네임스페이스 리소스는 0 |
 
@@ -658,7 +658,7 @@ syncPolicy:
 ① cluster/ 스크립트 (SSH, 노드에서)   → k3s 3노드 조인 (CNI 없어 NotReady)
 ② bootstrap/k3s/install.sh (9단계)        → Calico(→Ready)→namespaces→storage→cert-manager→sealed-secrets
                                           →CRD→control-plane 수집→Strimzi→argocd
-③ SealedSecret 18종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
+③ SealedSecret 19종 봉인·커밋·push     → 컨트롤러가 뜬 뒤에만 가능. 여기서 손이 한 번 더 들어간다
                                           그중 ArgoCD 저장소 자격 한 장은 apply까지 (없으면 ⑤ 이후가 안 돈다)
 ④ bootstrap/k3s/root-app.sh               → 봉인본 개수 확인 후 root-app apply. 여기서 손 끝
 ⑤ root-app → argocd/ recurse          → AppProject·ApplicationSet·Application 생성
@@ -689,7 +689,7 @@ syncPolicy:
 | 2 | 각 노드 OS prep(정적 IP·SSH키·**데이터 디스크 10장 mkfs + `/mnt/disks/<용도>` 마운트·fstab**·[cluster/README](bootstrap/k3s/cluster/README.md)) | ✅ 완료 (재부팅 검증 통과) |
 | 3 | `cluster/01-server-init.sh`(k3s-1) → `02-server-join.sh`(k3s-2·3) | ✅ 완료 (v1.36.2, etcd 3-member, CNI 전이라 NotReady) |
 | 4 | `bootstrap/k3s/install.sh` — Calico부터 argocd까지. 여기까지는 몇 번을 다시 돌려도 안전하다(전부 멱등) | ✅ 완료 |
-| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 8종(저장소 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격 둘(GitLab·ECR)·초기화 API 토큰·Discord webhook·Cloudflare API 토큰) = 18종. `root-app.sh`가 이 개수를 세어 부족하면 멈춘다 | ✅ 완료 |
+| 5 | **SealedSecret 봉인·커밋·push**([secrets/README](manifests/secrets/README.md)) — sealed-secrets 컨트롤러가 뜬 뒤에만 가능. 초기 10종 + 나중에 더한 9종(저장소 자격·차트 레지스트리 자격·webhook 비밀·이미지 pull 자격·image-updater 폴링 자격 둘(GitLab·ECR)·초기화 API 토큰·Discord webhook·Cloudflare API 토큰) = 19종. `root-app.sh`가 이 개수를 세어 부족하면 멈춘다 | ✅ 완료 |
 | 6 | `bootstrap/k3s/root-app.sh` → GitOps 인계. 봉인본이 부족하면 여기서 멈춘다 | ✅ 완료 |
 | 7 | `kubectl -n argocd get applications -w` 로 sync 확인 | ✅ 완료 (플랫폼·관측·미들웨어 수렴. 자원값은 실측으로 재조정) |
 | 8 | **GitOps 원본을 GitLab으로** — 저장소 이전 · deploy token 봉인 · `repoURL` 전환 · AppProject 울타리 | ✅ 완료 |

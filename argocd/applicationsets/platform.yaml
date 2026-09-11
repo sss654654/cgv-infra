@@ -34,7 +34,7 @@ spec:
           #   비특권 포트라 그대로 통과한다.
           - list:
               elements:
-                - { name: traefik, repoURL: https://traefik.github.io/charts, chart: traefik, version: "41.0.2", namespace: traefik, wave: "-2", psa: restricted }
+                - { name: traefik, chart: traefik, version: "41.0.2", namespace: traefik, wave: "-2", psa: restricted }
           - list:
               elements:
                 - { env: dev, server: "https://kubernetes.default.svc" }
@@ -46,7 +46,8 @@ spec:
     spec:
       project: platform
       sources:
-        - repoURL: '{{.repoURL}}'          # 업스트림 차트(직접 참조 + 버전 핀)
+        # 업스트림 차트의 사본(GitLab 레지스트리, OCI). 목록은 charts/upstream-charts.txt.
+        - repoURL: 192.168.0.167:5050/cgv/cgv-infra/charts
           chart: '{{.chart}}'
           targetRevision: '{{.version}}'
           helm:

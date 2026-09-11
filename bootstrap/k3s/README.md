@@ -35,10 +35,11 @@
       [1/9] Calico ... [9/9] argocd
       끝나면 멈춘다. GitOps는 아직 시작 안 함
                 ↓
-③ ★ SealedSecret 18종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
+③ ★ SealedSecret 19종 봉인 → 커밋 → push        ← 사람만 할 수 있는 구간
       install.sh [5/9]가 세운 컨트롤러의 공개키로 암호화한다
-      초기 10종(seal-secrets.sh) + 낱개 8종
+      초기 10종(seal-secrets.sh) + 낱개 9종
         argocd-repo-cgv-infra    ArgoCD 저장소 자격                seal-one.sh
+        argocd-repo-charts       ArgoCD 가 차트 사본을 받는 레지스트리 자격  seal-one.sh
         argocd-secret            webhook 발신자 확인용 키를 기존 Secret 에 얹는다  seal-one.sh
         image-updater-ecr        ECR 태그 폴링 때 토큰을 받는 액세스 키  seal-one.sh
         app-admin-token          데이터 초기화 API 인증             seal-one.sh
@@ -217,7 +218,7 @@ kubectl create secret generic mysql-secret -n data \
    컨트롤러    no key could decrypt secret 으로 실패 → Secret 이 생기지 않는다
 ```
 
-18종이 다섯 네임스페이스(`data`·`observability`·`app`·`argocd`·`cert-manager`)에 흩어져 있다.
+19종이 다섯 네임스페이스(`data`·`observability`·`app`·`argocd`·`cert-manager`)에 흩어져 있다.
 
 **② `--controller-name`** — kubeseal은 기본적으로 `kube-system`의 `sealed-secrets-controller`를 찾는다. 이 저장소는 helm 릴리스명을 `sealed-secrets`로 설치하므로 서비스명이 다르다. 플래그를 빠뜨리면 공개키를 못 받아 `cannot fetch certificate` 오류가 난다.
 

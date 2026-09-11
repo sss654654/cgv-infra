@@ -11,7 +11,7 @@ metadata:
 spec:
   description: ArgoCD 제어면 자신
   sourceRepos:
-    - https://argoproj.github.io/argo-helm         # argo-cd 차트
+    - 192.168.0.167:5050/cgv/cgv-infra/charts      # argo-cd · argocd-image-updater 차트의 사본(GitLab 레지스트리)
     - http://192.168.0.167:8929/cgv/cgv-infra.git  # 그 차트에 넘길 values 파일
   destinations:
     - server: https://kubernetes.default.svc

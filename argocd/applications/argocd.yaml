@@ -1,4 +1,4 @@
-# ArgoCD 자신을 GitOps로 관리한다. 차트는 업스트림에서, 값은 이 저장소에서 읽는다.
+# ArgoCD 자신을 GitOps로 관리한다. 차트는 GitLab 레지스트리의 사본에서, 값은 이 저장소에서 읽는다.
 #
 # 최초 설치는 bootstrap/k3s/install.sh의 helm이 한다 — 클러스터가 비어 있을 때는 배포할 주체가
 # 없기 때문이다. 이 App은 그렇게 만들어진 리소스를 이어받아, 이후 값 변경이 helm 명령이 아닌
@@ -16,7 +16,7 @@ metadata:
 spec:
   project: argocd
   sources:
-    - repoURL: https://argoproj.github.io/argo-helm
+    - repoURL: 192.168.0.167:5050/cgv/cgv-infra/charts   # 업스트림 차트의 사본(OCI). 목록은 charts/upstream-charts.txt
       chart: argo-cd
       targetRevision: 10.1.4
       helm:
