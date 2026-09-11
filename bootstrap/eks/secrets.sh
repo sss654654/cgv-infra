@@ -80,10 +80,12 @@ done
 # ---------- 2. booking-secrets ----------
 echo "[2/5] booking-secrets ← Secrets Manager (RDS 마스터 비밀번호)"
 # 시크릿 ARN 을 RDS 에서 찾는다. terraform output handoff 의 mysql_secret_arn 과 같은 값이다.
-# 대체 명령:
+# 대체 명령. 값을 kubectl 인자로 넘기지 않는다 — 인자는 ps 와 셸 이력에 남는다.
+#   read 로 받아 변수에 두고(셸 안의 값이라 프로세스 목록에 안 보인다), base64 는 파이프로 준다.
 #   aws secretsmanager get-secret-value --region ap-northeast-2 --secret-id <mysql_secret_arn> \
-#     --query SecretString --output text           → 나온 JSON 의 password 를 옮겨
-#   kubectl --context cgv-stg -n app create secret generic booking-secrets --from-literal=MYSQL_PASSWORD='<값>'
+#     --query SecretString --output text           → 나온 JSON 의 password 를 아래 read 에 붙여 넣는다
+#   read -rs P && printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: booking-secrets, namespace: app}\ntype: Opaque\ndata: {MYSQL_PASSWORD: %s}\n' \
+#     "$(printf '%s' "$P" | base64 | tr -d '\n')" | kubectl --context cgv-stg apply -f -
 SECRET_ARN=$(aws rds describe-db-instances --region "$REGION" --db-instance-identifier "$DB_INSTANCE" \
   --query 'DBInstances[0].MasterUserSecret.SecretArn' --output text | nocr)
 SECRET_JSON=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET_ARN" \
@@ -106,7 +108,9 @@ apply_secret app queue-secrets
 
 # ---------- 4. app-admin-token ----------
 echo "[4/5] app-admin-token"
-# 대체 명령: kubectl --context cgv-stg -n app create secret generic app-admin-token --from-literal=ADMIN_TOKEN="$(openssl rand -hex 24)"
+# 대체 명령(난수를 인자로 넘기지 않는다 — 명령 치환 결과가 kubectl 이 도는 동안 ps 에 보인다):
+#   printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: app-admin-token, namespace: app}\ntype: Opaque\ndata: {ADMIN_TOKEN: %s}\n' \
+#     "$(openssl rand -hex 24 | tr -d '\n' | base64 | tr -d '\n')" | kubectl --context cgv-stg apply -f -
 if eks -n app get secret app-admin-token >/dev/null 2>&1; then
   echo "  이미 있다 — 그대로 둔다. 다시 만들면 떠 있는 파드가 받은 값과 어긋난다."
 else
@@ -115,8 +119,9 @@ fi
 
 # ---------- 5. grafana-admin ----------
 echo "[5/5] grafana-admin"
-# 대체 명령: kubectl --context cgv-stg -n observability create secret generic grafana-admin \
-#              --from-literal=admin-user=admin --from-literal=admin-password="$(openssl rand -hex 24)"
+# 대체 명령(위와 같은 이유로 인자 대신 stdin):
+#   printf 'apiVersion: v1\nkind: Secret\nmetadata: {name: grafana-admin, namespace: observability}\ntype: Opaque\ndata: {admin-user: %s, admin-password: %s}\n' \
+#     "$(printf '%s' admin | base64 | tr -d '\n')" "$(openssl rand -hex 24 | tr -d '\n' | base64 | tr -d '\n')" | kubectl --context cgv-stg apply -f -
 if eks -n observability get secret grafana-admin >/dev/null 2>&1; then
   echo "  이미 있다 — 그대로 둔다. Grafana 는 관리자 비밀번호를 첫 기동 때 한 번만 쓴다."
 else
