@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — k3s 클러스터 부트스트랩(set-once). 빈 노드에서 허브(ArgoCD)가 서기까지 argocd 밖 인프라를 순서대로 깐다.
-# 읽는 파일은 전부 이 폴더(bootstrap/k3s/)의 형제다 — 아래에서 자기 위치로 cd 한 뒤 상대 경로로 읽는다.
+# 읽는 파일은 이 폴더(bootstrap/k3s/)의 형제와, 두 환경이 같이 쓰는 둘(manifests/namespaces · charts/data/strimzi.yaml)이다.
+#   아래에서 자기 위치로 cd 한 뒤 상대 경로로 읽는다.
 # 전제: 각 노드에 k3s가 cluster/config.yaml로 설치·조인됨(CNI 전이라 NotReady 상태).
 # 실행 위치는 kubectl·helm이 있고 클러스터에 닿는 곳이면 된다 — $KUBECONFIG를 쓰고, 없으면 k3s 기본 경로로 떨어진다.
 # GitOps 인계(root-app apply)는 이 스크립트에 없다 — SealedSecret 봉인이 선행돼야 하므로 root-app.sh로 분리했다.
@@ -69,7 +70,8 @@ kubectl wait --for=condition=Ready nodes --all --timeout=180s
 echo "[2/9] 네임스페이스 + PodSecurity 라벨 (app·data·argocd·cert-manager=restricted, observability=baseline, observability-host=privileged)"
 # 아래 [4]cert-manager·[8]argocd의 --create-namespace보다 먼저 돌아야 그 두 ns가 라벨을 달고 만들어진다.
 # (helm --create-namespace는 ns가 이미 있으면 아무것도 안 한다 = 여기서 만든 라벨이 유지된다.)
-kubectl apply -f namespaces.yaml
+kubectl apply -f ../../manifests/namespaces/namespaces.yaml   # 워크로드 넷 — stg 도 같은 정의를 쓴다
+kubectl apply -f namespaces.yaml                              # 허브에만 있는 둘(argocd · cert-manager)
 
 echo "[3/9] StorageClass 6종 + 정적 PV 10개 — 워크로드(GitOps 폭포의 mysql·kafka·관측)보다 먼저 있어야 바인딩 가능"
 # 선행(손작업): 각 노드에 데이터 디스크 mkfs·/mnt/disks/<용도> 마운트·fstab 완료 상태(storage/pvs.yaml 헤더).
@@ -109,7 +111,7 @@ echo "[7/9] Strimzi 오퍼레이터 1.1.0 (KafkaCluster/Topic CR 감시. data ns
 helm repo add strimzi https://strimzi.io/charts --force-update >/dev/null
 # --timeout 10m: 오퍼레이터 이미지가 크고(수백 MB) 첫 실행은 디스크 경합이 겹친다.
 helm upgrade --install strimzi strimzi/strimzi-kafka-operator -n data --create-namespace --wait --timeout 10m \
-  --version 1.1.0 -f strimzi-values.yaml          # watchNamespaces는 values 파일로 전달(--set 사용 안 함)
+  --version 1.1.0 -f ../../charts/data/strimzi.yaml   # stg 와 같은 값. watchNamespaces도 여기 있다(--set 사용 안 함)
 
 # MySQL도 GitOps로 이동 — argocd/applications/mysql.yaml(wave -1, prune=false, 벤더 차트 cgv-mysql).
 #   mysql-secret은 sealed-secrets App(wave -2)이 선배달 → 수동 apply 게이트 불필요. 봉인·커밋은 root-app 전 필수(secrets/README.md).
@@ -129,9 +131,9 @@ echo "  예외: 앞선 실행이 중간에 죽어 helm 릴리스가 pending-* �
 echo "  'another operation is in progress'로 거부된다 → helm rollback 또는 helm uninstall 후 재실행."
 echo
 echo "다음 순서:"
-echo "  1) SealedSecret 14종 봉인·커밋 — docs/시크릿-계약.md 표대로."
-echo "     seal-secrets.sh 가 10종을 일괄로, 나머지 3종은 낱개로 만든다"
-echo "     (argocd ns 2종은 seal-one.sh, app ns 의 gitlab-registry 는 docker-registry 타입)."
+echo "  1) SealedSecret 18종 봉인·커밋 — docs/시크릿-계약.md 표대로."
+echo "     seal-secrets.sh 가 10종을 일괄로, 나머지 8종은 낱개로 만든다"
+echo "     (generic 은 seal-one.sh, dockerconfigjson 둘은 kubectl create secret docker-registry)."
 echo "     컨트롤러가 지금 떠 있어야 kubeseal이 공개키를 받는다."
 echo "     kubeseal --controller-name sealed-secrets --controller-namespace kube-system 를 반드시 붙인다."
 echo "  2) ./root-app.sh 실행 → GitOps 인계"

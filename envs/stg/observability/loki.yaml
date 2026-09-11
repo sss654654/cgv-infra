@@ -29,9 +29,17 @@ serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::527170477076:role/cgv-stg-obs-s3
 
+# 관측 노드에만 놓는다 — 노드그룹이 taint 로 앱 파드를 막고(cgv-terraform modules/eks),
+#   관측 파드는 toleration 으로 들어가 nodeSelector 로 거기에만 선다. 이유는 mimir.yaml 머리말.
 singleBinary:
-  # WAL 볼륨. gp3 StorageClass 는 EBS CSI 애드온이 안 만들어서 파트 7 스크립트가 넣는다.
+  # WAL 볼륨. gp3 StorageClass 는 EBS CSI 애드온이 안 만든다 — 허브가 cluster-stg 로 넣는다.
   persistence:
     enabled: true
     storageClass: gp3
     size: 10Gi
+  nodeSelector: { workload: observability }
+  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
+
+gateway:
+  nodeSelector: { workload: observability }
+  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]

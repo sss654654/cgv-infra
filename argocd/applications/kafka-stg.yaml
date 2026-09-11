@@ -1,0 +1,39 @@
+# kafka-stg — Strimzi 가 읽는 Kafka CR 묶음(KafkaNodePool · Kafka · KafkaTopic 다섯).
+#
+# kafka-dev 와 같은 차트다. 갈리는 것은 envs/stg/kafka.yaml 이 주는 둘 —
+#   브로커 볼륨(EBS gp3 60Gi)과 토픽 파티션 수(8).
+# stg 에서 Kafka 가 관리형(MSK)이 아니라 파드인 이유 — Redis · MySQL 과 달리 관리형으로 바꾸면
+#   브로커 설정과 토픽 정의를 git 에서 못 들고 가고, 부하 비교의 조건이 달라진다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka-stg
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"   # Strimzi(-3) 뒤 · 앱(3) 앞. booking · queue 가 브로커에 붙는다
+spec:
+  project: data
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: charts/data/cgv-kafka
+    helm:
+      releaseName: kafka
+      valueFiles:
+        - values.yaml                     # 차트 기본값 — 브로커 수·자원·리스너·보존 정책
+        - ../../../envs/stg/kafka.yaml    # 이 환경의 볼륨과 파티션
+  destination:
+    server: https://STG_EKS_ENDPOINT     # 켜는 날 EKS API 주소로 바꾼다
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Strimzi CRD 가 아직 없을 때 dry-run 이 "종류를 모른다"로 실패하는 것을 건너뛴다.
+      - SkipDryRunOnMissingResource=true
+    # 건너뛰어도 apply 는 CRD 가 있어야 된다. Strimzi 가 서기 전에 돌다 실패하면 다시 시도한다
+    #   (허브에 Application 헬스 체크 설정이 없어 wave 가 앞 sync 의 끝을 기다리지 않는다).
+    retry:
+      limit: 10
+      backoff: { duration: 20s, factor: 2, maxDuration: 3m }

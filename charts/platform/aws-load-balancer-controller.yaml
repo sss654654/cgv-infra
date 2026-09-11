@@ -1,0 +1,22 @@
+# AWS Load Balancer Controller 값 — 환경 무관. Ingress 를 보고 ALB 를 만든다.
+# 어느 클러스터 · VPC · IAM 역할인지는 envs/<환경>/aws-load-balancer-controller.yaml 이 준다.
+
+# 한 대. 컨트롤러가 죽어도 이미 만든 ALB 는 계속 트래픽을 받는다 — 멈추는 것은 Ingress 변경의 반영뿐이다.
+replicaCount: 1
+
+# dev 실측이 없다(집에는 이 컨트롤러가 없다). 차트 기본값이 비어 있어 넉넉하게 잡고 첫날 kubectl top 으로 본다.
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits:   { memory: 512Mi }
+
+# Service 변경 웹훅을 끈다.
+#   켜져 있으면 Service 가 만들어질 때마다 이 컨트롤러의 웹훅을 거치는데, 실패 정책이 Fail 이라
+#   컨트롤러가 떠 있지 않은 동안 클러스터의 Service 생성이 거부된다(부트스트랩 순서에 걸린다).
+#   이 웹훅이 하는 일은 LoadBalancer 타입 Service 를 이 컨트롤러로 넘기는 것인데,
+#   이 구성은 그 타입을 안 쓴다 — 입구는 Ingress 로만 만든다.
+enableServiceMutatorWebhook: false
+
+serviceAccount:
+  # IRSA 신뢰 정책의 sub 가 system:serviceaccount:kube-system:aws-load-balancer-controller 다.
+  #   이름이 글자까지 같아야 역할을 맡는다.
+  name: aws-load-balancer-controller

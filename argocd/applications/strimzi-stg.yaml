@@ -1,0 +1,38 @@
+# strimzi-stg — Kafka 오퍼레이터. data 네임스페이스의 Kafka · KafkaNodePool · KafkaTopic CR 을 읽어 브로커를 세운다.
+#
+# 없으면 kafka-stg 의 CR 만 Synced 되고 브로커가 0 이다 — CR 을 해석할 주체가 없다.
+# dev 는 bootstrap/k3s/install.sh [7/9] 가 같은 차트 · 버전 · 값(charts/data/strimzi.yaml)으로 helm 설치한다.
+#
+# platform 프로젝트인 이유 — 차트가 CRD · ClusterRole 을 만든다. data 프로젝트는 클러스터 범위를 안 연다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: strimzi-stg
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"   # 네임스페이스(-4) 뒤 · kafka-stg(-1) 앞
+spec:
+  project: platform
+  sources:
+    - repoURL: https://strimzi.io/charts
+      chart: strimzi-kafka-operator
+      targetRevision: 1.1.0
+      helm:
+        releaseName: strimzi
+        valueFiles:
+          - $values/charts/data/strimzi.yaml   # 환경 무관 — dev 와 같은 파일
+    - repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://STG_EKS_ENDPOINT     # 켜는 날 EKS API 주소로 바꾼다
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: false      # 차트에 CRD 가 들어 있다. 지우면 Kafka CR 이 전부 지워진다
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true   # CRD 가 커서 last-applied 애노테이션이 크기 한도를 넘는다
+    retry:
+      limit: 10
+      backoff: { duration: 20s, factor: 2, maxDuration: 3m }

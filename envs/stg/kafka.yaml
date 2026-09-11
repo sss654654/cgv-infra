@@ -5,7 +5,7 @@ storage:
   #   180GB(브로커 셋)를 8시간 켜면 약 $0.16 이라 볼륨을 키우는 쪽이 싸다 —
   #   보존을 줄이면 dev 와 브로커 조건이 갈려 부하 결과에서 무엇이 달랐는지 하나 더 따져야 한다.
   size: 60Gi
-  # EBS CSI 애드온은 StorageClass 를 안 만든다. 파트 7 스크립트가 gp3 를 손으로 넣는다 —
+  # EBS CSI 애드온은 StorageClass 를 안 만든다. 허브가 cluster-stg 로 gp3 를 넣는다(manifests/storage-ebs) —
   #   이 이름이 없으면 PVC 가 영구 Pending 이고 브로커가 안 뜬다.
   class: gp3
 

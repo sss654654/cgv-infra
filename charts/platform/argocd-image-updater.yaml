@@ -67,3 +67,19 @@ extraObjects:
           useAnnotations: true
         - namePattern: frontend-dev
           useAnnotations: true
+  # stg 셋. 이 CR 이 "stg 를 봇 대상에 넣는다" 는 결정이다 — 없으면 ECR 에 새 이미지가 올라가도
+  #   envs/stg 가 안 바뀌어 stg 가 그대로다. 태그 형식이 환경마다 달라(apps ApplicationSet 의
+  #   allowTags) dev 태그가 stg 로 넘어오지 않는다.
+  - apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+    kind: ImageUpdater
+    metadata:
+      name: stg-apps
+      namespace: argocd
+    spec:
+      applicationRefs:
+        - namePattern: queue-stg
+          useAnnotations: true
+        - namePattern: booking-stg
+          useAnnotations: true
+        - namePattern: frontend-stg
+          useAnnotations: true

@@ -1,6 +1,11 @@
-# kube-state-metrics stg 환경값 — 놓일 노드만 다르다.
+# cloudwatch-exporter stg 값 — IAM 역할과 놓일 노드.
 #
-# 어느 환경이든 같은 API 를 읽고 같은 지표를 낸다. 수집 설정은 dev 와 같다.
+# 역할은 CloudWatch 읽기뿐이다(cgv-terraform modules/eks 의 irsa.tf). 이름이 prefix 로 정해져
+#   apply 전에 적을 수 있다.
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::527170477076:role/cgv-stg-cloudwatch
+
 # 관측 노드에만 놓는다 — 노드그룹이 taint 로 앱 파드를 막고(cgv-terraform modules/eks),
 #   관측 파드는 toleration 으로 들어가 nodeSelector 로 거기에만 선다. 이유는 mimir.yaml 머리말.
 nodeSelector: { workload: observability }
