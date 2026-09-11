@@ -269,7 +269,7 @@ template:render-upstream:
 
       # 2) 렌더
       ver()  { awk -v c="$1" '$1 == c { print $2 }' "$LIST"; }
-      kube() { case "$1" in dev) echo 1.36.2 ;; stg) echo 1.33.0 ;; esac; }   # dev = k3s · stg = EKS
+      kube() { case "$1" in dev) echo 1.36.2 ;; stg) echo 1.36.0 ;; esac; }   # dev = k3s · stg = EKS(cgv-terraform kubernetes_version)
       render() {   # <환경> <릴리스> <차트> <네임스페이스> [값 파일 ...]
         e=$1; rel=$2; chart=$3; ns=$4; shift 4
         v=$(ver "$chart")
