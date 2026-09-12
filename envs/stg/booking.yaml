@@ -100,7 +100,10 @@ env:
   #   적어 두면 limit 을 내려도 GC 가 조용히 바뀌지 않는다. prd 가 쓸 GC 로 재려는 것이다.
   # ★ dev 는 limit 1536Mi 라 Serial 로 돈다. dev 부하 판의 숫자(CPU 계수 0.72 코어 · GC 멈춤 최대 0.66초 ·
   #   메모리 718Mi-1.5GB)는 Serial 조건에서 잰 것이다. stg 값이 그와 다르면 GC 차이를 먼저 의심한다.
-  JAVA_OPTS: "-XX:+UseG1GC -XX:MaxRAMPercentage=50 -Djava.net.preferIPv4Stack=true"
+  # ★ 진단용(2026-09-12 stg 첫 기동). 가상 스레드가 캐리어를 붙잡은 채(pinned) 멈춰 요청이 Spring 에
+  #   들어가기 전에 수십 초를 기다리는 증상 — Tomcat %D 15-100초 vs Spring 안 계측 0.2초, CPU 놀고 DB 풀 비어 있음.
+  #   붙잡는 호출 지점을 JDK 가 stdout 에 찍게 한다. 원인이 잡히면 이 옵션은 뺀다.
+  JAVA_OPTS: "-XX:+UseG1GC -XX:MaxRAMPercentage=50 -Djava.net.preferIPv4Stack=true -Djdk.tracePinnedThreads=short"
   OTLP_HTTP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318/v1/traces
 imageUpdater:
   resolvedImage: 527170477076.dkr.ecr.ap-northeast-2.amazonaws.com/cgv/cgv-onprem/booking
