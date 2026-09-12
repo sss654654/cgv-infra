@@ -2,7 +2,9 @@
 #
 # dev 와 갈리는 것이 진입 층이다. 집은 Cloudflare → OPNsense → MetalLB → Traefik 이 받았고
 #   여기는 ALB 하나가 받는다. 그래서 className 과 애노테이션이 통째로 바뀐다.
-#   도메인·인증서는 안 쓴다 — ALB 기본 DNS 이름과 80 뿐이라 tls 블록도 없다.
+#   TLS 종료 지점도 갈린다 — 집은 Cloudflare 가, 여기는 ALB 가 끝낸다. 둘 다 ALB · Traefik 뒤로는
+#   평문이라 파드가 받는 것은 같다.
+# tls 블록은 안 쓴다. ALB Controller 는 spec.tls 가 아니라 애노테이션과 host 로 인증서를 정한다.
 
 image:
   tag: ed6eef00 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
@@ -16,8 +18,8 @@ resources:
   # dev 와 같은 모양으로 둔다. 집에서 연결을 받아 주던 것은 Traefik 이고 여기서는 ALB 가
   #   그 자리다 — 이 nginx 가 물려받는 것은 정적 서빙과 /api/movies 프록시뿐이라
   #   연결 수에 비례해 늘어나는 몫이 없다.
-  # ★ cpu request 가 00 안에서 두 값으로 적혀 있다 — 파드 스펙 표는 50m, 노드 request 합산은
-  #   3×100m 이다. 노드 크기를 정한 쪽 수를 따른다.
+  # cpu request 는 노드 크기를 산정할 때 쓴 값(파드당 100m × 3대)과 같게 둔다 —
+  #   노드에 자리가 있다고 계산해 놓고 파드가 더 적게 요청하면 그 계산이 뜻을 잃는다.
   requests: {cpu: 100m, memory: 64Mi}
   limits: {cpu: 500m, memory: 128Mi}
 autoscaling:
@@ -50,7 +52,25 @@ ingress:
     # 파드 IP 를 직접 대상으로 잡는다. VPC CNI 가 파드에 VPC 주소를 주므로 가능하고,
     #   instance 모드처럼 NodePort 를 한 번 더 거치지 않는다.
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # 80 은 리다이렉트만 하고 실제 트래픽은 443 으로 받는다.
+    #   인증서는 적지 않는다 — 컨트롤러가 아래 host 와 이름이 맞는 ISSUED 인증서를 ACM 에서 찾아 붙인다.
+    #   ARN 을 값 파일에 적으면 인증서를 다시 발급할 때마다 이 파일을 고쳐야 한다.
+    #   ★ 인증서가 ISSUED 가 되기 전에 이 값이 반영되면 컨트롤러가 붙일 인증서를 못 찾아 Ingress 조정이 실패한다.
+    #     cgv-terraform bootstrap 의 검증 CNAME 을 먼저 넣고 발급을 확인한 뒤 반영한다.
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # 받아 줄 TLS 버전과 암호군. 안 적으면 ALB 기본 정책이 붙는데 그쪽은 TLS 1.0 · 1.1 까지 받는다.
+    #   이 정책은 1.2 와 1.3 만 받는다 — 1.0 · 1.1 은 취약점이 공개돼 있고 주요 브라우저가 이미 끊었다.
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    # 요청 하나하나를 S3 에 남긴다. 파드 로그에는 파드까지 온 요청만 있어서, ALB 가 자기 선에서
+    #   끝낸 것(아래 초기화 API 차단 403 · 붙을 대상이 없을 때의 5xx · TLS 실패)은 여기에만 남는다.
+    #   부하 판에서 받은 오류가 ALB 것인지 파드 것인지 가르는 자료다.
+    # 버킷 이름은 <접두사>-alb-logs-<계정 ID> 규칙이라 판이 바뀌어도 같다(cgv-terraform bootstrap).
+    #   쓰는 권한은 버킷 정책이 리전의 ELB 서비스 계정에만 열어 둔다.
+    alb.ingress.kubernetes.io/load-balancer-attributes: >-
+      access_logs.s3.enabled=true,
+      access_logs.s3.bucket=cgv-stg-alb-logs-527170477076,
+      access_logs.s3.prefix=frontend
     # Terraform 이 만든 서비스용 보안 그룹 — 인터넷 전체에 80 을 연다(누구나 대기열 · 예매를 쓴다).
     #   Grafana ALB 는 집 공인 IP 만 받는 다른 보안 그룹(cgv-stg-alb-admin)이다. 한 그룹을 같이 쓰면
     #   서비스를 여는 순간 Grafana 도 열린다.
@@ -75,8 +95,12 @@ ingress:
   # 경로 규칙 — apps/frontend 의 넷 앞에 초기화 API 차단 둘을 둔다. 목록은 통째로 덮으므로 넷도 다시 적는다.
   #   ALB 규칙은 적힌 순서대로 평가된다. 차단이 /api · /api/admission 보다 앞에 있어야 먼저 걸린다.
   #   service 자리의 deny-admin 은 위 actions.deny-admin 애노테이션 이름이고, 포트는 이름 use-annotation 이다.
-  # host 를 비워 둔다 — 도메인이 없고, 적으면 그 이름의 Host 헤더로 온 것만 받아
-  #   ALB 기본 DNS 이름으로 들어오는 접근이 끊긴다.
+  # 이 이름의 Host 헤더로 온 것만 받는다. ALB 기본 DNS 이름으로는 안 열린다 —
+  #   ALB 가 생긴 뒤 이 이름의 CNAME 을 ALB DNS 로 걸어야 통한다(Cloudflare, 프록시 끄고 DNS only).
+  #   프록시를 켜면 부하가 Cloudflare 로 가서 재는 값이 이 시스템 것이 아니게 된다.
+  # 평문 http 로 열면 브라우저가 보안 컨텍스트 전용 API 를 안 준다 — crypto.randomUUID 가 undefined 가 되어
+  #   프런트가 폴백으로 내려가고, 그 폴백이 만든 id 가 겹쳐 관객 전원이 한 사람으로 처리됐다(2026-09-12).
+  host: ticket-stg.subinhong.dev
   paths:
   - {path: /api/admin, pathType: Prefix, service: deny-admin, portName: use-annotation}
   - {path: /api/admission/reset, pathType: Exact, service: deny-admin, portName: use-annotation}
