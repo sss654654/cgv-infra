@@ -1,7 +1,8 @@
 # mimir stg 환경값 — 오브젝트 저장소 접속과 ingester 배치.
 #
 # dev 와 갈리는 것이 셋이다.
-#   저장소     MinIO(클러스터 안) → S3.  주소를 안 적는다 — 리전 엔드포인트를 SDK 가 스스로 찾는다.
+#   저장소     MinIO(클러스터 안) → S3.  리전 엔드포인트를 적는다 — Mimir 의 S3 클라이언트(thanos objstore)는
+#             endpoint 가 비어 있으면 "no s3 endpoint in config file" 로 기동을 거부한다(2026-09-12 stg 첫 기동).
 #   자격       SealedSecret → IRSA.  키를 파드에 넣지 않는다 → extraEnvFrom 이 없어진다.
 #   ingester   셋 → 하나, 복제 계수 3 → 1.
 #
@@ -23,7 +24,8 @@ mimir:
         s3:
           bucket_name: cgv-stg-mimir-527170477076
           region: ap-northeast-2
-          # endpoint 를 안 적는다. 적으면 그 주소로 고정돼 리전 라우팅을 잃는다.
+          # 리전 엔드포인트. 비워 두면 기동을 거부한다(위 머리말).
+          endpoint: s3.ap-northeast-2.amazonaws.com
           insecure: false
 
 # IRSA — 역할 하나를 관측 셋이 같이 쓴다(신뢰 정책의 sub 에 mimir·loki·tempo 셋).

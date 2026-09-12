@@ -1,7 +1,9 @@
 # tempo stg 환경값 — 오브젝트 저장소 접속과 WAL 볼륨.
 #
 # dev 와 갈리는 것이 셋이다.
-#   저장소   MinIO(클러스터 안) → S3.  주소를 안 적는다 — 리전 엔드포인트를 SDK 가 스스로 찾는다.
+#   저장소   MinIO(클러스터 안) → S3.  리전 엔드포인트를 적는다 — Tempo 의 S3 클라이언트(minio-go)는
+#           endpoint 가 비어 있으면 "Endpoint: does not follow ip address or domain name standards" 로
+#           기동을 거부한다(2026-09-12 stg 첫 기동).
 #           TLS 라 insecure 를 끄고, S3 는 가상 호스트 방식이 기본이라 forcepathstyle 도 끈다.
 #   자격     SealedSecret → IRSA.  키를 파드에 넣지 않는다.
 #           ServiceAccount 에 역할 ARN 을 달면 토큰이 STS 로 교환되고 SDK 가 그걸 쓴다.
@@ -14,7 +16,8 @@ tempo:
       s3:
         bucket: cgv-stg-tempo-527170477076
         region: ap-northeast-2
-        # endpoint 를 안 적는다. 적으면 그 주소로 고정돼 리전 라우팅을 잃는다.
+        # 리전 엔드포인트. 비워 두면 기동을 거부한다(위 머리말).
+        endpoint: s3.ap-northeast-2.amazonaws.com
         insecure: false
         forcepathstyle: false
 
