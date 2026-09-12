@@ -14,7 +14,7 @@ grafana.ini:
   server:
     # ALB 의 DNS 이름. 만들 때 정해지므로 그날 채운다.
     #   비워 두면 Grafana 가 내부 주소(:3000)를 링크에 써서 밖에서 눌러도 안 열린다.
-    root_url: PLACEHOLDER
+    root_url: http://k8s-observab-grafana-7a716930ba-1617123753.ap-northeast-2.elb.amazonaws.com/
 
 ingress:
   enabled: true
