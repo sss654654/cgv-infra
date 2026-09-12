@@ -221,8 +221,8 @@ data:
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
           "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" } ],
           "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(booking_admission_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "승격→인증 p99" },
-            { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_kafka_publish_duration_seconds_bucket{topic=\"admissions\"}[$__rate_interval])))", "legendFormat": "그중 queue 발행 p99" },
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(booking_admission_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "승격→인증 p99", "exemplar": true },
+            { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_kafka_publish_duration_seconds_bucket{topic=\"admissions\"}[$__rate_interval])))", "legendFormat": "그중 queue 발행 p99", "exemplar": true },
             { "refId": "C", "expr": "sum(rate(queue_kafka_published_total{topic=\"admissions\"}[$__rate_interval])) or vector(0)", "legendFormat": "자리 준 수/초" },
             { "refId": "D", "expr": "sum(rate(booking_admissions_total{result=\"ok\"}[$__rate_interval])) or vector(0)", "legendFormat": "인증 발급/초" },
             { "refId": "E", "expr": "sum(rate(queue_kafka_publish_failures_total[$__rate_interval])) or vector(0)", "legendFormat": "발행 실패/초" }
@@ -236,7 +236,7 @@ data:
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
           "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" } ],
           "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_completed_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "확정→반환 p99" },
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_completed_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "확정→반환 p99", "exemplar": true },
             { "refId": "B", "expr": "sum(rate(booking_confirm_total{result=\"success\"}[$__rate_interval])) or vector(0)", "legendFormat": "확정/초" },
             { "refId": "C", "expr": "sum(rate(queue_completed_total[$__rate_interval])) or vector(0)", "legendFormat": "반환/초" }
           ],
