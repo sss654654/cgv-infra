@@ -65,7 +65,10 @@ env:
   #   블록을 지우는 것이 아니라 프로파일을 안 켜는 방식이어야 한다.
   # ElastiCache 가 복제본으로 전환하면 이 주소(주 엔드포인트)가 새 주를 가리킨다. 끊긴 연결은
   #   Lettuce 가 다시 붙고, 그 사이의 명령은 2초 타임아웃 뒤 503(redis_error)으로 끝난다.
-  REDIS_HOST: cgv-stg.gl3ph0.ng.0001.apn2.cache.amazonaws.com # 켜는 날 terraform output handoff 의 redis_host
+  # ★ 전송 구간 암호화를 켜면 이 이름이 바뀐다 — 평문은 <이름>.<조각>.ng.0001.<리전>… 이고
+  #   암호화를 켜면 master.<이름>.<조각>.<리전>… 이다. 서버 인증서가 *.<이름>.<조각>.<리전>… 에만
+  #   발급돼 있어 옛 이름으로는 TLS 검증이 실패한다(2026-09-12 확인).
+  REDIS_HOST: master.cgv-stg.gl3ph0.apn2.cache.amazonaws.com # 켜는 날 terraform output handoff 의 redis_host
   REDIS_PORT: "6379"
   # 관리형 Redis 라 보안 그룹만으로는 "누구인가" 를 못 가른다. 비밀번호(REDIS_PASSWORD)는
   #   booking-secrets 로 들어오고, ElastiCache 는 전송 구간 암호화를 켜야 그 비밀번호를 받는다.
