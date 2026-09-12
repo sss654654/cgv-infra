@@ -124,12 +124,12 @@ data:
         },
         {
           "id": 25, "type": "stat", "title": "불변식 — 버짓이 없다",
-          "description": "SLO 가 아니다. \"정원 초과를 0.1% 까지 허용\" 은 말이 안 되므로 참/거짓이다. 0 이 아니면 판이 무효이고, 목표가 아니라 코드를 고칠 일이다.\n\n정원 초과 = 입장 − 정원. 게이트가 Redis Lua 안에서 원자로 도는데 그게 깨진 것이다.\n전달 유실 = 자리 준 수 − booking 이 받은 수. SLO 4 는 받은 것만 세어 유실을 못 보므로 이 값이 그 자리를 맡는다.\n\n★ 두 카운터를 구간 함수 없이 그대로 뺀다. increase() 는 구간 양끝을 외삽해 시계열마다 오차가 생기고(queue 4 + booking 2 = 6개), 실제로 유실이 0 인데 −24 로 찍힌 적이 있다. 정확히 맞아야 하는 값에 외삽 함수를 쓰면 안 된다.\n파드가 판 도중에 다시 뜨면 그쪽 카운터가 0 으로 돌아가 이 값이 음수가 된다 — 그때는 유실이 아니라 재시작을 본 것이므로 파드 나이를 먼저 확인한다.",
+          "description": "SLO 가 아니다. \"정원 초과를 0.1% 까지 허용\" 은 말이 안 되므로 참/거짓이다. 0 이 아니면 판이 무효이고, 목표가 아니라 코드를 고칠 일이다.\n\n정원 초과 = 입장 − 정원. 게이트가 Redis Lua 안에서 원자로 도는데 그게 깨진 것이다.\n미소비 잔량 = 브로커가 세는 \"발행됐는데 booking 이 아직 안 가져간 수\"(컨슈머 그룹 랙). 판이 끝난 뒤 0 이어야 한다. SLO 4 는 받은 것만 세어 유실을 못 보므로 이 값이 그 자리를 맡는다.\n\n★ 앱 카운터 둘의 뺄셈(발행 − 수신)을 썼다가 두 번 틀렸다. increase() 는 외삽 오차로 −24 가 나왔고, 카운터 직접 뺄셈은 booking 파드가 판 앞에 재시작해 한쪽만 0 에서 시작하자 −12 가 나왔다. 랙은 브로커 오프셋의 차라 외삽도 없고 파드 재시작에도 안 흔들린다.\n한계: kafka-exporter 가 30초마다 한 번 보므로 판 도중의 순간 밀림은 여기 안 잡힌다 — 그건 3행의 승격→인증 지연이 본다. 여기는 \"끝나고 남았나\" 다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
           "targets": [
             { "refId": "A", "expr": "max_over_time((max(queue_active) - max(queue_capacity))[$__range:]) > 0 or vector(0)", "legendFormat": "정원 초과" },
-            { "refId": "B", "expr": "(sum(queue_kafka_published_total{topic=\"admissions\"}) - sum(booking_admissions_total{result=\"ok\"})) or vector(0)", "legendFormat": "전달 유실" }
+            { "refId": "B", "expr": "sum(kafka_consumergroup_lag{topic=\"admissions\"}) or vector(0)", "legendFormat": "미소비 잔량" }
           ],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name", "graphMode": "none", "orientation": "vertical" },
           "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] }

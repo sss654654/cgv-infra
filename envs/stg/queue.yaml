@@ -22,12 +22,22 @@ resources:
   # request 는 실사용에 맞춘다 — 5만 기준 파드당 0.39 코어.
   #   3만 판이 무너진 원인이 request(320Mi)와 실사용(1.7GB)의 괴리였다.
   # limit 은 예상치에 안 붙인다.
-  #   CPU  파드당 0.39 코어 예상에 1000m 이면 39%. dev 와 같은 값이라 GOMAXPROCS 도 1 그대로다.
   #   메모리 예상은 파드당 약 190Mi(3만에서 225.6Mi)인데 1Gi 로 둔다.
   #        연결 수 예측이 크게 빗나간 적이 있어서다 — 3만 판에서 폴링 동시요청을 458 로 봤는데
   #        origin 연결이 23,000 까지 갔다. 이 파드의 메모리는 연결 수에 비례한다(연결당 33-64KB).
-  requests: {cpu: 400m, memory: 250Mi}
-  limits: {cpu: 1000m, memory: 1Gi}
+  # ★ CPU limit 1000m → 2000m (2026-09-12). 이유는 사용량이 아니라 병렬도다.
+  #   automaxprocs 가 limit 에서 GOMAXPROCS 를 정하므로 1000m 이면 P 가 하나다.
+  #   1만 명 판 오픈 순간 실측: 고루틴 213 → 10,543 · 실행 대기 고루틴 405(한 파드) ·
+  #     스케줄 대기 p99 117ms · CPU 는 0.18코어.
+  #   CPU 는 남는데 느리다 — P 하나가 고루틴 만 개의 TLS 핸드셰이크 · 소켓 읽기 · JSON 을
+  #     순서대로 처리해서다. 실행 가능 405개가 한 바퀴 도는 데 100ms 가 넘고, 그 지연이 Redis
+  #     ReadTimeout(당시 500ms)을 넘겨 커넥션 폐기 → 재dial 의 churn 을 유발했다(redis/client.go).
+  #   booking 의 CPU 증설과는 근거가 다르다. 그쪽은 스로틀(한도에 닿음)이었고 여기는 스로틀 0 에
+  #     실행 대기 405 다. 주범은 풀 콜드스타트(MinIdleConns)이고 이건 증폭기라, 자기 지표
+  #     (go_sched_goroutines_runnable · go_sched_latencies)로 따로 판정한다.
+  #   10만은 파드 수로 받는다 — 폴링이 사용자 수에 정비례하고 이 값은 파드당 바닥이다.
+  requests: {cpu: 500m, memory: 250Mi}
+  limits: {cpu: 2000m, memory: 1Gi}
 # ★ 2026-09-12 부하 판 동안은 오토스케일링을 끄고 4대로 고정한다.
 #
 # 두 가지 때문이다.
