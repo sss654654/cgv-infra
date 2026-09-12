@@ -49,15 +49,19 @@ config: |-
         regions: [ap-northeast-2]
         period: 60
         length: 300
+        # nilToZero — 그 1분에 해당 사건이 한 건도 없으면 CloudWatch 는 값을 안 준다.
+        #   기본값(false)이면 NaN 이 나가고, NaN 이 섞인 sum·나눗셈은 통째로 NaN 이 돼
+        #   화면이 빈칸이 된다. 건수 지표는 "사건이 없었다 = 0" 이 사실이므로 0 으로 채운다.
+        #   응답 시간·호스트 수는 채우지 않는다 — 0 이 "빨랐다"·"전부 죽었다" 라는 거짓이 된다.
         metrics:
-          - { name: RequestCount,              statistics: [Sum] }
+          - { name: RequestCount,              statistics: [Sum], nilToZero: true }
           # p99 — 앱 쪽 지연을 p99 로 보므로 ALB 가 잰 것도 같은 통계로 맞춘다(stg · 흐름 1행)
           - { name: TargetResponseTime,        statistics: [Average, Maximum, p99] }
-          - { name: HTTPCode_ELB_5XX_Count,    statistics: [Sum] }
-          - { name: HTTPCode_Target_5XX_Count, statistics: [Sum] }
-          - { name: ActiveConnectionCount,     statistics: [Sum] }
-          - { name: NewConnectionCount,        statistics: [Sum] }
-          - { name: RejectedConnectionCount,   statistics: [Sum] }
+          - { name: HTTPCode_ELB_5XX_Count,    statistics: [Sum], nilToZero: true }
+          - { name: HTTPCode_Target_5XX_Count, statistics: [Sum], nilToZero: true }
+          - { name: ActiveConnectionCount,     statistics: [Sum], nilToZero: true }
+          - { name: NewConnectionCount,        statistics: [Sum], nilToZero: true }
+          - { name: RejectedConnectionCount,   statistics: [Sum], nilToZero: true }
           # ConsumedLCUs 는 뺐다 — ALB 요금 단위라 "어디가 막혔나" 와 무관하고,
           #   비용은 예산 경보와 Cost Explorer 가 본다. 판정에 안 쓰는 선이 화면 자리를 차지했다.
       # 대상그룹 — 서비스별로 가른다. 위 job 이 ALB 하나의 합계라 frontend · queue · booking 을
@@ -74,11 +78,12 @@ config: |-
         length: 300
         dimensionNameRequirements: [TargetGroup, LoadBalancer]
         metrics:
-          - { name: RequestCountPerTarget,        statistics: [Sum] }
+          - { name: RequestCountPerTarget,        statistics: [Sum], nilToZero: true }
           - { name: TargetResponseTime,           statistics: [Average, p99] }
-          - { name: HTTPCode_Target_2XX_Count,    statistics: [Sum] }
-          - { name: HTTPCode_Target_4XX_Count,    statistics: [Sum] }
-          - { name: HTTPCode_Target_5XX_Count,    statistics: [Sum] }
+          # 로비 가용률(SLO 1)의 분자·분모다. NaN 이면 나눗셈 전체가 NaN 이라 판정이 빈칸이 된다.
+          - { name: HTTPCode_Target_2XX_Count,    statistics: [Sum], nilToZero: true }
+          - { name: HTTPCode_Target_4XX_Count,    statistics: [Sum], nilToZero: true }
+          - { name: HTTPCode_Target_5XX_Count,    statistics: [Sum], nilToZero: true }
           - { name: HealthyHostCount,             statistics: [Average, Minimum] }
           - { name: UnHealthyHostCount,           statistics: [Maximum] }
       # MySQL — dev 의 mysqld_exporter 자리. CPU · 연결 · 메모리 · 디스크 대기
