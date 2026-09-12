@@ -1,4 +1,4 @@
-# stg · queue — queue 자신인가, queue 가 기다리는 쪽인가.
+﻿# stg · queue — queue 자신인가, queue 가 기다리는 쪽인가.
 #
 # dev 의 queue 대시보드에서 queue 파드 섹션을 가져오고 다듬었다.
 #   뺀 것   Traefik 섹션(stg 입구는 ALB — 흐름 장 1행) · 지연 p99 · 5xx(흐름 장 2행)
@@ -44,7 +44,7 @@ data:
           "targets": [
             { "refId": "A", "expr": "max by (pod) (container_memory_working_set_bytes{namespace=\"app\", container=\"queue\"}) / on(pod) max by (pod) (kube_pod_container_resource_limits{namespace=\"app\", container=\"queue\", resource=\"memory\"})", "legendFormat": "{{pod}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1.05, "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)(queue|booking|frontend)-[a-z0-9]+-([a-z0-9]{5})", "renamePattern": "          $3" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1.05, "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] }
         },
         {
           "id": 2, "type": "timeseries", "title": "CPU · 스로틀 — limit 대비",
@@ -55,11 +55,11 @@ data:
             { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / on(pod) max by (pod) (kube_pod_container_resource_limits{namespace=\"app\", container=\"queue\", resource=\"cpu\"})", "legendFormat": "CPU {{pod}}" },
             { "refId": "B", "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) and on(pod) (kube_pod_status_phase{namespace=\"app\", phase=\"Running\"} == 1)", "legendFormat": "스로틀 {{pod}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)(queue|booking|frontend)-[a-z0-9]+-([a-z0-9]{5})", "renamePattern": "          $3" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
         },
         {
           "id": 3, "type": "timeseries", "title": "동시 요청 · request 대비 사용",
-          "description": "고루틴 = 파드 안에 동시에 들어와 있는 요청 수다(요청마다 하나씩 뜨고, 이 서버에는 연결 수 상한이 없다). dev 3만 판에서 폴링 동시요청을 458 로 예측했는데 origin 연결이 23,000 까지 갔다 — 그 예측이 이번에도 빗나가는지 여기서 본다. 이 파드의 메모리는 연결 수에 비례한다(연결당 33-64KB).\n\n오른쪽 축 둘은 request 대비 실사용이다. limit 대비(왼쪽 두 패널)는 \"죽는가\" 를 보고, request 대비는 \"스펙을 맞게 잡았나\" 를 본다 — 부하 판의 산출물이 이 값이다. 1.0 을 크게 넘으면 request 가 작아 스케줄러가 노드 자리를 잘못 계산한 것이고, 크게 밑돌면 자리를 낭비한 것이다.",
+          "description": "동시 요청 = 파드 안에 지금 들어와 있는 요청 수(고루틴). 이 파드의 메모리가 여기 비례한다(연결당 33-64KB). dev 3만 판에서 458 로 예측했는데 23,000 까지 갔다 — 그 예측이 이번에도 빗나가는지 본다.\n\n오른쪽 축 = request 대비 실사용. limit 대비는 \"죽는가\", request 대비는 \"스펙이 맞나\" 다 — 이 값이 부하 판의 산출물이다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
           "targets": [
@@ -67,7 +67,7 @@ data:
             { "refId": "B", "expr": "avg(sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / on(pod) max by (pod) (kube_pod_container_resource_requests{namespace=\"app\", container=\"queue\", resource=\"cpu\"}))", "legendFormat": "CPU / request" },
             { "refId": "C", "expr": "avg(max by (pod) (container_memory_working_set_bytes{namespace=\"app\", container=\"queue\"}) / on(pod) max by (pod) (kube_pod_container_resource_requests{namespace=\"app\", container=\"queue\", resource=\"memory\"}))", "legendFormat": "메모리 / request" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/ request$" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)(queue|booking|frontend)-[a-z0-9]+-([a-z0-9]{5})", "renamePattern": "          $3" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/ request$" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
 
         { "type": "row", "title": "2. 확장 — HPA (4-8대)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "collapsed": false, "panels": [] },
@@ -82,17 +82,17 @@ data:
             { "refId": "C", "expr": "max(kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=\"queue\"})", "legendFormat": "max" },
             { "refId": "D", "expr": "avg(sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / on(pod) max by (pod) (kube_pod_container_resource_requests{namespace=\"app\", container=\"queue\", resource=\"cpu\"}))", "legendFormat": "CPU / request (평균)" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "CPU / request (평균)" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)(queue|booking|frontend)-[a-z0-9]+-([a-z0-9]{5})", "renamePattern": "          $3" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "CPU / request (평균)" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 5, "type": "timeseries", "title": "배경 루프 — 마지막 완주로부터 지난 시간",
-          "description": "★ 이 선이 30초를 넘으면 그 루프가 멈춘 것이다. 멈추면 화면에 아무 오류도 안 나오는데 일이 진행되지 않는다 — 요청은 전부 200 이고 CPU 도 한가한데 대기자가 안 줄어든다.\n\npromote           승격. 멈추면 빈자리가 있는데 아무도 안 들어간다(주기 0.5초)\nsession_timeout   입장 만료 회수. 멈추면 자리가 안 돌아와 대기가 쌓인다(주기 10초)\nwaiting_timeout   폴링이 끊긴 대기자 정리. 멈추면 유령이 줄에 남는다(주기 10초)\npending_sweep     발행 못 한 이벤트 재발행. 멈추면 booking 이 입장을 영영 모른다(주기 5초)\n\n★ 정상인데도 0 이 아니다. 도장은 파드 안에서 매 틱 찍히지만 수집은 15초마다라, 쿼리 시각과\n  마지막 수집 사이의 간격이 그대로 더해진다 — 주기 0.5초인 승격도 0에서 15초 사이를 오간다.\n  그래서 선이 아니라 30초 임계로 본다(가장 느린 루프 10초 + 수집 15초 + 여유).\n\n도장은 틱이 끝날 때 찍는다 — 시작에 찍으면 도는 중에 멈춘 것을 못 잡는다.\n루프가 도는데도 승격이 안 되면 발행 실패로 승격을 쉬는 중일 수 있다(아래 Kafka 발행 실패).",
+          "description": "25초를 넘으면 그 루프가 멈춘 것이다. 멈추면 오류가 하나도 안 나오면서 일만 진행되지 않는다 — 요청은 200 이고 CPU 도 한가한데 대기자가 안 줄어든다.\n\npromote 승격 · session_timeout 만료 회수 · waiting_timeout 대기자 정리 · pending_sweep 재발행\n\n정상값이 0 이 아니다 — 수집 주기(15초)가 그대로 더해진다. 임계는 가장 느린 루프(10초)+15초.\n루프는 도는데 승격이 안 되면 발행 실패로 쉬는 중이다(오른쪽 Kafka 발행 실패).",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
           "targets": [
             { "refId": "A", "expr": "time() - max by (loop) (queue_loop_last_tick_timestamp_seconds)", "legendFormat": "{{loop}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 30 } ] } }, "overrides": [] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)(queue|booking|frontend)-[a-z0-9]+-([a-z0-9]{5})", "renamePattern": "          $3" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 25 } ] } }, "overrides": [] }
         },
 
         { "type": "row", "title": "3. 기다리는 것 — 늘면 stg · 데이터", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "collapsed": false, "panels": [] },
@@ -107,7 +107,7 @@ data:
             { "refId": "B", "expr": "sum(rate(queue_redis_pool_timeouts_total[$__rate_interval])) or vector(0)", "legendFormat": "풀 타임아웃/초" },
             { "refId": "C", "expr": "sum by (state) (queue_redis_pool)", "legendFormat": "연결 {{state}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "연결 .*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)(queue|booking|frontend)-[a-z0-9]+-([a-z0-9]{5})", "renamePattern": "          $3" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "연결 .*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 7, "type": "timeseries", "title": "Kafka 발행 — p99 · 실패",
@@ -119,7 +119,7 @@ data:
             { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, topic) (rate(queue_kafka_publish_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "p99 {{topic}}" },
             { "refId": "B", "expr": "sum(rate(queue_kafka_publish_failures_total[$__rate_interval])) or vector(0)", "legendFormat": "실패/초" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byName", "options": "실패/초" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)(queue|booking|frontend)-[a-z0-9]+-([a-z0-9]{5})", "renamePattern": "          $3" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byName", "options": "실패/초" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
 
         { "type": "row", "title": "4. 흔적", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "collapsed": false, "panels": [] },

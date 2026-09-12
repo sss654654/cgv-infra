@@ -1,4 +1,4 @@
-# stg · 흐름 — 통과했나(0행), 아니라면 어디서 막혔나(1-4행).
+﻿# stg · 흐름 — 통과했나(0행), 아니라면 어디서 막혔나(1-4행).
 #
 # 0행이 판정이고 1-4행이 진단이다. 한 화면에 둔 이유는 "깨졌다 → 바로 아래에서 왜" 로
 #   눈이 이어지게 하려는 것이다. 장을 나누면 그 사이에 클릭이 하나 들어가고, 부하 판 중에는
@@ -38,10 +38,14 @@
 #   그래서 둘을 비교하는 패널(2번)에서는 앱 쪽도 1분 창으로 맞춰 계산한다. 봉우리 자체는
 #   2 · 4행의 15초 지표로 본다.
 #
-# ★ 켜는 날 확인할 것
-#   - YACE 가 내는 지표 이름(snake_case 변환)은 문서에 없어 이름을 정규식으로 받는다
-#   - dimension_TargetGroup 에 대상그룹 셋이 오는지(ALB Controller 가 짓는 이름 k8s-app-frontend-…)
-#   - booking 히스토그램의 le 라벨이 "1.0" 인지 "1" 인지(Micrometer 는 소수점을 붙인다)
+# ★ 두 가지를 라이브에서 확인해 고쳤다(2026-09-12 예열 판).
+#   le 라벨은 "1" 이 아니라 "1.0" 이다. queue(Go client_golang) · booking(Micrometer) · 전파 지연
+#     셋 다 같다. "1" 로 적으면 아무것도 안 걸려 패널이 No data 가 되는데, 그 화면은
+#     "지표가 없다" 가 아니라 "조건에 맞는 요청이 없다" 로 읽힌다.
+#   queue_waiting · queue_active 는 sum 하면 안 된다. Redis 의 한 값을 파드 넷이 각각 보고하므로
+#     sum 은 네 배가 된다 — 정원 1,000 인데 입장이 4,000 으로 보여 정원 초과 불변식이
+#     항상 위반으로 떴다. max 로 읽는다.
+#   지표 이름(YACE snake_case)은 정규식으로 받는다 — 문서에 변환 규칙이 없다.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -91,18 +95,18 @@ data:
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
           "targets": [
-            { "refId": "A", "expr": "sum(increase(queue_http_request_duration_seconds_bucket{path=\"/api/admission/position\", status=\"200\", le=\"1\"}[$__range])) / sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/position\"}[$__range]))" }
+            { "refId": "A", "expr": "sum(increase(queue_http_request_duration_seconds_bucket{path=\"/api/admission/position\", status=\"200\", le=\"1.0\"}[$__range])) / sum(increase(queue_http_request_duration_seconds_count{path=\"/api/admission/position\"}[$__range]))" }
           ],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "graphMode": "none" },
           "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.99 } ] } }, "overrides": [] }
         },
         {
           "id": 23, "type": "stat", "title": "4. 전파 — 들어가면 문이 열려 있다",
-          "description": "queue 가 화면에 \"입장했습니다\" 를 띄운 순간과 booking 이 그 사실을 아는 순간이 다르다. 그 사이에 회차를 누르면 403 이고, 사용자 눈에는 \"입장했는데 거절당했다\" 다.\n\n★ 이 구간은 어느 요청 지표에도 안 나타난다 — queue 의 enter 도 booking 의 403 도 각자 기준으로는 정상이고 빠르다. 둘 다 멀쩡한데 사용자만 실패한다. 그래서 따로 잰다.\n\n좋은 사건 = 1초 안에 booking 에 도달 · 유효한 사건 = 입장 확정 전체\n목표 99.9%. 이미 줄 서서 기다린 사람이라 엄격하다.",
+          "description": "queue 가 \"입장했습니다\" 를 띄운 순간과 booking 이 그 사실을 아는 순간이 다르다. 그 사이에 회차를 누르면 403 — 사용자 눈에는 \"입장했는데 거절당했다\" 다.\n★ 이 구간은 어느 요청 지표에도 안 나타난다. enter 도 403 도 각자 기준으로는 정상이고 빠른데 사용자만 실패한다.\n\n좋은 = 1초 안에 booking 도달 · 유효 = 입장 확정 전체 · 목표 99.9%",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
           "targets": [
-            { "refId": "A", "expr": "sum(increase(booking_admission_lag_seconds_bucket{le=~\"1(\\\\.0)?\"}[$__range])) / sum(increase(booking_admission_lag_seconds_count[$__range]))" }
+            { "refId": "A", "expr": "sum(increase(booking_admission_lag_seconds_bucket{le=\"1.0\"}[$__range])) / sum(increase(booking_admission_lag_seconds_count[$__range]))" }
           ],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "graphMode": "none" },
           "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.999 } ] } }, "overrides": [] }
@@ -113,18 +117,18 @@ data:
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
           "targets": [
-            { "refId": "A", "expr": "sum(increase(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/screenings|/api/seats|/api/seats/select|/api/bookings\", status=~\"2..\", le=~\"1(\\\\.0)?\"}[$__range])) / sum(increase(http_server_requests_seconds_count{application=\"cgv-booking\", uri=~\"/api/screenings|/api/seats|/api/seats/select|/api/bookings\", status!=\"409\"}[$__range]))" }
+            { "refId": "A", "expr": "sum(increase(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/screenings|/api/seats|/api/seats/select|/api/bookings\", status=~\"2..\", le=\"1.0\"}[$__range])) / sum(increase(http_server_requests_seconds_count{application=\"cgv-booking\", uri=~\"/api/screenings|/api/seats|/api/seats/select|/api/bookings\", status!=\"409\"}[$__range]))" }
           ],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "graphMode": "none" },
           "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.99 } ] } }, "overrides": [] }
         },
         {
           "id": 25, "type": "stat", "title": "불변식 — 버짓이 없다",
-          "description": "SLO 가 아니다. \"정원 초과를 0.1% 까지 허용한다\" 는 말이 안 되므로 목표가 아니라 참/거짓이다. 하나라도 0 이 아니면 판이 무효이고, 목표를 조정할 일이 아니라 코드를 고칠 일이다.\n\n정원 초과 = 입장 인원 − 정원. 정원 게이트는 Redis Lua 안에서 원자로 돈다(승격 · 즉시 입장 양쪽) — 이 값이 0 위로 가면 그 원자성이 깨진 것이다.\n전달 유실 = 자리를 준 수 − booking 이 받은 수. SLO 4 는 booking 이 받은 것만 세므로 유실을 못 본다. 그 눈먼 자리를 이 값이 맡는다.",
+          "description": "SLO 가 아니다. \"정원 초과를 0.1% 까지 허용\" 은 말이 안 되므로 참/거짓이다. 0 이 아니면 판이 무효이고, 목표가 아니라 코드를 고칠 일이다.\n\n정원 초과 = 입장 − 정원. 게이트가 Redis Lua 안에서 원자로 도는데 그게 깨진 것이다.\n전달 유실 = 자리 준 수 − booking 이 받은 수. SLO 4 는 받은 것만 세어 유실을 못 보므로 이 값이 그 자리를 맡는다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
           "targets": [
-            { "refId": "A", "expr": "max_over_time((sum(queue_active) - max(queue_capacity))[$__range:]) > 0 or vector(0)", "legendFormat": "정원 초과" },
+            { "refId": "A", "expr": "max_over_time((max(queue_active) - max(queue_capacity))[$__range:]) > 0 or vector(0)", "legendFormat": "정원 초과" },
             { "refId": "B", "expr": "(sum(increase(queue_kafka_published_total{topic=\"admissions\"}[$__range])) - sum(increase(booking_admissions_total{result=\"ok\"}[$__range]))) or vector(0)", "legendFormat": "전달 유실" }
           ],
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name", "graphMode": "none", "orientation": "vertical" },
@@ -142,7 +146,7 @@ data:
             { "refId": "B", "expr": "sum by (dimension_TargetGroup) ({__name__=~\"aws_applicationelb_httpcode_target_5_?xx_count_sum\", dimension_TargetGroup=~\".*k8s-app-.*\"})", "legendFormat": "5xx {{dimension_TargetGroup}}" },
             { "refId": "C", "expr": "sum({__name__=~\"aws_applicationelb_httpcode_elb_5_?xx_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "ALB 자신의 5xx" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "요청 .*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "요청 .*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 2, "type": "timeseries", "title": "지연 p99 — ALB 가 잰 것 vs 앱이 잰 것 (둘 다 1분 창)",
@@ -154,7 +158,7 @@ data:
             { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=~\"/api/admission/(enter|position)\"}[1m])))", "legendFormat": "queue 앱" },
             { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/.*\"}[1m])))", "legendFormat": "booking 앱" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
         },
         {
           "id": 3, "type": "timeseries", "title": "연결 · 대상 건강 (분당)",
@@ -167,7 +171,7 @@ data:
             { "refId": "C", "expr": "sum({__name__=~\"aws_applicationelb_rejected_connection_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "거부된 연결" },
             { "refId": "D", "expr": "sum by (dimension_TargetGroup) ({__name__=~\"aws_applicationelb_un_?healthy_host_count_maximum\", dimension_TargetGroup=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "비정상 대상 {{dimension_TargetGroup}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "비정상 대상.*|거부된 연결" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "비정상 대상.*|거부된 연결" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
 
         { "type": "row", "title": "2. 대기열 (queue) — 튀면 stg · queue", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "collapsed": false, "panels": [] },
@@ -181,7 +185,7 @@ data:
             { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/position\"}[$__rate_interval])))", "legendFormat": "순번 조회(판정 대상)", "exemplar": true },
             { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/enter\"}[$__rate_interval])))", "legendFormat": "enter(참고)", "exemplar": true }
           ],
-          "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "enter(참고)" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "enter(참고)" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] } ] }
         },
         {
           "id": 5, "type": "timeseries", "title": "인원 — 대기 · 입장 vs 정원",
@@ -190,11 +194,11 @@ data:
           "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
           "links": [ { "title": "→ stg · queue", "url": "/d/stg-queue/?${__url_time_range}" } ],
           "targets": [
-            { "refId": "A", "expr": "sum(queue_waiting)", "legendFormat": "대기" },
-            { "refId": "B", "expr": "sum(queue_active)", "legendFormat": "입장" },
+            { "refId": "A", "expr": "max(queue_waiting)", "legendFormat": "대기" },
+            { "refId": "B", "expr": "max(queue_active)", "legendFormat": "입장" },
             { "refId": "C", "expr": "max(queue_capacity)", "legendFormat": "정원" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "정원" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "정원" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } } ] } ] }
         },
         {
           "id": 6, "type": "timeseries", "title": "줄서기 성공률 · 상태별 (초당)",
@@ -206,7 +210,7 @@ data:
             { "refId": "A", "expr": "sum(rate(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\", status=~\"2..\"}[$__rate_interval])) / sum(rate(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\", status!=\"400\"}[$__rate_interval]))", "legendFormat": "성공률" },
             { "refId": "B", "expr": "sum by (status) (rate(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__rate_interval]))", "legendFormat": "enter {{status}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "성공률" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" }, { "id": "custom.lineWidth", "value": 2 } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "성공률" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" }, { "id": "custom.lineWidth", "value": 2 } ] } ] }
         },
 
         { "type": "row", "title": "3. 서비스 사이 전달 (Kafka) — 방향이 둘이다. 밀리면 stg · 데이터 3행", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }, "collapsed": false, "panels": [] },
@@ -223,7 +227,7 @@ data:
             { "refId": "D", "expr": "sum(rate(booking_admissions_total{result=\"ok\"}[$__rate_interval])) or vector(0)", "legendFormat": "인증 발급/초" },
             { "refId": "E", "expr": "sum(rate(queue_kafka_publish_failures_total[$__rate_interval])) or vector(0)", "legendFormat": "발행 실패/초" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 8, "type": "timeseries", "title": "돌려받는 방향 — booking 이 확정하고 queue 가 자리를 회수한다",
@@ -236,7 +240,7 @@ data:
             { "refId": "B", "expr": "sum(rate(booking_confirm_total{result=\"success\"}[$__rate_interval])) or vector(0)", "legendFormat": "확정/초" },
             { "refId": "C", "expr": "sum(rate(queue_completed_total[$__rate_interval])) or vector(0)", "legendFormat": "반환/초" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
 
         { "type": "row", "title": "4. 예매 (booking) — 튀면 stg · booking", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 }, "collapsed": false, "panels": [] },
@@ -250,7 +254,7 @@ data:
             { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/screenings|/api/seats|/api/seats/select|/api/bookings\"}[$__rate_interval])))", "legendFormat": "{{uri}}", "exemplar": true },
             { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=\"/api/screenings/board\"}[$__rate_interval])))", "legendFormat": "board(로비 · 참고)" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "board(로비 · 참고)" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "board(로비 · 참고)" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] } ] }
         },
         {
           "id": 10, "type": "timeseries", "title": "확정 결과 — 성공 vs 실패 사유 (초당)",
@@ -261,7 +265,7 @@ data:
           "targets": [
             { "refId": "A", "expr": "sum by (result) (rate(booking_confirm_total[$__rate_interval]))", "legendFormat": "{{result}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
         },
         {
           "id": 11, "type": "timeseries", "title": "403 · 409 (초당) — 둘 다 5xx 가 아니다",
@@ -271,7 +275,7 @@ data:
           "targets": [
             { "refId": "A", "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{application=\"cgv-booking\", status=~\"403|409\"}[$__rate_interval]))", "legendFormat": "{{uri}} {{status}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
         }
       ]
     }

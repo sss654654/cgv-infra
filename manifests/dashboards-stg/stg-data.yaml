@@ -1,4 +1,4 @@
-# stg · 데이터 — 기다리는 대상(Redis · MySQL · Kafka) 자체가 찼나.
+﻿# stg · 데이터 — 기다리는 대상(Redis · MySQL · Kafka) 자체가 찼나.
 #
 # 행 = 의존 하나. 칸은 넷이다.
 #   받는 쪽이 찼나     ElastiCache · RDS 는 CloudWatch(1분 단위), Kafka 는 브로커 JMX(30초)
@@ -57,7 +57,7 @@ data:
             { "refId": "C", "expr": "max({__name__=~\"aws_elasticache_curr_?connections_maximum\"})", "legendFormat": "연결" },
             { "refId": "D", "expr": "sum({__name__=~\"aws_elasticache_evictions_sum\"})", "legendFormat": "evictions" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "연결|evictions" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "연결|evictions" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 3, "type": "timeseries", "title": "쓰는 쪽 — queue 풀 · booking 명령",
@@ -71,7 +71,7 @@ data:
             { "refId": "D", "expr": "sum(rate(queue_redis_pool_timeouts_total[$__rate_interval]))", "legendFormat": "queue 풀 타임아웃/초" },
             { "refId": "E", "expr": "sum(rate(booking_confirm_total{result=\"redis_error\"}[$__rate_interval])) or vector(0)", "legendFormat": "redis_error/초" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 4, "type": "table", "title": "trace — Redis 구간이 긴 요청",
@@ -101,7 +101,7 @@ data:
             { "refId": "C", "expr": "max({__name__=~\"aws_rds_write_?latency_average\"})", "legendFormat": "쓰기 지연(초)" },
             { "refId": "D", "expr": "max({__name__=~\"aws_rds_disk_?queue_?depth_average\"})", "legendFormat": "디스크 대기열" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "쓰기 지연.*|디스크 대기열" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "쓰기 지연.*|디스크 대기열" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 7, "type": "timeseries", "title": "쓰는 쪽 — booking DB 풀",
@@ -115,7 +115,7 @@ data:
             { "refId": "D", "expr": "sum(rate(hikaricp_connections_acquire_seconds_sum{application=\"cgv-booking\"}[$__rate_interval])) / sum(rate(hikaricp_connections_acquire_seconds_count{application=\"cgv-booking\"}[$__rate_interval]))", "legendFormat": "획득 시간(초)" },
             { "refId": "E", "expr": "sum(rate(booking_confirm_total{result=\"lock_contention\"}[$__rate_interval])) or vector(0)", "legendFormat": "lock_contention/초" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "획득 시간.*|lock_contention.*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "획득 시간.*|lock_contention.*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 8, "type": "table", "title": "trace — 느린 SQL 구간",
@@ -135,7 +135,7 @@ data:
         { "type": "row", "title": "3. Kafka — 두 서비스 사이의 경로 (흐름 3행이 밀릴 때)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 }, "collapsed": false, "panels": [] },
         {
           "id": 10, "type": "timeseries", "title": "받는 쪽 — 복제가 성립하나",
-          "description": "★ 여기가 0 이 아니면 발행이 거부된다. min.insync.replicas 가 2 라, 사본이 둘을 못 채운 파티션은 쓰기를 받지 않는다 — queue 의 발행이 실패하고 사용자는 줄서기에서 503(RETRY_LATER)을 본다. 흐름 장 0행 2번이 깨지는 경로 중 하나다.\n\nunder-min-ISR   min.insync 를 못 채운 파티션 수. 0 이어야 한다\nunder-replicated 사본이 모자란 파티션 수. 브로커 하나가 뒤처지면 오른다\nISR 축소/확장     사본이 빠지고 들어온 횟수. 부하 중에 오르면 브로커가 따라오지 못하고 있다\n리더 없는 파티션   컨트롤러가 리더를 못 뽑은 파티션. 그 파티션은 읽기도 쓰기도 안 된다\n\n브로커 셋이 컨트롤러를 겸한다(KRaft combined) — 활성 컨트롤러가 1 이 아니면 메타데이터가 멈춘다.",
+          "description": "★ under-min-ISR 이 0 이 아니면 그 파티션은 쓰기를 거부한다(min.insync 2). queue 발행이 실패하고 사용자는 줄서기에서 503 을 본다 — 흐름 0행 2번이 깨지는 경로다.\n\nunder-replicated 사본이 모자란 파티션 · ISR 축소 부하 중 오르면 브로커가 못 따라온다\n리더 없는 파티션 읽기도 쓰기도 안 된다 · 활성 컨트롤러 1 이 아니면 메타데이터가 멈춘다",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 0, "y": 22 },
           "targets": [
@@ -145,25 +145,25 @@ data:
             { "refId": "D", "expr": "sum(kafka_controller_kafkacontroller_offlinepartitionscount) or vector(0)", "legendFormat": "리더 없는 파티션" },
             { "refId": "E", "expr": "sum(kafka_controller_kafkacontroller_activecontrollercount) or vector(0)", "legendFormat": "활성 컨트롤러(1이어야 함)" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "활성 컨트롤러(1이어야 함)" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "활성 컨트롤러(1이어야 함)" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 14, "type": "timeseries", "title": "받는 쪽 — 브로커가 느린가",
-          "description": "브로커 안에서 쓴 시간과 자원이다. 위 패널이 \"성립하나\" 라면 이쪽은 \"빠른가\" 다.\n\n요청 시간 p99     브로커가 발행 · 소비 요청 하나를 처리한 시간. queue 발행 p99(앱이 잰 왕복)와 겹쳐 보면 네트워크 몫과 브로커 몫이 갈린다\n요청 대기줄       브로커가 받아들이는 속도가 상한에 닿으면 여기 쌓인다\n로그 플러시 p99   세그먼트를 디스크에 내려쓴 시간. EBS 가 느려지면 여기가 먼저 오른다\nEBS 대기열       볼륨 쪽에서 본 같은 현상. 오래 1 을 넘으면 디스크가 밀린다\n파드 CPU         힙은 -Xmx 512m 로 고정이라 CPU 가 먼저 찬다",
+          "description": "위 패널이 \"성립하나\" 라면 이쪽은 \"빠른가\" 다.\n\nProduce p99 브로커가 발행을 처리한 시간(복제 확인 포함). 오른쪽 발행 p99(앱이 잰 왕복)와 겹쳐 보면 네트워크 몫이 갈린다\n요청 대기줄 브로커가 받는 속도가 상한에 닿으면 쌓인다 · 로그 플러시 EBS 가 느려지면 먼저 오른다\n\n★ Fetch 를 안 그린다 — 컨슈머 롱폴링(최대 9초 대기)이라 한가할 때 9초로 상시 찍힌다. 브로커가 느린 게 아니라 기다려 준 시간이다. 소비가 밀리는지는 오른쪽 컨슈머 랙이 답한다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 8, "y": 22 },
           "targets": [
-            { "refId": "A", "expr": "max by (request) (kafka_network_requestmetrics_totaltimems{quantile=\"0.99\", request=~\"Produce|FetchConsumer\"}) / 1000", "legendFormat": "요청 시간 p99 {{request}}" },
+            { "refId": "A", "expr": "max(kafka_network_requestmetrics_totaltimems{quantile=\"0.99\", request=\"Produce\"}) / 1000", "legendFormat": "Produce p99" },
             { "refId": "B", "expr": "max(kafka_log_logflushstats_ms{quantile=\"0.99\"}) / 1000 or vector(0)", "legendFormat": "로그 플러시 p99" },
             { "refId": "C", "expr": "max(kafka_network_requestchannel_requestqueuesize) or vector(0)", "legendFormat": "요청 대기줄" },
             { "refId": "D", "expr": "topk(4, max by (tag_kubernetes_io_created_for_pvc_name) ({__name__=~\"aws_ebs_volume_queue_length_average\"}))", "legendFormat": "EBS 대기열 {{tag_kubernetes_io_created_for_pvc_name}}" },
             { "refId": "E", "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"kafka\"}[$__rate_interval]))", "legendFormat": "브로커 CPU 합(코어)" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "요청 대기줄|EBS 대기열.*|브로커 CPU.*" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "요청 대기줄|EBS 대기열.*|브로커 CPU.*" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 11, "type": "timeseries", "title": "쓰는 쪽 — 발행 · 소비 밀림",
-          "description": "★ 컨슈머 밀림(lag)은 kafka-exporter 가 브로커에서 오프셋 둘(로그 끝 · 그룹이 커밋한 자리)을 읽어 뺀 값이다.\n전에는 Spring 클라이언트 지표(kafka_consumer_fetch_manager_records_lag_max)를 썼는데, 아직 한 번도 fetch 하지 않은 컨슈머에서 NaN 이 나온다. NaN 은 선이 안 그려져 화면에서 \"밀린 게 없다\" 로 읽힌다 — 거짓을 말하는 패널이었다. exporter 값에는 그 구멍이 없고 토픽 · 파티션별로 나온다.\n\n파티션 하나만 밀리면 그 파티션을 맡은 컨슈머 하나가 막힌 것이고, 전부 밀리면 booking 전체가 느린 것이다(컨슈머는 파드 2 × 동시성 4 = 8, 파티션도 8).\nDLT 는 재시도를 다 쓰고 격리한 메시지다 — 0 이 아니면 그 사람의 입장 인증이 영영 안 온다.",
+          "description": "밀림(lag) = 로그 끝과 그룹이 커밋한 자리의 차. kafka-exporter 가 브로커에서 직접 읽는다.\n\n한 파티션만 밀리면 그 파티션을 맡은 컨슈머 하나가 막힌 것이고, 전부 밀리면 booking 전체가 느린 것이다(컨슈머 8 = 파드 2 × 동시성 4, 파티션도 8).\nDLT 가 0 이 아니면 그 사람의 입장 인증이 영영 안 온다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 16, "y": 22 },
           "targets": [
@@ -173,7 +173,7 @@ data:
             { "refId": "D", "expr": "sum(rate(queue_kafka_publish_failures_total[$__rate_interval])) or vector(0)", "legendFormat": "발행 실패/초" },
             { "refId": "E", "expr": "sum(rate(booking_kafka_dlt_total[$__rate_interval])) or vector(0)", "legendFormat": "DLT/초" }
           ],
-          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "밀림 .*|한 파티션 최대.*|.*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "밀림 .*|한 파티션 최대.*|.*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
           "id": 12, "type": "table", "title": "trace — 발행→소비가 긴 요청",
