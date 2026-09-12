@@ -32,16 +32,18 @@ tempo:
     #   재시작할 때마다 WAL replay로 힙이 부풀고(기동 직후 live_traces 1736 → 4분 뒤 13) 같은 자리에 다시 닿는 고리가 됐다.
     # request는 128Mi에서 256Mi로. 실측이 그보다 위라 그대로 두면 스케줄러가 이 파드를 과소 평가한다.
     #
-    # limit 1Gi → 3Gi. queue 표본을 1.0으로 올리면서 같이 올린다.
-    #   표본 0.01 · 유휴에서 이 파드는 129Mi · live traces 14 · 유입 3.3 span/초다.
-    #   1.0에서는 5,000명 판 기준 요청 874/초 × 요청당 span 약 3 = 약 2,600 span/초가 되고,
-    #   live traces는 초당 트레이스 수 × trace_idle_period(5초)라 만 단위로 올라간다.
-    #   2026-08-22 표본 0.05 판에서 live traces 10,000일 때 이 파드가 747MiB였다 — 아래
-    #   max_traces_per_user 50,000을 그 비율로 밀면 3GiB대다.
-    # ⚠ 실사용이 request를 크게 넘는 동안 이 파드가 노드 퇴거 1순위가 된다. 부하 판에서
-    #   tempo_discarded_spans_total과 이 파드 메모리를 같이 보고, 서면 그때 다시 정한다.
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: 500m, memory: 3Gi }
+    # 2026-09-12 stg 1만 명 판에서 실측하고 다시 정했다.
+    #   live traces 50,000(한도에 붙음) · 이 파드 working set 1,545MiB · 재시작 0.
+    #   트레이스 하나가 메모리에서 차지하는 몫 = 1,545MiB ÷ 50,000 = 약 31KiB.
+    #   이 값이 앞서 적어 둔 추정(10,000당 747MiB = 76KiB)의 절반 이하다. 추정은 폐기하고
+    #   아래 한도는 실측 31KiB 기준으로 계산한다.
+    #
+    # request 256Mi → 2Gi. 실사용 1,545MiB가 request의 여섯 배라 스케줄러가 이 파드를
+    #   과소 평가했고, 노드 메모리가 모자랄 때 퇴거 1순위가 된다.
+    # limit 3Gi → 5Gi. 노드 allocatable 14.3GiB 중 limit 합이 이미 12GiB라 더 올리면
+    #   합이 allocatable을 넘는다. 5Gi = 트레이스 몫 약 4.5GiB + 런타임·버퍼 약 0.5GiB.
+    requests: { cpu: 100m, memory: 2Gi }
+    limits: { cpu: 500m, memory: 5Gi }
   storage:
     trace:
       backend: s3                     # 접속 정보(s3 블록)는 환경 값이 준다
@@ -61,13 +63,22 @@ tempo:
   #   (2026-08-22 실측: 2,946 req/s일 때 live 1,649 · 그다음 분 1,296 req/s일 때 live 10,000).
   # 넘으면 그 구간 span이 live_traces_exceeded로 버려진다 — 화면에서 exemplar를 눌러도 안 열린다.
   #
-  # 10,000 → 50,000. queue 표본을 1.0으로 올리면서 같이 올린다. 표본 0.05만으로도 오픈 직후
-  #   1분에 한도에 닿아 4,527 span을 버렸고, 그 1분이 p99가 가장 높은 구간이었다.
+  # 10,000 → 50,000 → 150,000.
+  #   50,000 은 stg 1만 명 판에서 다시 한도에 닿았다 — 수신 1,162,948 span 중 40,895 건을
+  #   live_traces_exceeded 로 버렸다(3.5%). 버려진 구간이 오픈 직후이고, 전파 지연이 1초를
+  #   넘은 495 건이 바로 그 구간이라 exemplar 를 눌러도 트레이스가 없었다(404).
+  #   화면에서는 "느린 요청의 트레이스만 없는" 모양이 된다 — 제일 보고 싶은 것이 제일 잘 버려진다.
+  #
+  #   150,000 의 근거: 트레이스당 약 31KiB(위 실측) × 150,000 = 약 4.5GiB 로, limit 5Gi 안쪽이다.
+  #   50,000 에 붙어 있던 동안 진짜 수요는 알 수 없으므로 이 값은 "재보기 위한 값"이다.
+  #   다음 판에서 tempo_ingester_live_traces 가 150,000 에 다시 붙으면 한도를 더 올릴 게 아니라
+  #   트레이스 수를 줄인다 — 순번 조회 폴링(/api/admission/position)이 요청의 대부분인데
+  #   그 트레이스는 판단에 안 쓰인다.
   # 버려지는지는 tempo_discarded_spans_total{reason="live_traces_exceeded"}로 확인한다.
   overrides:
     defaults:
       ingestion:
-        max_traces_per_user: 50000
+        max_traces_per_user: 150000
 
 # self-metric: Tempo 자신의 수집·S3 쓰기 상태.
 serviceMonitor:
