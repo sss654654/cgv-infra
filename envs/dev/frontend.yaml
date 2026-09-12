@@ -1,6 +1,6 @@
 # frontend dev 환경값. 정적 서빙 + /api/movies 캐시 프록시.
 image:
-  tag: main-128-186df8d7
+  tag: main-131-3e1966fe
 env:
   # nginx 설정의 resolver 에 채워진다. 이 클러스터의 CoreDNS 주소다.
   #   서비스 CIDR 10.43.0.0/16 의 열 번째. EKS 는 172.20.0.10 이라 값 파일에서 갈린다.
