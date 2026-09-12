@@ -9,46 +9,40 @@
 #   무엇이 먼저 차는지를 보고.
 
 image:
-  tag: 186df8d7 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
-
+  tag: 28c5b29b # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
 # stg 는 ECR 이고 노드 역할로 인증한다. 빈 배열로 덮지 않으면 apps/booking 의
 # gitlab-registry 가 그대로 내려온다.
 imagePullSecrets: []
-
 # ALB 대상그룹 헬스체크 경로. 한 Ingress(envs/stg/frontend.yaml)가 세 서비스로 가르고,
 #   Ingress 에 적은 / 는 frontend 의 준비 경로다. 이 값이 없으면 booking 대상그룹도 / 로 검사한다.
 #   readinessProbe 와 같은 경로다 — MySQL·Redis 가 안 닿으면 not-ready 가 되고 ALB 도 이 파드를 뺀다.
 service:
   annotations:
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
-
 replicaCount: 2
 strategy:
   type: RollingUpdate
   rollingUpdate:
     maxSurge: 1
-    maxUnavailable: 0   # 새 파드가 Ready 가 된 뒤 옛 파드를 내린다 — 한 대만 남은 채 받는 순간이 없다
-
+    maxUnavailable: 0 # 새 파드가 Ready 가 된 뒤 옛 파드를 내린다 — 한 대만 남은 채 받는 순간이 없다
 # 노드를 비울 때(드레인) 한 대는 남긴다.
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
-
 # 노드와 AZ 양쪽으로 흩는다(envs/stg/queue.yaml 과 같은 이유). 목록을 통째로 덮으므로 hostname 규칙도 다시 적는다.
 topologySpreadConstraints:
-  - maxSkew: 1
-    topologyKey: kubernetes.io/hostname
-    whenUnsatisfiable: ScheduleAnyway
-    labelSelector:
-      matchLabels:
-        app.kubernetes.io/name: booking
-  - maxSkew: 1
-    topologyKey: topology.kubernetes.io/zone
-    whenUnsatisfiable: ScheduleAnyway
-    labelSelector:
-      matchLabels:
-        app.kubernetes.io/name: booking
-
+- maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+  labelSelector:
+    matchLabels:
+      app.kubernetes.io/name: booking
+- maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+  whenUnsatisfiable: ScheduleAnyway
+  labelSelector:
+    matchLabels:
+      app.kubernetes.io/name: booking
 resources:
   # request 는 실사용에 맞춘다 — 계수 0.72 코어(회전 27.8 확정/초 기준).
   #   이 값은 인원이 아니라 회전 속도에 비례한다. 5만이어도 정원이 1,000 이면 같다.
@@ -60,12 +54,10 @@ resources:
   #        오픈 버스트에서 OOMKill 이 두 번 났고(exit 137, 재기동 25초 만에 재발) 그래서
   #        1536Mi 가 된 값이다. 5만이면 같은 자리를 다시 만난다 — 3Gi 로 둔다.
   #        이 파드가 죽으면 판이 거기서 끝나므로 여유를 크게 잡는다.
-  requests: { cpu: 800m, memory: 1024Mi }
-  limits: { cpu: "2000m", memory: 3Gi }
-
+  requests: {cpu: 800m, memory: 1024Mi}
+  limits: {cpu: "2000m", memory: 3Gi}
 env:
   PORT: "8091"
-
   # ★ SPRING_PROFILES_ACTIVE 를 주지 않는다.
   #   dev 는 redis-sentinel 프로파일로 Sentinel 에 붙는데 ElastiCache 에는 Sentinel 이 없다.
   #   프로파일을 안 켜면 기본 경로인 host/port 를 쓴다(application.yml 의 spring.data.redis).
@@ -75,7 +67,6 @@ env:
   #   Lettuce 가 다시 붙고, 그 사이의 명령은 2초 타임아웃 뒤 503(redis_error)으로 끝난다.
   REDIS_HOST: cgv-stg.gl3ph0.ng.0001.apn2.cache.amazonaws.com # 켜는 날 terraform output handoff 의 redis_host
   REDIS_PORT: "6379"
-
   # RDS. 마스터 계정으로 붙는다 — dev 의 cgvapp 처럼 별도 계정을 두지 않았다.
   #   전용 계정을 만들어도 Flyway 가 cgv 안에서 CREATE · ALTER 를 해야 하고, 이 RDS 에는
   #   데이터베이스가 cgv 하나 · 쓰는 앱이 booking 하나라 마스터와의 차이가 사용자 관리 같은
@@ -86,27 +77,21 @@ env:
   MYSQL_PORT: "3306"
   MYSQL_DB: cgv
   MYSQL_USER: cgv
-
   KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
-
   # 한 그룹의 컨슈머 합이 파티션 수를 넘으면 남는 스레드는 배정받을 파티션이 없다.
   #   stg 파티션 8 = 파드 두 대 × 4. 한 대가 빠지면 남은 파드의 네 스레드가 여덟 파티션을 나눠 맡는다.
   SPRING_KAFKA_LISTENER_CONCURRENCY: "4"
   SPRING_KAFKA_LISTENER_ACK_MODE: BATCH
-
   # 입장 인증 만료. queue 가 회수 이벤트를 놓쳤을 때의 최후 방어라
   #   queue 의 SESSION_TIMEOUT(300)보다 길어야 한다.
   ADMITTED_TTL: "600"
   SEAT_LOCK_TTL: "180"
-
   # 파드당 20, 두 대 합 40. 한 대 30 이던 부하 판과 합이 달라진다 —
   #   첫 판에서 풀 대기(hikaricp_connections_pending)와 RDS 연결 수 · CPU 를 같이 본다.
   DB_POOL_SIZE: "20"
-
   # DDL_AUTO · SEED_ON_START 는 두지 않는다. 스키마와 시드는 Flyway 가 맡고,
   #   booking 기본값 ddl-auto=validate 가 엔티티와 테이블이 맞는지만 본다.
   VIRTUAL_THREADS: "true"
-
   # limit 3Gi 의 50% = heap 1536Mi. dev 가 이 비율을 75 에서 50 으로 내린 이유는
   #   limit 을 올리면서도 heap 을 768Mi 에 고정해 이전 판들과 GC 조건을 같게 두려던 것이었다.
   #   여기서는 그 비교가 축이 아니라 heap 이 같이 커지는 것이 의도다.
@@ -116,8 +101,6 @@ env:
   # ★ dev 는 limit 1536Mi 라 Serial 로 돈다. dev 부하 판의 숫자(CPU 계수 0.72 코어 · GC 멈춤 최대 0.66초 ·
   #   메모리 718Mi-1.5GB)는 Serial 조건에서 잰 것이다. stg 값이 그와 다르면 GC 차이를 먼저 의심한다.
   JAVA_OPTS: "-XX:+UseG1GC -XX:MaxRAMPercentage=50 -Djava.net.preferIPv4Stack=true"
-
   OTLP_HTTP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318/v1/traces
-
 imageUpdater:
   resolvedImage: 527170477076.dkr.ecr.ap-northeast-2.amazonaws.com/cgv/cgv-onprem/booking
