@@ -27,7 +27,10 @@ data:
       # UnderMinIsrPartitions      min.insync.replicas(2) 를 못 채운 파티션. 0 이 아니면 그 파티션은 쓰기를 거부한다
       #                            → queue 의 발행이 실패하고 사용자는 "잠시 후 다시"(503)를 본다
       # IsrShrinks/IsrExpands      사본이 빠지고 들어온 횟수. 부하 중에 오르면 브로커가 따라오지 못하고 있다
-      - pattern: "kafka.server<type=ReplicaManager, name=(UnderReplicatedPartitions|UnderMinIsrPartitions|PartitionCount|LeaderCount)><>Value"
+      # ★ 이름이 둘로 갈린다. UnderReplicatedPartitions 는 Partitions 로 끝나고
+      #   UnderMinIsrPartitionCount 는 PartitionCount 로 끝난다(Kafka 의 MBean 이름이 그렇다).
+      #   하나로 묶어 적었다가 under-min-ISR 이 통째로 안 나왔다(2026-09-12 확인).
+      - pattern: "kafka.server<type=ReplicaManager, name=(UnderReplicatedPartitions|UnderMinIsrPartitionCount|AtMinIsrPartitionCount|PartitionCount|LeaderCount)><>Value"
         name: kafka_server_replicamanager_$1
         type: GAUGE
       - pattern: "kafka.server<type=ReplicaManager, name=(IsrShrinksPerSec|IsrExpandsPerSec)><>Count"
