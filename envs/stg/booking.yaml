@@ -30,10 +30,21 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 1
 # 노드와 AZ 양쪽으로 흩는다(envs/stg/queue.yaml 과 같은 이유). 목록을 통째로 덮으므로 hostname 규칙도 다시 적는다.
+# ★ 노드 분산은 required 이고 같은 ReplicaSet 끼리만 센다 (2026-09-13).
+#   ScheduleAnyway 였을 때 롤링 업데이트에서 새 파드 둘이 한 노드에 앉았다 — 새 파드가 뜰 때 옛 파드가
+#     다른 노드를 차지하고 있어 "노드마다 하나" 가 이미 만족된 것으로 계산되고, 옛 파드가 빠진 뒤에는
+#     아무도 다시 옮기지 않는다(IgnoredDuringExecution). 결과: 4 vCPU 노드 하나에 limit 4000m 두 대.
+#   matchLabelKeys 로 pod-template-hash 를 셀렉터에 더하면 같은 ReplicaSet 의 파드끼리만 세므로
+#     새 파드 둘째는 첫째와 다른 노드로 간다. DoNotSchedule 이라 다른 노드가 없으면 Pending 이다 —
+#     한 노드에 둘을 두느니 PDB(minAvailable 1)로 한 대를 지키며 기다리는 쪽을 택한다.
+#   AZ 는 그대로 soft 다. queue 의 anti-affinity 로 이 파드가 앉을 수 있는 노드가 2c 둘뿐이라
+#     required 로 두면 늘 Pending 이 된다(envs/stg/queue.yaml 의 "F2 의 대가").
 topologySpreadConstraints:
 - maxSkew: 1
   topologyKey: kubernetes.io/hostname
-  whenUnsatisfiable: ScheduleAnyway
+  whenUnsatisfiable: DoNotSchedule
+  matchLabelKeys:
+  - pod-template-hash
   labelSelector:
     matchLabels:
       app.kubernetes.io/name: booking
