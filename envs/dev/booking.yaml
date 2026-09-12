@@ -4,7 +4,7 @@
 #   그래서 DDL_AUTO · SEED_ON_START 를 두지 않는다 — 기본값 ddl-auto=validate 가 맞는지만 본다.
 
 image:
-  tag: main-147-eef1fd5f
+  tag: main-151-670aac42
 # replica 1 · Recreate 는 그대로 둔다. 둘 다 "파드 둘이 같은 스키마에 Hibernate DDL 을 돌린다" 가
 #   이유였고, Flyway 로 그 이유는 없어졌다(stg 는 두 대 · RollingUpdate 로 간다).
 #   dev 를 늘리거나 RollingUpdate 로 바꾸면 배포하는 동안 파드 둘(memory limit 1536Mi 씩)이 겹친다 —
