@@ -64,8 +64,11 @@ resources:
   #   request 1500m 인 근거: 버스트 때 파드당 실사용이 약 1.4 코어였다. 800m 이면 그 순간
   #     보장분을 넘겨 쓰는 상태라 같은 노드의 다른 파드와 경쟁할 때 먼저 밀린다.
   #   노드 allocatable 이 3920m 이라 limit 4000m 은 사실상 "노드 전부까지 허용" 이다.
-  #     두 대가 topologySpreadConstraints 로 다른 노드에 뜨고, 같은 노드의 queue 는
-  #     request 400m 로 자기 몫이 보장된다.
+  #     이 값은 이 파드가 노드를 혼자 쓸 때만 정당하다. 처음에는 "같은 노드의 queue 는 request 로
+  #     자기 몫이 보장된다" 고 적었는데 틀렸다 — request 는 CPU 시간의 비율을 보장하지 응답 지연을
+  #     보장하지 않는다. 2026-09-13 판에서 이 파드의 JIT 버스트가 노드를 채우자 같은 노드의 queue 만
+  #     Redis 왕복이 0.5초를 넘겼다(다른 노드의 queue 셋은 0건). 그래서 queue 가 이 파드와 노드를
+  #     같이 쓰지 않게 했다(envs/stg/queue.yaml 의 affinity).
   #   ★ 이 값을 바꾸면 JVM 이 보는 코어 수가 2 에서 4 로 바뀐다. 컨테이너에서 JVM 은 limit 을
   #     읽어 availableProcessors 를 정하고, 그 수로 Tomcat 기본 스레드 · ForkJoinPool ·
   #     G1 의 병렬 스레드가 정해진다. dev(2 코어)와 조건이 달라지므로 dev 부하 판의
