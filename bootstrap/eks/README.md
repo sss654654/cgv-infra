@@ -51,7 +51,11 @@ EKS                                      허브 (argocd ns)
 ```
 
 - **토큰** — 만료가 없고 클러스터를 지우면 같이 사라진다. 허브 쪽 Secret 은 남으므로 지울 때 따로 지운다.
-- **cluster-admin** — 허브가 이 클러스터에 CRD · ClusterRole · Namespace 를 만든다. 무엇을 어디에 만들 수 있는지는 이 RBAC 가 아니라 허브의 AppProject(`destinations` · `clusterResourceWhitelist`)가 가른다. dev 의 in-cluster 와 같은 구조다.
+  - 새면 EKS 안의 전부(Secret · 파드 · 새 워크로드)에 닿는다. 노드의 IAM 역할까지는 못 간다 — launch template 의 IMDS hop limit 1 이 파드에서 노드 자격을 못 받게 한다.
+  - 지금 줄이는 것 셋: EKS API 가 집 공인 IP 에만 열려 있어 토큰만으로는 다른 곳에서 못 붙는다 · Secret 이 집 클러스터 안에 있다 · 하루 뒤 클러스터와 함께 사라진다.
+  - 클러스터를 둔 채 갈아 끼우려면: EKS 에서 `kubectl -n kube-system delete secret argocd-manager-token` 뒤 `register.sh` 를 다시 돌린다. 토큰 컨트롤러가 새 토큰을 채우고 허브 Secret 이 덮어써진다. 오래 사는 환경이면 만료 있는 토큰(TokenRequest)을 주기로 재발급하거나 허브를 EKS 로 옮겨 IAM(`awsAuthConfig`)으로 붙인다.
+- **cluster-admin** — 허브가 이 클러스터에 CRD · ClusterRole · Namespace 를 만든다. 무엇을 어디에 만들 수 있는지는 이 RBAC 가 아니라 허브의 AppProject(`destinations` · `clusterResourceWhitelist`)가 가른다. dev 의 in-cluster 와 같은 구조다. 오래 사는 환경이면 cluster-admin 대신 허브가 만드는 범위(네임스페이스 · CRD · ClusterRole)만 주는 ClusterRole 로 좁힌다.
+- **허브 계정** — 작업자 혼자 쓰므로 `admin` 하나이고 RBAC 를 나누지 않는다. 사람이 늘면 계정(argocd-cm `accounts.<이름>`)과 AppProject 단위 정책(argocd-rbac-cm)을 같이 가른다 — 정책이 프로젝트에 걸리므로 stg 만 맡기려면 프로젝트도 갈라야 한다.
 - **등록만으로는 아무것도 배포되지 않는다.** AppProject 가 이 클러스터를 허용하고 Application 이 가리켜야 시작된다. 허브는 가리키는 Application 이 없는 클러스터에는 연결을 시험하지도 않는다 — 그래서 `register.sh` 가 허브에 넣기 전에 같은 토큰으로 EKS API 를 직접 불러 본다.
 
 ---
