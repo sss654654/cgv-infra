@@ -67,6 +67,10 @@ env:
   #   Lettuce 가 다시 붙고, 그 사이의 명령은 2초 타임아웃 뒤 503(redis_error)으로 끝난다.
   REDIS_HOST: cgv-stg.gl3ph0.ng.0001.apn2.cache.amazonaws.com # 켜는 날 terraform output handoff 의 redis_host
   REDIS_PORT: "6379"
+  # 관리형 Redis 라 보안 그룹만으로는 "누구인가" 를 못 가른다. 비밀번호(REDIS_PASSWORD)는
+  #   booking-secrets 로 들어오고, ElastiCache 는 전송 구간 암호화를 켜야 그 비밀번호를 받는다.
+  #   dev 는 파드 Redis 라 평문이고 이 값이 없다.
+  REDIS_SSL: "true"
   # RDS. 마스터 계정으로 붙는다 — dev 의 cgvapp 처럼 별도 계정을 두지 않았다.
   #   전용 계정을 만들어도 Flyway 가 cgv 안에서 CREATE · ALTER 를 해야 하고, 이 RDS 에는
   #   데이터베이스가 cgv 하나 · 쓰는 앱이 booking 하나라 마스터와의 차이가 사용자 관리 같은

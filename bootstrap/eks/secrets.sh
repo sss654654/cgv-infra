@@ -3,8 +3,9 @@
 #
 #   Secret            네임스페이스      값
 #   booking-secrets   app              MYSQL_PASSWORD.  RDS 가 Secrets Manager 에 만든 마스터 비밀번호
-#   queue-secrets     app              키 없음.  차트가 이름으로만 참조한다 — envFrom 은 객체만 있으면 뜬다.
-#                                      ElastiCache 가 AUTH 를 안 써서 넣을 값이 없다
+#                                      REDIS_PASSWORD.  아래 queue-secrets 와 같은 값
+#   queue-secrets     app              REDIS_PASSWORD.  Terraform 이 만들어 Secrets Manager 에 넣은
+#                                      ElastiCache AUTH 토큰
 #   app-admin-token   app              ADMIN_TOKEN.  여기서 만드는 난수.  booking · queue 의 초기화 API 인증
 #   grafana-admin     observability    admin-user · admin-password.  비밀번호는 여기서 만드는 난수
 #
@@ -99,12 +100,22 @@ WANT_USER=$(sed -n 's/^ *MYSQL_USER: *//p' ../../envs/stg/booking.yaml | nocr)
   echo "시크릿의 사용자(${DB_USER})와 envs/stg/booking.yaml 의 MYSQL_USER(${WANT_USER})가 다르다." >&2; exit 1; }
 [ -n "$DB_PASS" ] && [ "$DB_PASS" != "null" ] || { echo "시크릿에 password 가 없다." >&2; exit 1; }
 
-apply_secret app booking-secrets "MYSQL_PASSWORD=${DB_PASS}"
+# ---------- 2-2. Redis AUTH 토큰 ----------
+# RDS 와 달리 AWS 가 만들어 주지 않아 Terraform 이 만들어 Secrets Manager 에 넣는다.
+#   시크릿 이름은 <prefix>-redis-auth 규칙이라 판이 바뀌어도 같다.
+#   terraform output handoff 의 redis_secret_arn 과 같은 값을 가리킨다.
+# 돌아오는 것은 JSON 이 아니라 비밀번호 문자열 그대로다(MySQL 쪽과 다르다).
+REDIS_PASS=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "${DB_INSTANCE}-redis-auth" \
+  --query SecretString --output text | nocr)
+[ -n "$REDIS_PASS" ] && [ "$REDIS_PASS" != "None" ] || {
+  echo "Redis AUTH 토큰을 못 읽었다. envs/stg apply 가 끝났는지 본다." >&2; exit 1; }
+
+apply_secret app booking-secrets "MYSQL_PASSWORD=${DB_PASS}" "REDIS_PASSWORD=${REDIS_PASS}"
 
 # ---------- 3. queue-secrets ----------
-echo "[3/5] queue-secrets (키 없음)"
-# 대체 명령: kubectl --context cgv-stg -n app create secret generic queue-secrets
-apply_secret app queue-secrets
+echo "[3/5] queue-secrets ← Secrets Manager (ElastiCache AUTH 토큰)"
+# 대체 명령: 위 booking-secrets 와 같은 방식(값을 인자로 넘기지 않는다).
+apply_secret app queue-secrets "REDIS_PASSWORD=${REDIS_PASS}"
 
 # ---------- 4. app-admin-token ----------
 echo "[4/5] app-admin-token"
