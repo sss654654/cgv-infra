@@ -7,7 +7,7 @@
 # tls 블록은 안 쓴다. ALB Controller 는 spec.tls 가 아니라 애노테이션과 host 로 인증서를 정한다.
 
 image:
-  tag: ed6eef00 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
+  tag: def6ab5f # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
 imagePullSecrets: []
 env:
   # nginx 설정의 resolver 에 채워진다. 이 클러스터의 CoreDNS 주소다.
@@ -68,9 +68,7 @@ ingress:
     # 버킷 이름은 <접두사>-alb-logs-<계정 ID> 규칙이라 판이 바뀌어도 같다(cgv-terraform bootstrap).
     #   쓰는 권한은 버킷 정책이 리전의 ELB 서비스 계정에만 열어 둔다.
     alb.ingress.kubernetes.io/load-balancer-attributes: >-
-      access_logs.s3.enabled=true,
-      access_logs.s3.bucket=cgv-stg-alb-logs-527170477076,
-      access_logs.s3.prefix=frontend
+      access_logs.s3.enabled=true, access_logs.s3.bucket=cgv-stg-alb-logs-527170477076, access_logs.s3.prefix=frontend
     # Terraform 이 만든 서비스용 보안 그룹 — 인터넷 전체에 80 을 연다(누구나 대기열 · 예매를 쓴다).
     #   Grafana ALB 는 집 공인 IP 만 받는 다른 보안 그룹(cgv-stg-alb-admin)이다. 한 그룹을 같이 쓰면
     #   서비스를 여는 순간 Grafana 도 열린다.
