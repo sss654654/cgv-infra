@@ -89,13 +89,16 @@ spec:
         {{- range .Values.redis.ports }}
         - port: {{ . }}
         {{- end }}
-    # bootstrap 으로 붙은 뒤 개별 브로커 주소를 받아 다시 붙는다. 브로커 파드가 모두
-    #   app.kubernetes.io/name=kafka 라 이 한 줄이 bootstrap 과 브로커를 함께 덮는다.
+    # bootstrap 으로 붙은 뒤 개별 브로커 주소를 받아 다시 붙는다. 이 한 줄이 bootstrap 과 브로커를 함께 덮는다.
+    # ★ podSelector 는 bootstrap Service 의 selector 와 같은 라벨 넷이어야 한다(app.kubernetes.io/name=kafka 가 아니라).
+    #   VPC CNI 의 정책 컨트롤러는 규칙의 podSelector 가 Service 의 selector 와 맞는 Service 의 ClusterIP 만
+    #   허용 목록에 넣는다 — 안 맞으면 브로커 파드 IP 는 통하고 bootstrap ClusterIP 는 버려져 클라이언트가
+    #   첫 연결(i/o timeout)에서 멈춘다(2026-09-12 stg). Calico 는 DNAT 뒤 파드 IP 로 평가해 이 차이가 안 보인다.
     - to:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: data}
           podSelector:
-            matchLabels: {app.kubernetes.io/name: kafka}
+            matchLabels: {strimzi.io/cluster: cgv, strimzi.io/kind: Kafka, strimzi.io/name: cgv-kafka, strimzi.io/broker-role: "true"}
       ports:
         - port: 9092
     # OTEL_EXPORTER_OTLP_ENDPOINT = http://alloy.observability...:4318/v1/traces (HTTP)
@@ -124,11 +127,12 @@ spec:
         {{- range .Values.redis.ports }}
         - port: {{ . }}
         {{- end }}
+    # 라벨 넷을 쓰는 이유는 위 booking-egress 의 kafka 규칙 주석.
     - to:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: data}
           podSelector:
-            matchLabels: {app.kubernetes.io/name: kafka}
+            matchLabels: {strimzi.io/cluster: cgv, strimzi.io/kind: Kafka, strimzi.io/name: cgv-kafka, strimzi.io/broker-role: "true"}
       ports:
         - port: 9092
     # OTLP_GRPC_ENDPOINT = alloy.observability...:4317 (gRPC)
