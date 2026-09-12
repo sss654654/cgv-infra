@@ -37,7 +37,7 @@ spec:
                 - { name: traefik, chart: traefik, version: "41.0.2", namespace: traefik, wave: "-2", psa: restricted }
           - list:
               elements:
-                - { env: dev, server: "https://kubernetes.default.svc" }
+                - { env: dev, cluster: in-cluster }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -61,7 +61,7 @@ spec:
           targetRevision: main
           ref: values
       destination:
-        server: '{{.server}}'
+        name: '{{.cluster}}'
         namespace: '{{.namespace}}'
       syncPolicy:
         managedNamespaceMetadata:         # CreateNamespace=true로 만드는 ns에 PodSecurity 라벨을 같이 건다

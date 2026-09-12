@@ -21,23 +21,23 @@ spec:
     - 192.168.0.167:5050/cgv/cgv-infra/charts           # 업스트림 차트의 사본(GitLab 레지스트리). 원래 저장소는 열지 않는다
                                                         #   stg 의 ALB Controller · CRD · Strimzi 도 여기서 받는다
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: observability
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: observability-host      # node-exporter 전용(privileged PSA)
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: metallb-system
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: traefik
     # stg(EKS). server 는 켜는 날 EKS API 주소로 바꾼다(bootstrap/eks/README.md).
     #   dev 에서 bootstrap 이 손으로 까는 클러스터 기반(CRD · Strimzi)을 stg 에서는 허브가 이 울타리로 배달한다.
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: observability
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: observability-host
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: kube-system             # CRD 릴리스 · ALB Controller
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: data                    # Strimzi 오퍼레이터
   # 업스트림 차트가 CRD 와 ClusterRole 을 만든다(metallb IPAddressPool · prometheus-operator 계열 ·
   #   traefik IngressRoute). 그래서 cluster-scoped 를 연다 — 이것이 data 와 갈리는 실질 차이다.

@@ -23,7 +23,7 @@ spec:
       targetRevision: main
       path: manifests/storage-ebs
   destination:
-    server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com   # 켜는 날 EKS API 주소로 바꾼다
+    name: cgv-stg
   syncPolicy:
     automated:
       # 네임스페이스를 지우면 그 안의 것이 전부 지워진다. 파일에서 빠져도 클러스터에는 남긴다.

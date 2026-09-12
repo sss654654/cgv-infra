@@ -14,7 +14,7 @@ spec:
   sourceRepos:
     - http://192.168.0.167:8929/cgv/cgv-infra.git
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: cert-manager             # cluster-scoped만 만들지만 Application의 destination 선언이 여기를 가리킨다
   clusterResourceWhitelist:
     - group: cert-manager.io

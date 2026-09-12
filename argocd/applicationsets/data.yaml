@@ -31,7 +31,7 @@ spec:
                 - { name: redis, chartPath: charts/data/cgv-redis, wave: "-1" }
           - list:
               elements:
-                - { env: dev, server: "https://kubernetes.default.svc" }
+                - { env: dev, cluster: in-cluster }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -51,7 +51,7 @@ spec:
             - values.yaml
             - '../../../envs/{{.env}}/{{.name}}.yaml'
       destination:
-        server: '{{.server}}'
+        name: '{{.cluster}}'
         namespace: data
       syncPolicy:
         automated:

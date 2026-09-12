@@ -34,7 +34,7 @@ spec:
       targetRevision: main
       ref: values
   destination:
-    server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com     # 켜는 날 EKS API 주소로 바꾼다
+    name: cgv-stg
     namespace: kube-system
   ignoreDifferences:
     - group: ""

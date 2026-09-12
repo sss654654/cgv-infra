@@ -21,7 +21,7 @@ spec:
     # server 는 켜는 날 EKS API 주소로 바꾼다(bootstrap/eks/README.md).
     # namespace 가 * 인 이유 — 클러스터 범위 객체만 배달해서 Application 에 네임스페이스가 없다.
     #   아래 blacklist 가 네임스페이스 객체를 전부 막으므로 * 로 열어도 들어갈 것이 없다.
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: "*"
   clusterResourceWhitelist:
     - group: ""

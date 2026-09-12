@@ -23,7 +23,7 @@ spec:
         - values.yaml                     # 차트 기본값 — 브로커 수·자원·리스너·보존 정책
         - ../../../envs/stg/kafka.yaml    # 이 환경의 볼륨과 파티션
   destination:
-    server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com     # 켜는 날 EKS API 주소로 바꾼다
+    name: cgv-stg
     namespace: data
   syncPolicy:
     automated:

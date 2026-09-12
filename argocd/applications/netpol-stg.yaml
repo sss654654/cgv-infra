@@ -24,7 +24,7 @@ spec:
         - values.yaml                       # 차트 기본값 — 환경 무관한 구조와 포트
         - ../../../envs/stg/netpol.yaml     # 이 환경에서 정책이 무엇을 가리키나
   destination:
-    server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com       # 켜는 날 EKS API 주소로 바꾼다
+    name: cgv-stg
     namespace: app                          # 객체가 metadata.namespace 를 각자 갖는다. 이건 기본값이다
   syncPolicy:
     automated:

@@ -21,18 +21,18 @@ spec:
   sourceRepos:
     - http://192.168.0.167:8929/cgv/cgv-infra.git
   destinations:
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: app
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: data
-    - server: https://kubernetes.default.svc
+    - name: in-cluster
       namespace: observability
     # stg(EKS). 켜는 날 EKS API 주소로 바꾼다.
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: app
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: data
-    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+    - name: cgv-stg
       namespace: observability
   namespaceResourceWhitelist:
     - group: networking.k8s.io

@@ -46,21 +46,21 @@ spec:
                 - { name: kube-state-metrics, chart: kube-state-metrics,       version: "7.8.1",   namespace: observability }
                 - { name: node-exporter,      chart: prometheus-node-exporter, version: "4.56.1",  namespace: observability-host }
           # 환경 축 — 한 줄이 곧 환경의 정의다.
-          #   stg 의 server 는 켜는 날 EKS API 주소로 바꾼다(bootstrap/eks/README.md).
+          #   cluster 는 ArgoCD 에 등록된 클러스터 이름이다. 허브에 등록할 때 정한다(bootstrap/eks/register.sh).
           - list:
               elements:
-                - { env: dev, server: "https://kubernetes.default.svc" }
-                - { env: stg, server: "https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com" }
+                - { env: dev, cluster: in-cluster }
+                - { env: stg, cluster: cgv-stg }
     # dev 에만 있는 것. stg 는 오브젝트 저장소가 S3 라 이 자리가 없다.
     #   matrix 에 두면 환경 축을 곱해 stg 에도 생기므로 따로 뺀다.
     - list:
         elements:
-          - { name: minio, chart: minio, version: "5.4.0", namespace: observability, env: dev, server: "https://kubernetes.default.svc" }
+          - { name: minio, chart: minio, version: "5.4.0", namespace: observability, env: dev, cluster: in-cluster }
     # stg 에만 있는 것. 관리형 서비스(ALB · RDS · ElastiCache · EBS)의 지표가 CloudWatch 에만 있어서
     #   그것을 불러 오는 exporter 다. dev 는 같은 자리가 파드라 각자의 exporter 가 맡는다.
     - list:
         elements:
-          - { name: cloudwatch-exporter, chart: prometheus-yet-another-cloudwatch-exporter, version: "0.47.0", namespace: observability, env: stg, server: "https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com" }
+          - { name: cloudwatch-exporter, chart: prometheus-yet-another-cloudwatch-exporter, version: "0.47.0", namespace: observability, env: stg, cluster: cgv-stg }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -85,7 +85,7 @@ spec:
           targetRevision: main
           ref: values
       destination:
-        server: '{{.server}}'
+        name: '{{.cluster}}'
         # 두 ns 모두 라벨과 함께 미리 있다(CreateNamespace 불요) — manifests/namespaces 를
         #   dev 는 bootstrap/k3s/install.sh 가, stg 는 cluster-stg 가 만든다.
         namespace: '{{.namespace}}'

@@ -57,7 +57,7 @@ spec:
           #   도메인이 다른 certificates) 정해지면 그때 path 에도 {{.env}} 를 넣는다.
           - list:
               elements:
-                - { env: dev, server: "https://kubernetes.default.svc" }
+                - { env: dev, cluster: in-cluster }
   template:
     metadata:
       name: '{{.name}}-{{.env}}'
@@ -70,7 +70,7 @@ spec:
         targetRevision: main
         path: '{{.path}}'
       destination:
-        server: '{{.server}}'
+        name: '{{.cluster}}'
         namespace: '{{.namespace}}'
       syncPolicy:
         automated:
