@@ -1,0 +1,26 @@
+# AWS Load Balancer Controller stg 값 — 어느 클러스터 · VPC · IAM 역할.
+#
+# 셋 다 Terraform 의 prefix(cgv-stg)에서 정해져서 apply 전에 적을 수 있다.
+
+# ALB · 대상그룹에 이 이름으로 태그를 달고, ALB 를 놓을 서브넷도 이 이름이 든 태그로 고른다
+#   (cgv-terraform modules/network 의 kubernetes.io/cluster/cgv-stg · kubernetes.io/role/elb).
+clusterName: cgv-stg
+region: ap-northeast-2
+
+# VPC 를 Name 태그로 찾는다. VPC ID 는 apply 해야 정해지지만 태그는 prefix 로 미리 안다.
+#   둘 다 안 주면 노드의 인스턴스 메타데이터(IMDS)에서 읽는데, 노드가 IMDSv2 · hop limit 1 이라
+#   파드에서는 거기 닿지 않는다(cgv-terraform modules/eks 의 launch template). 그래서 이 값이 필수다.
+vpcTags:
+  Name: cgv-stg
+
+# 이 컨트롤러가 만드는 ALB · 대상그룹 · 리스너에 붙는 태그. Terraform 밖에서 생겨 provider 의
+#   default_tags 가 닿지 않는다. 키와 값은 cgv-terraform envs/stg 의 공통 태그와 같게 둔다 —
+#   비용 보고서에서 Environment=stg 로 거를 때 ALB 비용이 같이 잡힌다.
+defaultTags:
+  Project: cgv
+  Environment: stg
+  ManagedBy: terraform
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::527170477076:role/cgv-stg-alb

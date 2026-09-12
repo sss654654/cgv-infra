@@ -22,7 +22,13 @@ spec:
               service:
                 name: {{ .service | default (include "app.fullname" $) }}
                 port:
+                  {{- if .portName }}
+                  {{- /* ALB Controller 의 동작(고정 응답 등)은 서비스 대신 애노테이션 이름을 적고
+                         포트 이름을 use-annotation 으로 둔다. 번호가 아니라 이름이어야 한다. */}}
+                  name: {{ .portName }}
+                  {{- else }}
                   number: {{ .port }}
+                  {{- end }}
           {{- end }}
       {{- with .Values.ingress.host }}
       host: {{ . | quote }}

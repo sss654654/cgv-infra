@@ -1,11 +1,15 @@
 # booking stg 환경값. dev 와 다른 값만 정의(delta).
 #
-# 마이그레이션 도구가 없다(pom 에 Flyway·Liquibase 없음). 그래서 스키마를 Hibernate 가
-#   만들고, 파드가 둘이면 DDL 이 부딪힌다 — dev 와 같은 이유로 replica 1 · Recreate 다.
-#   이것이 blue-green·canary 를 못 쓰는 선행 조건이기도 하다.
+# 두 대 · RollingUpdate. 스키마와 시드는 Flyway 가 DB 잠금 아래에서 한 대만 적용한다(cgv-onprem
+#   booking) — 파드마다 Hibernate 가 DDL 을 돌리던 때는 둘이 부딪혀 한 대 · Recreate 에 묶여 있었다.
+#   AZ 하나가 죽어도 다른 AZ 의 파드가 받고, 배포 중에도 받는다.
+#   대가: 배포하는 동안 옛 파드와 새 파드가 새 스키마 위에서 같이 돈다. 스키마 변경은 옛 코드와
+#   호환되게 한다(추가는 한 번에, 삭제 · 이름 변경은 배포를 나눈다).
+# 두 대에서 더 늘리는 기준은 부하 판에서 정한다 — booking CPU · 풀 대기와 RDS CPU · 연결 · 쓰기 지연 중
+#   무엇이 먼저 차는지를 보고.
 
 image:
-  tag: PLACEHOLDER # 켜는 날 ECR 에 올린 커밋 해시. 그 뒤로는 image-updater 가 덮는다
+  tag: 186df8d7 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
 
 # stg 는 ECR 이고 노드 역할로 인증한다. 빈 배열로 덮지 않으면 apps/booking 의
 # gitlab-registry 가 그대로 내려온다.
@@ -18,13 +22,38 @@ service:
   annotations:
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
 
-replicaCount: 1
+replicaCount: 2
 strategy:
-  type: Recreate
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0   # 새 파드가 Ready 가 된 뒤 옛 파드를 내린다 — 한 대만 남은 채 받는 순간이 없다
+
+# 노드를 비울 때(드레인) 한 대는 남긴다.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# 노드와 AZ 양쪽으로 흩는다(envs/stg/queue.yaml 과 같은 이유). 목록을 통째로 덮으므로 hostname 규칙도 다시 적는다.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: booking
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: booking
 
 resources:
   # request 는 실사용에 맞춘다 — 계수 0.72 코어(회전 27.8 확정/초 기준).
   #   이 값은 인원이 아니라 회전 속도에 비례한다. 5만이어도 정원이 1,000 이면 같다.
+  #   두 대로 나누면 파드당 실사용은 절반 가까이로 줄지만, request 는 한 대가 전부 받을 때를 기준으로 둔다
+  #   — 한 대가 빠진 동안(배포 · AZ 장애) 남은 한 대가 회전 전부를 받는다.
   # limit 은 예상치에 안 붙인다.
   #   CPU  0.72 코어 예상에 2000m 이면 36%. dev 와 같은 값이라 JVM 이 보는 코어 수도 2 그대로다.
   #   메모리 dev 는 1536Mi 인데 실사용이 718Mi-1.5GB 라 98% 까지 붙는다. 1Gi 였을 때
@@ -42,22 +71,27 @@ env:
   #   프로파일을 안 켜면 기본 경로인 host/port 를 쓴다(application.yml 의 spring.data.redis).
   #   빈 sentinel 블록을 남기면 Spring 이 standalone 을 sentinel 모드로 오인해 깨지므로,
   #   블록을 지우는 것이 아니라 프로파일을 안 켜는 방식이어야 한다.
-  REDIS_HOST: PLACEHOLDER # 켜는 날 terraform output handoff 의 redis_host
+  # ElastiCache 가 복제본으로 전환하면 이 주소(주 엔드포인트)가 새 주를 가리킨다. 끊긴 연결은
+  #   Lettuce 가 다시 붙고, 그 사이의 명령은 2초 타임아웃 뒤 503(redis_error)으로 끝난다.
+  REDIS_HOST: cgv-stg.gl3ph0.ng.0001.apn2.cache.amazonaws.com # 켜는 날 terraform output handoff 의 redis_host
   REDIS_PORT: "6379"
 
   # RDS. 마스터 계정으로 붙는다 — dev 의 cgvapp 처럼 별도 계정을 두지 않았다.
+  #   전용 계정을 만들어도 Flyway 가 cgv 안에서 CREATE · ALTER 를 해야 하고, 이 RDS 에는
+  #   데이터베이스가 cgv 하나 · 쓰는 앱이 booking 하나라 마스터와의 차이가 사용자 관리 같은
+  #   인스턴스 단위 권한뿐이다. prd 는 앱 계정(데이터 읽기 · 쓰기)과 DDL 계정을 나눈다.
   #   MYSQL_PASSWORD 는 여기 없다. AWS 가 만들어 Secrets Manager 에 넣은 값을
   #   booking-secrets 로 옮겨 envFrom 으로 들어온다(apps/booking).
-  MYSQL_HOST: PLACEHOLDER # 켜는 날 terraform output handoff 의 mysql_host
+  MYSQL_HOST: cgv-stg.cv4u24c4c5g4.ap-northeast-2.rds.amazonaws.com # 켜는 날 terraform output handoff 의 mysql_host
   MYSQL_PORT: "3306"
   MYSQL_DB: cgv
   MYSQL_USER: cgv
 
   KAFKA_BROKER: cgv-kafka-bootstrap.data.svc.cluster.local:9092
 
-  # 파티션 수와 같게 둔다. 그보다 크면 남는 스레드가 할당받을 파티션이 없다.
-  #   stg 는 파티션을 8 로 늘리므로 여기도 8 이다(dev 는 4).
-  SPRING_KAFKA_LISTENER_CONCURRENCY: "8"
+  # 한 그룹의 컨슈머 합이 파티션 수를 넘으면 남는 스레드는 배정받을 파티션이 없다.
+  #   stg 파티션 8 = 파드 두 대 × 4. 한 대가 빠지면 남은 파드의 네 스레드가 여덟 파티션을 나눠 맡는다.
+  SPRING_KAFKA_LISTENER_CONCURRENCY: "4"
   SPRING_KAFKA_LISTENER_ACK_MODE: BATCH
 
   # 입장 인증 만료. queue 가 회수 이벤트를 놓쳤을 때의 최후 방어라
@@ -65,16 +99,23 @@ env:
   ADMITTED_TTL: "600"
   SEAT_LOCK_TTL: "180"
 
-  DB_POOL_SIZE: "30"
+  # 파드당 20, 두 대 합 40. 한 대 30 이던 부하 판과 합이 달라진다 —
+  #   첫 판에서 풀 대기(hikaricp_connections_pending)와 RDS 연결 수 · CPU 를 같이 본다.
+  DB_POOL_SIZE: "20"
 
-  DDL_AUTO: update
-  SEED_ON_START: "true"
+  # DDL_AUTO · SEED_ON_START 는 두지 않는다. 스키마와 시드는 Flyway 가 맡고,
+  #   booking 기본값 ddl-auto=validate 가 엔티티와 테이블이 맞는지만 본다.
   VIRTUAL_THREADS: "true"
 
   # limit 3Gi 의 50% = heap 1536Mi. dev 가 이 비율을 75 에서 50 으로 내린 이유는
   #   limit 을 올리면서도 heap 을 768Mi 에 고정해 이전 판들과 GC 조건을 같게 두려던 것이었다.
   #   여기서는 그 비교가 축이 아니라 heap 이 같이 커지는 것이 의도다.
-  JAVA_OPTS: "-XX:MaxRAMPercentage=50 -Djava.net.preferIPv4Stack=true"
+  # GC 는 G1 으로 적는다. GC 를 따로 안 주면 JVM 이 CPU 2개 이상 · 메모리 약 1,792MB 이상일 때 G1,
+  #   아니면 Serial 을 스스로 고른다(컨테이너에서는 limit 을 본다). 이 limit(3Gi)이면 어차피 G1 이지만,
+  #   적어 두면 limit 을 내려도 GC 가 조용히 바뀌지 않는다. prd 가 쓸 GC 로 재려는 것이다.
+  # ★ dev 는 limit 1536Mi 라 Serial 로 돈다. dev 부하 판의 숫자(CPU 계수 0.72 코어 · GC 멈춤 최대 0.66초 ·
+  #   메모리 718Mi-1.5GB)는 Serial 조건에서 잰 것이다. stg 값이 그와 다르면 GC 차이를 먼저 의심한다.
+  JAVA_OPTS: "-XX:+UseG1GC -XX:MaxRAMPercentage=50 -Djava.net.preferIPv4Stack=true"
 
   OTLP_HTTP_ENDPOINT: http://alloy.observability.svc.cluster.local:4318/v1/traces
 

@@ -1,0 +1,33 @@
+# dashboards-stg — stg Grafana 에 넣을 대시보드 넷. stg 전용 폴더(manifests/dashboards-stg)다.
+#
+# dev 대시보드를 그대로 보내지 않는다. dev 것은 입구가 Traefik, MySQL · Redis 가 파드라는 전제로
+#   짜여 있어 stg(ALB · RDS · ElastiCache)에서는 행 절반이 빈다. stg 는 병목을 가르는 순서로 새로 짰다.
+#   흐름     요청 순서대로 "어디서" 막혔나(입구 → 대기열 → 서비스 사이 전달 → 예매)
+#   queue    queue 자신인가, 기다리는 쪽인가
+#   booking  booking 자신인가, 기다리는 쪽인가
+#   데이터   기다리는 대상(Redis · MySQL · Kafka) 자체가 찼나 — 지표 · trace · log
+#   흐름 장의 패널 링크로 같은 시간 범위의 상세 장이 열린다.
+# dev 의 dashboards Application 은 manifests/dashboards 만 읽어 이 폴더는 dev 에 안 간다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dashboards-stg
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"   # 관측 스택(1) 뒤. 순서가 어긋나도 ConfigMap 은 남고 sidecar 가 나중에 읽는다
+spec:
+  project: platform
+  source:
+    repoURL: http://192.168.0.167:8929/cgv/cgv-infra.git
+    targetRevision: main
+    path: manifests/dashboards-stg
+  destination:
+    server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com     # 켜는 날 EKS API 주소로 바꾼다
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff: { duration: 20s, factor: 2, maxDuration: 3m }

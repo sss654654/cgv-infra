@@ -40,6 +40,16 @@ spec:
                 matchLabels:
                   strimzi.io/cluster: {{ .Values.cluster.name }}
                   strimzi.io/name: {{ .Values.cluster.name }}-kafka
+            {{- if .Values.zoneSpread }}
+            # AZ 마다 하나. 브로커 셋이 컨트롤러 과반 투표와 min.insync.replicas 2 를 겸해서, AZ 둘에
+            #   나뉘면 한쪽에 둘이 가고 그 AZ 가 죽으면 하나만 남아 리더를 못 뽑는다. AZ 셋에 하나씩이면 둘이 남는다.
+            #   required 라 브로커가 뜰 AZ 가 모자라면 Pending 이다 — AZ 수가 브로커 수 이상이어야 한다.
+            - topologyKey: topology.kubernetes.io/zone
+              labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: {{ .Values.cluster.name }}
+                  strimzi.io/name: {{ .Values.cluster.name }}-kafka
+            {{- end }}
 ---
 apiVersion: kafka.strimzi.io/v1
 kind: Kafka
@@ -50,6 +60,13 @@ spec:
   kafka:
     version: {{ .Values.cluster.version | quote }}
     metadataVersion: {{ .Values.cluster.metadataVersion | quote }}
+    {{- if .Values.zoneSpread }}
+    # 브로커가 자기 AZ 를 안다(broker.rack — Strimzi 가 노드의 zone 라벨을 읽어 넘긴다).
+    #   파티션 사본을 놓을 때 AZ 가 겹치지 않게 한다. 브로커 셋 · RF 3 이면 모든 파티션이 세 브로커에
+    #   다 있어 지금은 달라지는 것이 없고, 브로커를 넷 이상으로 늘릴 때 사본이 한 AZ 에 몰리지 않게 한다.
+    rack:
+      topologyKey: topology.kubernetes.io/zone
+    {{- end }}
     # resources 는 여기 못 적는다 — v1 스키마에 없다. 노드풀 쪽에 있다.
     jvmOptions:
       "-Xmx": {{ .Values.cluster.heap }}

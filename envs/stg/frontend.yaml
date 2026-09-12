@@ -5,7 +5,7 @@
 #   도메인·인증서는 안 쓴다 — ALB 기본 DNS 이름과 80 뿐이라 tls 블록도 없다.
 
 image:
-  tag: PLACEHOLDER # 켜는 날 ECR 에 올린 커밋 해시. 그 뒤로는 image-updater 가 덮는다
+  tag: 186df8d7 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
 
 imagePullSecrets: []
 
@@ -32,6 +32,21 @@ autoscaling:
   maxReplicas: 3
   targetCPUUtilizationPercentage: 70
 
+# 노드와 AZ 양쪽으로 흩는다(envs/stg/queue.yaml 과 같은 이유). 목록을 통째로 덮으므로 hostname 규칙도 다시 적는다.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: frontend
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: frontend
+
 ingress:
   className: alb
   annotations:
@@ -45,10 +60,18 @@ ingress:
 
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
 
-    # Terraform 이 만든 보안 그룹을 쓴다. 이 애노테이션이 없으면 컨트롤러가 자기 보안 그룹을
-    #   새로 만들어 0.0.0.0/0 으로 열어 버린다 — 집 공인 IP 와 부하 발생기만 들이려고
-    #   규칙을 적어 둔 것이 무의미해진다.
-    alb.ingress.kubernetes.io/security-groups: PLACEHOLDER # terraform output expected.alb_sg
+    # Terraform 이 만든 서비스용 보안 그룹 — 인터넷 전체에 80 을 연다(누구나 대기열 · 예매를 쓴다).
+    #   Grafana ALB 는 집 공인 IP 만 받는 다른 보안 그룹(cgv-stg-alb-admin)이다. 한 그룹을 같이 쓰면
+    #   서비스를 여는 순간 Grafana 도 열린다.
+    #   애노테이션이 없으면 컨트롤러가 자기 보안 그룹을 만들어 그 규칙이 안 걸린다.
+    #   이름(Name 태그)으로 가리킨다 — 컨트롤러가 ID 와 이름을 둘 다 받는다(v2.13 문서).
+    #   켜는 날 안 먹으면 terraform output expected.alb_public_sg 의 ID 로 바꾼다.
+    alb.ingress.kubernetes.io/security-groups: cgv-stg-alb-public
+    # 초기화 API 두 개를 밖에서 끊는다(dev 의 manifests/public-guard 와 같은 대상).
+    #   POST /api/admin/reset(booking) · POST /api/admission/reset(queue) — 둘 다 토큰을 보지만,
+    #   아래 경로 규칙의 /api · /api/admission 이 앞을 가르고 있어 인터넷에서 닿는다.
+    #   초기화가 필요하면 클러스터 안에서 Service 를 직접 부른다. 403 을 돌려주는 ALB 동작이다.
+    alb.ingress.kubernetes.io/actions.deny-admin: '{"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"403","messageBody":"forbidden"}}'
 
     # 위에서 보안 그룹을 지정하면 컨트롤러가 노드 쪽 인바운드 규칙을 자동으로 안 붙인다.
     #   이 값이 있어야 ALB → 파드 경로가 열린다.
@@ -61,10 +84,18 @@ ingress:
     #   (envs/stg/queue.yaml · booking.yaml). ALB Controller 는 Service 쪽을 Ingress 쪽보다 우선한다.
     alb.ingress.kubernetes.io/healthcheck-path: /
 
-  # 경로 규칙은 apps/frontend 의 identity 값을 그대로 쓴다.
-  #   /api/admission → queue:8090 · /api/movies → frontend:8080 · /api → booking:8091
+  # 경로 규칙 — apps/frontend 의 넷 앞에 초기화 API 차단 둘을 둔다. 목록은 통째로 덮으므로 넷도 다시 적는다.
+  #   ALB 규칙은 적힌 순서대로 평가된다. 차단이 /api · /api/admission 보다 앞에 있어야 먼저 걸린다.
+  #   service 자리의 deny-admin 은 위 actions.deny-admin 애노테이션 이름이고, 포트는 이름 use-annotation 이다.
   # host 를 비워 둔다 — 도메인이 없고, 적으면 그 이름의 Host 헤더로 온 것만 받아
   #   ALB 기본 DNS 이름으로 들어오는 접근이 끊긴다.
+  paths:
+    - { path: /api/admin,           pathType: Prefix, service: deny-admin, portName: use-annotation }
+    - { path: /api/admission/reset, pathType: Exact,  service: deny-admin, portName: use-annotation }
+    - { path: /api/admission,       pathType: Prefix, service: queue,      port: 8090 }
+    - { path: /api/movies,          pathType: Prefix, service: frontend,   port: 8080 }
+    - { path: /api,                 pathType: Prefix, service: booking,    port: 8091 }
+    - { path: /,                    pathType: Prefix, service: frontend,   port: 8080 }
 
 imageUpdater:
   resolvedImage: 527170477076.dkr.ecr.ap-northeast-2.amazonaws.com/cgv/cgv-onprem/frontend

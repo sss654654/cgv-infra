@@ -27,6 +27,13 @@ spec:
       namespace: data
     - server: https://kubernetes.default.svc
       namespace: observability
+    # stg(EKS). 켜는 날 EKS API 주소로 바꾼다.
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+      namespace: app
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+      namespace: data
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+      namespace: observability
   namespaceResourceWhitelist:
     - group: networking.k8s.io
       kind: NetworkPolicy

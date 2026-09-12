@@ -26,10 +26,15 @@ cluster:
 
 # 브로커 볼륨 — 환경이 준다.
 #   dev  정적 PV(bootstrap/k3s/storage/) 를 미리 만들어 뒀다.  노드당 하나, 디스크 통마운트
-#   stg  EBS CSI 가 동적으로 만든다.  gp3 StorageClass 는 애드온이 안 만들어서 손으로 넣는다
+#   stg  EBS CSI 가 동적으로 만든다.  gp3 StorageClass 는 애드온이 안 만들어서 허브가 넣는다(manifests/storage-ebs)
 storage:
   size: ""
   class: ""
+
+# AZ 분산 — 환경이 준다. 켜면 브로커를 AZ 마다 하나씩(required) 두고 브로커가 자기 AZ 를 안다(broker.rack).
+#   dev  false  k3s 노드에 topology.kubernetes.io/zone 라벨이 없다. 켜면 브로커가 뜰 곳이 없다
+#   stg  true   AZ 셋 · 브로커 셋
+zoneSpread: false
 
 # 토픽 파티션 — 환경이 준다.
 #   한 컨슈머 그룹의 동시 소비 파드는 파티션 수를 넘지 못한다. 그래서 queue 의 HPA 상한과 짝이다.

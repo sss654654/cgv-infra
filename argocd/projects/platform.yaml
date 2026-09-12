@@ -15,10 +15,11 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-5"   # metallb App(wave -4)보다 프로젝트가 먼저 존재해야 함
 spec:
-  description: 진입(metallb · traefik)과 관측(LGTM · Alloy · exporter)
+  description: 진입(metallb · traefik) · 관측(LGTM · Alloy · exporter) · stg 클러스터 기반(CRD · Strimzi · ALB Controller)
   sourceRepos:
     - http://192.168.0.167:8929/cgv/cgv-infra.git       # 값 파일
     - 192.168.0.167:5050/cgv/cgv-infra/charts           # 업스트림 차트의 사본(GitLab 레지스트리). 원래 저장소는 열지 않는다
+                                                        #   stg 의 ALB Controller · CRD · Strimzi 도 여기서 받는다
   destinations:
     - server: https://kubernetes.default.svc
       namespace: observability
@@ -28,6 +29,16 @@ spec:
       namespace: metallb-system
     - server: https://kubernetes.default.svc
       namespace: traefik
+    # stg(EKS). server 는 켜는 날 EKS API 주소로 바꾼다(bootstrap/eks/README.md).
+    #   dev 에서 bootstrap 이 손으로 까는 클러스터 기반(CRD · Strimzi)을 stg 에서는 허브가 이 울타리로 배달한다.
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+      namespace: observability
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+      namespace: observability-host
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+      namespace: kube-system             # CRD 릴리스 · ALB Controller
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com
+      namespace: data                    # Strimzi 오퍼레이터
   # 업스트림 차트가 CRD 와 ClusterRole 을 만든다(metallb IPAddressPool · prometheus-operator 계열 ·
   #   traefik IngressRoute). 그래서 cluster-scoped 를 연다 — 이것이 data 와 갈리는 실질 차이다.
   clusterResourceWhitelist:

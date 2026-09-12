@@ -14,6 +14,8 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: app
+    - server: https://7B1791387F0BBCB51B8C14C5E09523ED.gr7.ap-northeast-2.eks.amazonaws.com        # stg(EKS). 켜는 날 EKS API 주소로 바꾼다
+      namespace: app
   clusterResourceWhitelist: []            # 앱은 cluster-scoped 금지
   namespaceResourceWhitelist:
     - group: "*"

@@ -97,7 +97,7 @@ kubectl 있나 · helm 있나 · kubeconfig 읽히나 · 클러스터가 응답�
 |---|---|
 | `kubectl` · `helm` | 요청을 보낼 도구 |
 | kubeconfig | 어디로 보낼지(주소) + 누구인지(클라이언트 인증서) |
-| `bootstrap/` 트리 전체 | 스크립트가 하위 폴더를 상대경로로 읽는다 |
+| 저장소 전체 (`git clone`) | 스크립트가 이 폴더의 형제와 `manifests/namespaces` · `charts/data/strimzi.yaml` 을 상대경로로 읽는다 |
 
 `helm`은 `kubectl`과 달리 k3s의 kubeconfig를 스스로 찾지 않는다 — `--kubeconfig` 플래그, `$KUBECONFIG`, `~/.kube/config` 셋만 본다. 그래서 스크립트가 시작할 때 직접 정한다.
 
@@ -276,9 +276,9 @@ SKIP_SECRET_CHECK=1 ./root-app.sh
 | `cluster/` | k3s 설치·조인 스크립트와 노드 설정. **install.sh보다 앞 단계**다([cluster/README](cluster/README.md)) |
 | `storage/` | StorageClass 6종 + 정적 PV 10개 |
 | `calico.yaml` | Calico Installation CR |
-| `namespaces.yaml` | 네임스페이스 + PodSecurity 라벨 |
+| `namespaces.yaml` | 허브에만 있는 네임스페이스(argocd · cert-manager) + PodSecurity 라벨. 워크로드 넷은 두 환경이 같이 써서 `manifests/namespaces/` 에 있다 |
 | `etcd-metrics.yaml` | etcd 메트릭 수집 경로(Service + 수동 Endpoints + ServiceMonitor) |
-| `*-values.yaml` | 각 helm values — cert-manager · sealed-secrets · strimzi · argocd |
+| `*-values.yaml` | 각 helm values — cert-manager · sealed-secrets · argocd. Strimzi 값은 두 환경이 같이 써서 `charts/data/strimzi.yaml` 에 있다 |
 
 한 장만 든 폴더는 두지 않는다. 여러 장이 한 묶음인 것(`cluster/` · `storage/`)만 폴더다.
 이름의 `-values` 는 Helm 에 먹이는 값이라는 표시다 — 같은 폴더에 `kubectl apply` 할 매니페스트가
@@ -294,4 +294,4 @@ ArgoCD 가 자기 자신을 이 값으로 관리한다(`argocd/applications/argo
 
 `git clone`으로 받는다. Windows 작업트리는 `core.autocrlf` 때문에 CRLF를 갖고 있어, 거기서 scp로 직접 복사하면 셸이 `$'do\r'` 같은 문법 오류로 죽는다. 저장소의 `.gitattributes`가 내용을 LF로 고정하므로 clone/pull로 받으면 그 문제가 없다.
 
-`install.sh`는 이 폴더(`bootstrap/k3s/`)의 형제 파일을 상대경로로 읽는다 — 스크립트 한 파일만 옮기면 `calico.yaml`을 못 찾고 즉시 실패한다.
+`install.sh`는 이 폴더(`bootstrap/k3s/`)의 형제 파일과 저장소의 두 파일(`manifests/namespaces/namespaces.yaml` · `charts/data/strimzi.yaml`)을 상대경로로 읽는다 — 스크립트 한 파일이나 이 폴더만 옮기면 즉시 실패한다.

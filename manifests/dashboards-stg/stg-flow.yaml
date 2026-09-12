@@ -1,0 +1,180 @@
+# stg · 흐름 — 요청이 지나가는 순서대로 "어디서" 막혔나만 본다.
+#
+# 행 = 흐름의 단계. 위에서 아래로 요청이 지나간다.
+#   1 입구(ALB) → 2 대기열(queue) → 3 서비스 사이 전달(Kafka) → 4 예매(booking)
+#   단계마다 처리량 · 실패 · p99 만 둔다. CPU · 메모리 · 풀은 없다 — 그건 "왜" 라 상세 장에 있다.
+#   행의 패널 링크(패널 제목 옆)를 누르면 같은 시간 범위로 상세 장(stg · queue / booking / 데이터)이 열린다.
+#
+# 읽는 법
+#   한 단계만 튄다                    → 그 단계의 상세 장
+#   2 · 4 가 같이 느려진다             → 둘이 같이 쓰는 Redis 를 의심한다 → 데이터 장 1행
+#   4 의 결제만 느리다 · lock_contention → MySQL → 데이터 장 2행
+#   3 의 쌍이 벌어진다                 → Kafka → 데이터 장 3행
+#   흐름은 원형이다. 3 에서 "확정 vs 반환" 이 벌어지면 자리가 안 돌아와 2 의 대기가 쌓인다.
+#
+# 입구(ALB) 지표는 CloudWatch 를 YACE 가 1분 단위로 가져와 몇 분 늦게 들어온다(오픈 순간 봉우리는 뭉개진다).
+#   봉우리는 2 · 4 의 앱 지표(15초)로 보고, 1 은 추세와 한계(거부 · ALB 5xx)로 본다.
+# ★ 켜는 날 확인할 것
+#   - YACE 가 내는 지표 이름(snake_case 변환)은 문서에 없어 이름을 정규식으로 받는다
+#   - frontend ALB 를 dimension_LoadBalancer 의 이름(k8s-app-...)으로 가른다 — ALB Controller 가 짓는 이름을 켜는 날 본다
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-stg-flow
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  stg-flow.json: |
+    {
+      "uid": "stg-flow",
+      "title": "stg · 흐름 — 어디서 막혔나",
+      "tags": ["cgv", "stg"],
+      "editable": true,
+      "timezone": "browser",
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "templating": { "list": [] },
+      "panels": [
+        { "type": "row", "title": "1. 입구 (ALB) — 1분 단위 · 몇 분 늦게 들어온다", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
+        {
+          "id": 1, "type": "timeseries", "title": "요청 · 에러 (분당)",
+          "description": "ALB 5xx 가 오르면 입구 문제다(503 = 건강한 대상 없음, 504 = 대상 응답 시간 초과). 거부된 연결이 오르면 ALB 가 연결을 못 받는다. 앱 5xx 가 오르면 아래 단계를 본다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum({__name__=~\"aws_applicationelb_request_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "요청" },
+            { "refId": "B", "expr": "sum({__name__=~\"aws_applicationelb_httpcode_elb_5_?xx_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "ALB 5xx" },
+            { "refId": "C", "expr": "sum({__name__=~\"aws_applicationelb_httpcode_target_5_?xx_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "앱 5xx" },
+            { "refId": "D", "expr": "sum({__name__=~\"aws_applicationelb_rejected_connection_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "거부된 연결" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "요청" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "지연 p99 — ALB 가 잰 것 vs 앱이 잰 것",
+          "description": "둘의 차이가 ALB 에서 파드까지 가는 구간이다. ALB 는 1분 단위, 앱은 15초 단위라 봉우리 모양이 다르게 보인다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "max({__name__=~\"aws_applicationelb_target_response_time_p99\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "ALB 대상 응답 p99" },
+            { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=~\"/api/admission/(enter|position)\"}[$__rate_interval])))", "legendFormat": "queue 앱 p99" },
+            { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/.*\"}[$__rate_interval])))", "legendFormat": "booking 앱 p99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "연결 · LCU (분당)",
+          "description": "ALB 가 받아낸 연결. dev 3만 판에서 origin 연결이 23,000 까지 올라 Traefik 이 무너졌다 — 같은 부하에서 ALB 가 얼마를 받는지 여기서 비교한다. LCU 는 ALB 요금 단위다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+          "targets": [
+            { "refId": "A", "expr": "sum({__name__=~\"aws_applicationelb_active_connection_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "활성 연결" },
+            { "refId": "B", "expr": "sum({__name__=~\"aws_applicationelb_new_connection_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "새 연결" },
+            { "refId": "C", "expr": "sum({__name__=~\"aws_applicationelb_consumed_lc_?us_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "LCU" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "LCU" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+
+        { "type": "row", "title": "2. 대기열 (queue) — 튀면 stg · queue", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "collapsed": false, "panels": [] },
+        {
+          "id": 4, "type": "timeseries", "title": "enter · 폴링 p99 — 통과선 1초",
+          "description": "기다리는 사람이 겪는 시간(앱 구간). 선을 넘으면 stg · queue 에서 queue 자신인지(CPU · 스로틀), 기다리는 쪽인지(Redis 풀)를 가른다. 점(exemplar)을 누르면 그 요청의 trace 가 열린다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+          "links": [ { "title": "→ stg · queue", "url": "/d/stg-queue/?${__url_time_range}" } ],
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/enter\"}[$__rate_interval])))", "legendFormat": "enter", "exemplar": true },
+            { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/position\"}[$__rate_interval])))", "legendFormat": "폴링(position)", "exemplar": true }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] }
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "인원 — 대기 · 입장 vs 정원",
+          "description": "입장이 정원에 붙은 채 대기가 줄지 않으면 자리가 안 돌아오는 것이다 → 3행의 확정 vs 반환을 본다. 입장에 여유가 있는데 대기가 쌓이면 승격이 막힌 것이다 → stg · queue.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+          "links": [ { "title": "→ stg · queue", "url": "/d/stg-queue/?${__url_time_range}" } ],
+          "targets": [
+            { "refId": "A", "expr": "sum(queue_waiting)", "legendFormat": "대기" },
+            { "refId": "B", "expr": "sum(queue_active)", "legendFormat": "입장" },
+            { "refId": "C", "expr": "max(queue_capacity)", "legendFormat": "정원" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "queue 5xx 비율",
+          "description": "queue 가 돌려준 5xx ÷ 전체 요청. 0 이 정상이다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+          "links": [ { "title": "→ stg · queue", "url": "/d/stg-queue/?${__url_time_range}" } ],
+          "targets": [
+            { "refId": "A", "expr": "(sum(rate(queue_http_request_duration_seconds_count{status=~\"5..\"}[$__rate_interval])) or vector(0)) / sum(rate(queue_http_request_duration_seconds_count[$__rate_interval]))", "legendFormat": "5xx 비율" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
+        },
+
+        { "type": "row", "title": "3. 서비스 사이 전달 (Kafka) — 밀리면 stg · 데이터 3행", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "collapsed": false, "panels": [] },
+        {
+          "id": 7, "type": "timeseries", "title": "전달 지연 p99 — 통과선 2초",
+          "description": "승격→인증 = queue 가 승격시켜 booking 이 입장 인증을 발급하기까지. 확정→반환 = booking 이 확정해 queue 가 자리를 반환하기까지. queue 발행은 그중 queue → 브로커 구간이다. 전체만 오르고 발행은 멀쩡하면 브로커나 소비 쪽이다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+          "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" } ],
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(booking_admission_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "승격→인증" },
+            { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_completed_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "확정→반환" },
+            { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_kafka_publish_duration_seconds_bucket{topic=\"admissions\"}[$__rate_interval])))", "legendFormat": "queue 발행(admissions)" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 2 } ] } }, "overrides": [] }
+        },
+        {
+          "id": 8, "type": "timeseries", "title": "전달 완결 — 쌍이 겹쳐야 정상 (초당)",
+          "description": "승격 vs 인증 발급, 확정 vs 반환. 쌍이 벌어지면 소비가 밀리는 것이다. 확정 vs 반환이 벌어지면 자리가 안 돌아와 2행의 대기가 쌓인다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+          "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" } ],
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(queue_promoted_total[$__rate_interval])) or vector(0)", "legendFormat": "승격" },
+            { "refId": "B", "expr": "sum(rate(booking_admissions_total{result=\"ok\"}[$__rate_interval])) or vector(0)", "legendFormat": "인증 발급" },
+            { "refId": "C", "expr": "sum(rate(booking_confirm_total{result=\"success\"}[$__rate_interval])) or vector(0)", "legendFormat": "확정" },
+            { "refId": "D", "expr": "sum(rate(queue_completed_total[$__rate_interval])) or vector(0)", "legendFormat": "반환" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+        },
+
+        { "type": "row", "title": "4. 예매 (booking) — 튀면 stg · booking", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 }, "collapsed": false, "panels": [] },
+        {
+          "id": 9, "type": "timeseries", "title": "단계별 p99 — 회차 · 좌석 · 선택 · 결제",
+          "description": "어느 단계가 느린가. 결제(/api/bookings)만 느리면 MySQL 쪽, 전부 같이 느리면 파드나 Redis 쪽을 먼저 본다. 점(exemplar)을 누르면 trace 가 열린다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 28 },
+          "links": [ { "title": "→ stg · booking", "url": "/d/stg-booking/?${__url_time_range}" } ],
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/screenings|/api/screenings/board|/api/seats|/api/seats/select|/api/bookings\"}[$__rate_interval])))", "legendFormat": "{{uri}}", "exemplar": true }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+        },
+        {
+          "id": 10, "type": "timeseries", "title": "확정 결과 — 성공 vs 실패 사유 (초당)",
+          "description": "redis_error → 데이터 장 1행(Redis). lock_contention → 데이터 장 2행(MySQL). seat_conflict 는 좌석 경쟁이라 정상이다. error 는 그 밖의 커밋 실패다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 28 },
+          "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" }, { "title": "→ stg · booking", "url": "/d/stg-booking/?${__url_time_range}" } ],
+          "targets": [
+            { "refId": "A", "expr": "sum by (result) (rate(booking_confirm_total[$__rate_interval]))", "legendFormat": "{{result}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+        },
+        {
+          "id": 11, "type": "timeseries", "title": "403 · 409 (초당)",
+          "description": "403 이 오르면 입장 인증이 아직 안 온 것이다(3행 승격→인증이 밀린 증상). 409 는 좌석 경쟁이라 정상이다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 28 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{application=\"cgv-booking\", status=~\"403|409\"}[$__rate_interval]))", "legendFormat": "{{uri}} {{status}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+        }
+      ]
+    }

@@ -24,11 +24,12 @@ ingress:
     # 파드 IP 를 직접 대상으로 잡는다. VPC CNI 가 파드에 VPC 주소를 준다.
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    # Terraform 이 만든 보안 그룹을 쓴다 — 집 공인 IP 와 부하 발생기만 80 을 받는다.
+    # Terraform 이 만든 관리용 보안 그룹을 쓴다 — 집 공인 IP 에만 80 을 연다.
+    #   서비스 ALB(frontend)는 인터넷 전체에 여는 다른 보안 그룹(cgv-stg-alb-public)이다.
     #   지정하지 않으면 컨트롤러가 자기 보안 그룹을 만들어 0.0.0.0/0 으로 연다.
-    #   ★ 이름으로 지정한다. 이름이 결정적이라 그날을 안 기다려도 된다.
-    #     애노테이션이 ID 말고 이름도 받는지는 확인 대상이다 — 안 받으면 그날 ID 로 바꾼다.
-    alb.ingress.kubernetes.io/security-groups: cgv-stg-alb
+    #   이름(Name 태그)으로 지정한다 — 컨트롤러가 ID 와 이름을 둘 다 받는다(v2.13 문서).
+    #   켜는 날 안 먹으면 terraform output expected.alb_admin_sg 의 ID 로 바꾼다.
+    alb.ingress.kubernetes.io/security-groups: cgv-stg-alb-admin
     # 위에서 보안 그룹을 지정하면 컨트롤러가 노드 쪽 인바운드 규칙을 자동으로 안 붙인다.
     alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
     # 전용 Ingress 라 대상그룹이 하나다 — frontend 쪽의 "서비스마다 헬스체크 경로가 다르다"
@@ -42,6 +43,11 @@ ingress:
 # 알림을 안 쓴다 → 렌더러도 안 띄운다.
 imageRenderer:
   enabled: false
+
+# 관측 노드에만 놓는다 — 노드그룹이 taint 로 앱 파드를 막고(cgv-terraform modules/eks),
+#   관측 파드는 toleration 으로 들어가 nodeSelector 로 거기에만 선다. 이유는 mimir.yaml 머리말.
+nodeSelector: { workload: observability }
+tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
 
 # ※ 80 평문이다. ACM 인증서는 도메인이 있어야 붙고 ALB 기본 DNS 이름에는 못 붙인다.
 #   막는 것은 보안 그룹이고, 이 환경은 하루 뒤에 지운다.

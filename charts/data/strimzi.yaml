@@ -1,4 +1,8 @@
-# Strimzi 오퍼레이터 자원 (set-once) — Java지만 operator는 부하를 받지 않아 힙이 작음 → MaxRAMPercentage 불필요, limit만.
+# Strimzi 오퍼레이터 값 — 환경 무관. 두 환경이 같은 값을 쓴다.
+#   dev(k3s)   bootstrap/k3s/install.sh [7/9] 가 helm 으로 설치한다
+#   stg(EKS)   허브가 Application strimzi-stg 로 배달한다
+#
+# 자원 — Java지만 operator는 부하를 받지 않아 힙이 작음 → MaxRAMPercentage 불필요, limit만.
 resources:
   requests: { cpu: 100m, memory: 256Mi }
   limits:   { cpu: 500m, memory: 384Mi }
@@ -6,7 +10,7 @@ resources:
 watchNamespaces:
   - data
 
-# data 네임스페이스는 PodSecurity enforce=restricted다(bootstrap/k3s/namespaces.yaml).
+# data 네임스페이스는 PodSecurity enforce=restricted다(manifests/namespaces/namespaces.yaml).
 # 차트 기본값은 podSecurityContext·securityContext가 빈 맵({})이라 오퍼레이터 파드가 admission에서 거부된다
 # (allowPrivilegeEscalation != false · unrestricted capabilities · runAsNonRoot != true · seccompProfile 미설정).
 # 거부되면 Deployment는 생기고 파드만 0개라, helm --wait이 타임아웃날 때까지 원인이 안 보인다.

@@ -1,0 +1,171 @@
+# stg · 데이터 — 기다리는 대상(Redis · MySQL · Kafka) 자체가 찼나.
+#
+# 행 = 의존 하나. 칸은 넷으로 같다.
+#   받는 쪽이 찼나     ElastiCache · RDS 는 CloudWatch(1분 단위), Kafka 는 브로커 파드
+#   쓰는 쪽이 얼마나 기다렸나   queue · booking 의 앱 지표(15초)
+#   trace              그 의존 구간이 긴 요청(Tempo)
+#   log                그 의존에서 난 실패(Loki)
+#
+# 판별
+#   받는 쪽 · 쓰는 쪽이 같이 오른다 → 대상 자체가 찼다(ElastiCache · RDS · 브로커 한계)
+#   쓰는 쪽만 오른다               → 대상은 여유가 있는데 앱의 풀 크기 · 타임아웃이 좁다
+#   둘 다 멀쩡한데 흐름이 느리다     → 이 의존 문제가 아니다. 서비스 장으로 돌아간다
+#
+# ★ 켜는 날 확인할 것
+#   - YACE 지표 이름(snake_case 변환)은 문서에 없어 이름을 정규식으로 받는다
+#   - trace 칸의 TraceQL 속성(span.db.system · span.messaging.system)은 Grafana 탐색 화면에서 실제 이름을 본다
+#   - EBS 볼륨의 PVC 이름 태그가 라벨로 오는지(YACE exportedTagsOnMetrics) — 안 오면 볼륨 ID 로만 보인다
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-stg-data
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  stg-data.json: |
+    {
+      "uid": "stg-data",
+      "title": "stg · 데이터 — 기다리는 대상이 찼나",
+      "tags": ["cgv", "stg"],
+      "editable": true,
+      "timezone": "browser",
+      "time": { "from": "now-1h", "to": "now" },
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "templating": { "list": [] },
+      "panels": [
+        {
+          "id": 1, "type": "text", "title": "판별",
+          "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+          "options": { "mode": "markdown", "content": "**받는 쪽 · 쓰는 쪽이 같이 오른다** → 대상 자체가 찼다 · **쓰는 쪽만 오른다** → 앱의 풀 크기 · 타임아웃이 좁다 · **둘 다 멀쩡한데 흐름이 느리다** → 이 의존 문제가 아니다(서비스 장으로). 받는 쪽 AWS 지표는 1분 단위로 몇 분 늦게 들어온다." }
+        },
+
+        { "type": "row", "title": "1. Redis — queue · booking 이 같이 쓴다 (흐름 2 · 4행이 같이 느려질 때)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 3 }, "collapsed": false, "panels": [] },
+        {
+          "id": 2, "type": "timeseries", "title": "받는 쪽 — ElastiCache",
+          "description": "명령 처리는 한 스레드라 명령 처리 CPU(EngineCPU)가 먼저 찬다. 100% 에 붙으면 Redis 가 한계다. evictions 가 생기면 메모리가 모자라 키를 지우고 있다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 4 },
+          "targets": [
+            { "refId": "A", "expr": "max({__name__=~\"aws_elasticache_engine_?cpu_?utilization_maximum\"})", "legendFormat": "명령 처리 CPU %" },
+            { "refId": "B", "expr": "max({__name__=~\"aws_elasticache_database_?memory_?usage_?percentage_maximum\"})", "legendFormat": "메모리 %" },
+            { "refId": "C", "expr": "max({__name__=~\"aws_elasticache_curr_?connections_maximum\"})", "legendFormat": "연결" },
+            { "refId": "D", "expr": "sum({__name__=~\"aws_elasticache_evictions_sum\"})", "legendFormat": "evictions" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "연결|evictions" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "쓰는 쪽 — queue 풀 · booking 명령",
+          "description": "queue 풀 대기 = 풀에서 연결을 기다린 시간(초/초). booking 명령 = Redis 명령 한 번의 평균 · 최대(명령 타임아웃 2초에 붙으면 실패한다). redis_error = booking 이 Redis 때문에 503 을 낸 수.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 4 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(queue_redis_pool_wait_seconds_total[$__rate_interval]))", "legendFormat": "queue 풀 대기(초/초)" },
+            { "refId": "B", "expr": "sum(rate(lettuce_command_completion_seconds_sum{application=\"cgv-booking\"}[$__rate_interval])) / sum(rate(lettuce_command_completion_seconds_count{application=\"cgv-booking\"}[$__rate_interval]))", "legendFormat": "booking 명령 평균(초)" },
+            { "refId": "C", "expr": "max(lettuce_command_completion_seconds_max{application=\"cgv-booking\"})", "legendFormat": "booking 명령 최대(초)" },
+            { "refId": "D", "expr": "sum(rate(queue_redis_pool_timeouts_total[$__rate_interval]))", "legendFormat": "queue 풀 타임아웃/초" },
+            { "refId": "E", "expr": "sum(rate(booking_confirm_total{result=\"redis_error\"}[$__rate_interval])) or vector(0)", "legendFormat": "redis_error/초" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+        {
+          "id": 4, "type": "table", "title": "trace — Redis 구간이 긴 요청",
+          "description": "Redis 명령 구간이 100ms 를 넘은 trace. 행을 누르면 그 요청의 전체 구간이 열린다.",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 4 },
+          "targets": [ { "refId": "A", "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ span.db.system = \"redis\" && duration > 100ms }", "limit": 20, "tableType": "traces" } ]
+        },
+        {
+          "id": 5, "type": "logs", "title": "log — Redis 실패",
+          "description": "booking 이 Redis 로 입장 인증 · 좌석 락을 확인하지 못한 기록(503).",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 4 },
+          "targets": [ { "refId": "A", "expr": "{pod=~\"(queue|booking)-.*\"} |~ \"(?i)redis\" |~ \"(?i)(fail|실패|timeout|error)\"" } ],
+          "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+        },
+
+        { "type": "row", "title": "2. MySQL — booking 만 쓴다 (흐름 4행의 결제만 느릴 때)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 }, "collapsed": false, "panels": [] },
+        {
+          "id": 6, "type": "timeseries", "title": "받는 쪽 — RDS",
+          "description": "CPU 가 차면 질의 처리 한계, 쓰기 지연 · 디스크 대기열이 오르면 디스크 한계다. 연결은 booking 풀(30)과 비교한다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 13 },
+          "targets": [
+            { "refId": "A", "expr": "max({__name__=~\"aws_rds_cpu_?utilization_maximum\"})", "legendFormat": "CPU %" },
+            { "refId": "B", "expr": "max({__name__=~\"aws_rds_database_?connections_maximum\"})", "legendFormat": "연결" },
+            { "refId": "C", "expr": "max({__name__=~\"aws_rds_write_?latency_average\"})", "legendFormat": "쓰기 지연(초)" },
+            { "refId": "D", "expr": "max({__name__=~\"aws_rds_disk_?queue_?depth_average\"})", "legendFormat": "디스크 대기열" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "쓰기 지연.*|디스크 대기열" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "쓰는 쪽 — booking DB 풀",
+          "description": "파드 전부의 합이다(파드당 20 × 두 대 = 상한 40). 사용 중이 상한에 붙고 대기가 생기면 풀이 좁다. 획득 시간은 풀에서 연결을 받기까지 걸린 평균. lock_contention = 확정 트랜잭션의 락 대기 초과 · 데드락.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 13 },
+          "targets": [
+            { "refId": "A", "expr": "sum(hikaricp_connections_active{application=\"cgv-booking\"})", "legendFormat": "사용 중" },
+            { "refId": "B", "expr": "sum(hikaricp_connections_pending{application=\"cgv-booking\"})", "legendFormat": "대기" },
+            { "refId": "C", "expr": "sum(hikaricp_connections_max{application=\"cgv-booking\"})", "legendFormat": "상한" },
+            { "refId": "D", "expr": "sum(rate(hikaricp_connections_acquire_seconds_sum{application=\"cgv-booking\"}[$__rate_interval])) / sum(rate(hikaricp_connections_acquire_seconds_count{application=\"cgv-booking\"}[$__rate_interval]))", "legendFormat": "획득 시간(초)" },
+            { "refId": "E", "expr": "sum(rate(booking_confirm_total{result=\"lock_contention\"}[$__rate_interval])) or vector(0)", "legendFormat": "lock_contention/초" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "획득 시간.*|lock_contention.*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+        {
+          "id": 8, "type": "table", "title": "trace — 느린 SQL 구간",
+          "description": "SQL 구간이 100ms 를 넘은 trace.",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 13 },
+          "targets": [ { "refId": "A", "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ span.db.system = \"mysql\" && duration > 100ms }", "limit": 20, "tableType": "traces" } ]
+        },
+        {
+          "id": 9, "type": "logs", "title": "log — 락 경합 · 커밋 실패",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 13 },
+          "targets": [ { "refId": "A", "expr": "{pod=~\"booking-.*\"} |~ \"락 경합|환불|커밋\"" } ],
+          "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+        },
+
+        { "type": "row", "title": "3. Kafka — 두 서비스 사이의 경로 (흐름 3행이 밀릴 때)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 }, "collapsed": false, "panels": [] },
+        {
+          "id": 10, "type": "timeseries", "title": "받는 쪽 — 브로커 · 디스크",
+          "description": "브로커 파드 CPU(코어)와 EBS 대기열 길이. 대기열이 오래 1 을 넘으면 디스크가 밀린다. EBS 는 PVC 이름 태그가 오면 이름으로, 아니면 볼륨 ID 로 보인다.",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 22 },
+          "targets": [
+            { "refId": "A", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"data\", container=\"kafka\"}[$__rate_interval]))", "legendFormat": "CPU {{pod}}" },
+            { "refId": "B", "expr": "topk(6, max by (dimension_VolumeId, tag_kubernetes_io_created_for_pvc_name) ({__name__=~\"aws_ebs_volume_queue_length_average\"}))", "legendFormat": "EBS 대기열 {{tag_kubernetes_io_created_for_pvc_name}} {{dimension_VolumeId}}" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "EBS.*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+        {
+          "id": 11, "type": "timeseries", "title": "쓰는 쪽 — 발행 · 소비",
+          "description": "queue 발행 p99 · 발행 실패, booking 소비 밀림(파티션에 쌓인 메시지 수의 최대), DLT(재시도를 다 쓰고 격리한 메시지).",
+          "datasource": { "type": "prometheus", "uid": "mimir" },
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 22 },
+          "targets": [
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, topic) (rate(queue_kafka_publish_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "발행 p99 {{topic}}" },
+            { "refId": "B", "expr": "max(kafka_consumer_fetch_manager_records_lag_max{application=\"cgv-booking\"})", "legendFormat": "booking 소비 밀림(메시지)" },
+            { "refId": "C", "expr": "sum(rate(queue_kafka_publish_failures_total[$__rate_interval])) or vector(0)", "legendFormat": "발행 실패/초" },
+            { "refId": "D", "expr": "sum(rate(booking_kafka_dlt_total[$__rate_interval])) or vector(0)", "legendFormat": "DLT/초" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "booking 소비 밀림.*|.*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+        },
+        {
+          "id": 12, "type": "table", "title": "trace — 발행→소비가 긴 요청",
+          "description": "Kafka 구간이 200ms 를 넘은 trace. 발행 span 과 소비 span 이 link 로 이어져 있다.",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 22 },
+          "targets": [ { "refId": "A", "datasource": { "type": "tempo", "uid": "tempo" }, "queryType": "traceql", "query": "{ span.messaging.system = \"kafka\" && duration > 200ms }", "limit": 20, "tableType": "traces" } ]
+        },
+        {
+          "id": 13, "type": "logs", "title": "log — 발행 · 소비 실패 · DLT",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 22 },
+          "targets": [ { "refId": "A", "expr": "{pod=~\"(queue|booking)-.*\"} |~ \"발행 실패|fetch 실패|파싱 실패|재시도 소진\"" } ],
+          "options": { "showTime": true, "wrapLogMessage": true, "sortOrder": "Descending" }
+        }
+      ]
+    }

@@ -1,11 +1,10 @@
-# 워크로드 네임스페이스 + PodSecurity 라벨.
+# 허브(k3s)에만 있는 네임스페이스 + PodSecurity 라벨 — argocd · cert-manager.
 #
-# 프로파일은 그 ns에 실제로 뜨는 파드 스펙을 helm template로 렌더해 판정했다. 판정 결과:
-#   restricted 통과 : app · data · argocd(argo-cd 10.1.4 8워크로드 전부) · cert-manager(v1.21.0 3디플로이+startupapicheck Job)
-#   baseline 까지만 : observability — tempo·alloy·minio·grafana test Pod·mimir smoke-test Job이
-#                     seccompProfile / capabilities.drop=ALL / allowPrivilegeEscalation=false 를 안 채운다.
-#                     호스트 네임스페이스·hostPath·privileged는 하나도 안 쓰므로 baseline은 통과한다.
-#   privileged 필요 : observability-host — node-exporter가 hostNetwork·hostPID·hostPath(/,/proc,/sys)를 쓴다.
+# 워크로드 네임스페이스(app · data · observability · observability-host)는 두 환경이 같은 정의를
+#   쓰므로 manifests/namespaces/namespaces.yaml 에 있다. install.sh [2/9] 가 둘 다 apply 한다.
+#
+# 프로파일은 그 ns에 실제로 뜨는 파드 스펙을 helm template로 렌더해 판정했다.
+#   restricted 통과 : argocd(argo-cd 10.1.4 8워크로드 전부) · cert-manager(v1.21.0 3디플로이+startupapicheck Job)
 #
 # 여기 없는 ns와 그 이유:
 #   metallb-system·traefik — argocd/applicationsets/platform.yaml 의 managedNamespaceMetadata가 라벨을 건다
@@ -14,51 +13,6 @@
 #                            k3s 업그레이드가 스펙을 되돌리므로 집행을 걸면 클러스터 기동이 막힌다. 집행 없음.
 #   calico-system·tigera-operator — tigera-operator가 만들고 소유한다. calico-node는 privileged가 필수라
 #                            라벨을 걸어도 privileged 외 선택지가 없다. 집행 없음.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: app
-  labels:
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/enforce-version: latest
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: data
-  labels:
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/enforce-version: latest
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: observability
-  labels:
-    # baseline = 호스트 네임스페이스·hostPath·privileged 컨테이너 차단.
-    # MinIO(루트 크레덴셜 + LGTM 데이터 원본)와 Grafana(관리자 자격)가 이 ns에 있어서,
-    # 차트 값이나 이미지가 변조돼도 hostPath:/ 마운트로 노드 루트에 닿는 경로를 막는 것이 목적이다.
-    # restricted를 못 거는 건 tempo·alloy·minio가 컨테이너 securityContext를 안 채워서다(위 헤더).
-    # warn/audit=restricted로 그 격차를 배포 때마다 드러낸다 — 차단은 안 하고 경고·감사로그만 남는다.
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/enforce-version: latest
-    pod-security.kubernetes.io/warn: restricted
-    pod-security.kubernetes.io/warn-version: latest
-    pod-security.kubernetes.io/audit: restricted
-    pod-security.kubernetes.io/audit-version: latest
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: observability-host
-  labels:
-    # 호스트 자원을 직접 읽어야 하는 수집기만 격리한다. 현재 node-exporter 하나
-    # (hostNetwork·hostPID + hostPath /,/proc,/sys → baseline·restricted 둘 다 통과 불가).
-    # 이 ns를 따로 두는 이유는 privileged 완화 범위를 파드 1종으로 묶기 위해서다.
-    # ServiceMonitor는 Alloy가 네임스페이스 제한 없이 발견하므로 스크레이프 경로는 그대로다.
-    pod-security.kubernetes.io/enforce: privileged
-    pod-security.kubernetes.io/enforce-version: latest
----
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -1,0 +1,97 @@
+# CloudWatch exporter(YACE) 값 — 관리형 서비스의 지표를 Mimir 로 가져온다. stg 에만 있다.
+#
+# 집에서는 MySQL · Redis · 입구(Traefik)가 파드라 exporter 를 옆에 붙이면 됐다. stg 에서 이 셋은
+#   AWS 관리형(RDS · ElastiCache · ALB)이라 붙일 파드가 없고, 지표는 CloudWatch 에만 있다.
+#   이 exporter 가 CloudWatch API 를 불러 Prometheus 형식으로 내놓고, ServiceMonitor 로 Alloy 가
+#   긁어 Mimir 로 보낸다 — 다른 지표와 같은 경로로 합류해 같은 Grafana 에서 본다.
+#
+# YACE 를 쓰는 이유 — 태그 API(tag:GetResources)로 자원을 찾아 이름을 하나하나 적지 않아도 되고,
+#   GetMetricData 로 묶어 불러 API 호출 수가 적다. CloudWatch 는 호출 수로 요금을 받는다.
+#   ★ 태그 API 로 찾으므로 태그가 하나도 없는 자원은 안 보인다. RDS · ElastiCache 에 Name 태그를
+#     다는 이유다(cgv-terraform modules/data). ALB 와 EBS 볼륨은 만든 컨트롤러가 태그를 단다.
+#
+# 무엇을 긁나 — 부하 판에서 "어디가 먼저 막히나" 를 가리는 데 쓰는 것만.
+#   CloudWatch 지표는 1분 단위라 period 60 으로, 늦게 도착하는 값을 덮으려고 최근 5분(length 300)을 읽는다.
+
+fullnameOverride: cloudwatch-exporter
+
+serviceAccount:
+  # IRSA 신뢰 정책의 sub 가 system:serviceaccount:observability:cloudwatch-exporter 다.
+  #   이름이 글자까지 같아야 역할을 맡는다.
+  name: cloudwatch-exporter
+
+# dev 실측이 없다(집에는 이것이 없다). 넉넉하게 잡고 첫날 kubectl top 으로 본다.
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits:   { memory: 256Mi }
+
+serviceMonitor:
+  enabled: true
+  interval: 60s                    # CloudWatch 해상도가 1분이라 더 자주 긁어도 새 값이 없다
+
+testConnection: false              # helm test 파드. ArgoCD 로 올려서 쓸 일이 없다
+
+config: |-
+  apiVersion: v1alpha1
+  sts-region: ap-northeast-2
+  discovery:
+    # 자원의 태그를 지표 라벨로 내보낸다. EBS 는 볼륨 ID 만으로는 어느 것이 Kafka 디스크인지 못 가른다 —
+    #   EBS CSI 가 PVC 로 만든 볼륨에 붙이는 PVC 이름 태그를 라벨로 받는다(stg · 데이터 대시보드 3행).
+    #   ★ 라벨 이름(tag_ 뒤 변환 규칙)과 태그가 실제로 붙는지는 켜는 날 확인한다.
+    exportedTagsOnMetrics:
+      AWS/EBS:
+        - kubernetes.io/created-for/pvc/name
+    jobs:
+      # 입구 — 요청 수 · 응답 시간 · 5xx(ALB 자신과 대상을 가른다) · 연결 · LCU(요금 단위)
+      - type: AWS/ApplicationELB
+        regions: [ap-northeast-2]
+        period: 60
+        length: 300
+        metrics:
+          - { name: RequestCount,              statistics: [Sum] }
+          # p99 — 앱 쪽 지연을 p99 로 보므로 ALB 가 잰 것도 같은 통계로 맞춘다(stg · 흐름 1행)
+          - { name: TargetResponseTime,        statistics: [Average, Maximum, p99] }
+          - { name: HTTPCode_ELB_5XX_Count,    statistics: [Sum] }
+          - { name: HTTPCode_Target_5XX_Count, statistics: [Sum] }
+          - { name: ActiveConnectionCount,     statistics: [Sum] }
+          - { name: NewConnectionCount,        statistics: [Sum] }
+          - { name: RejectedConnectionCount,   statistics: [Sum] }
+          - { name: ConsumedLCUs,              statistics: [Sum] }
+      # MySQL — dev 의 mysqld_exporter 자리. CPU · 연결 · 메모리 · 디스크 대기
+      - type: AWS/RDS
+        regions: [ap-northeast-2]
+        period: 60
+        length: 300
+        metrics:
+          - { name: CPUUtilization,      statistics: [Average, Maximum] }
+          - { name: DatabaseConnections, statistics: [Average, Maximum] }
+          - { name: FreeableMemory,      statistics: [Minimum] }
+          - { name: ReadIOPS,            statistics: [Average] }
+          - { name: WriteIOPS,           statistics: [Average] }
+          - { name: ReadLatency,         statistics: [Average] }
+          - { name: WriteLatency,        statistics: [Average] }
+          - { name: DiskQueueDepth,      statistics: [Average] }
+      # Redis — dev 의 redis_exporter 자리. 명령 처리는 한 스레드라 EngineCPU 가 먼저 찬다
+      - type: AWS/ElastiCache
+        regions: [ap-northeast-2]
+        period: 60
+        length: 300
+        metrics:
+          - { name: EngineCPUUtilization,          statistics: [Average, Maximum] }
+          - { name: CPUUtilization,                statistics: [Average] }
+          - { name: CurrConnections,               statistics: [Maximum] }
+          - { name: NewConnections,                statistics: [Sum] }
+          - { name: DatabaseMemoryUsagePercentage, statistics: [Maximum] }
+          - { name: NetworkBytesIn,                statistics: [Sum] }
+          - { name: NetworkBytesOut,               statistics: [Sum] }
+          - { name: Evictions,                     statistics: [Sum] }
+      # 볼륨 — Kafka · Mimir · Loki · Tempo 의 EBS. 대기열 길이가 디스크 포화를 가리킨다
+      - type: AWS/EBS
+        regions: [ap-northeast-2]
+        period: 60
+        length: 300
+        metrics:
+          - { name: VolumeReadOps,     statistics: [Sum] }
+          - { name: VolumeWriteOps,    statistics: [Sum] }
+          - { name: VolumeQueueLength, statistics: [Average] }
+          - { name: VolumeIdleTime,    statistics: [Sum] }
