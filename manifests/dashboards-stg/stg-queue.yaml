@@ -4,10 +4,16 @@
 #   뺀 것   Traefik 섹션(stg 입구는 ALB — 흐름 장 1행) · 지연 p99 · 5xx(흐름 장 2행)
 #   더한 것 HPA 확장(stg 는 4-8대로 실제로 움직인다) · 기다리는 것(Redis 풀 · Kafka 발행)
 #
-# 읽는 법 — 흐름 장 2행에서 p99 가 튀어서 왔다.
+# 읽는 법 — 흐름 장 0행이 깨졌거나 2행에서 p99 가 튀어서 왔다.
 #   1행이 차 있다(CPU · 스로틀 · 메모리)          → queue 자신이 한계다
 #   1행은 멀쩡한데 2행 대수가 max 에 붙었다        → 대수가 더 필요하다
 #   1 · 2행은 멀쩡한데 3행 대기가 늘었다           → 기다리는 쪽이다 → stg · 데이터
+#   ★ 전부 멀쩡한데 대기가 안 줄어든다            → 2행 오른쪽의 배경 루프를 본다.
+#     루프가 멈추면 오류가 하나도 안 나오면서 일만 진행되지 않는다 — 요청은 200 이고 CPU 도 한가하다
+#
+# 뺀 패널 — Pending 파드. 노드가 m5.xlarge 넷이고 queue request 가 400m/250Mi 라 8대를 넣어도
+#   자리가 남는다. dev 에서 노드 자리가 빠듯할 때 뜻이 있던 패널이고 여기서는 늘 0 이다.
+#   늘 같은 값만 나오는 선은 시야만 차지한다. 그 자리에 배경 루프를 넣었다.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -52,14 +58,16 @@ data:
           "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] }
         },
         {
-          "id": 3, "type": "timeseries", "title": "고루틴 — 동시 처리 요청 수를 따라간다",
-          "description": "요청마다 고루틴이 하나씩 뜬다. queue HTTP 서버에는 연결 수 상한이 없어서, 이 선이 파드 안에 동시에 들어와 있는 요청 수를 보여 준다.",
+          "id": 3, "type": "timeseries", "title": "동시 요청 · request 대비 사용",
+          "description": "고루틴 = 파드 안에 동시에 들어와 있는 요청 수다(요청마다 하나씩 뜨고, 이 서버에는 연결 수 상한이 없다). dev 3만 판에서 폴링 동시요청을 458 로 예측했는데 origin 연결이 23,000 까지 갔다 — 그 예측이 이번에도 빗나가는지 여기서 본다. 이 파드의 메모리는 연결 수에 비례한다(연결당 33-64KB).\n\n오른쪽 축 둘은 request 대비 실사용이다. limit 대비(왼쪽 두 패널)는 \"죽는가\" 를 보고, request 대비는 \"스펙을 맞게 잡았나\" 를 본다 — 부하 판의 산출물이 이 값이다. 1.0 을 크게 넘으면 request 가 작아 스케줄러가 노드 자리를 잘못 계산한 것이고, 크게 밑돌면 자리를 낭비한 것이다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
           "targets": [
-            { "refId": "A", "expr": "sum by (pod) (go_goroutines{namespace=\"app\", pod=~\"queue-.*\"})", "legendFormat": "{{pod}}" }
+            { "refId": "A", "expr": "sum by (pod) (go_goroutines{namespace=\"app\", pod=~\"queue-.*\"})", "legendFormat": "동시 요청 {{pod}}" },
+            { "refId": "B", "expr": "avg(sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"app\", container=\"queue\"}[$__rate_interval])) / on(pod) max by (pod) (kube_pod_container_resource_requests{namespace=\"app\", container=\"queue\", resource=\"cpu\"}))", "legendFormat": "CPU / request" },
+            { "refId": "C", "expr": "avg(max by (pod) (container_memory_working_set_bytes{namespace=\"app\", container=\"queue\"}) / on(pod) max by (pod) (kube_pod_container_resource_requests{namespace=\"app\", container=\"queue\", resource=\"memory\"}))", "legendFormat": "메모리 / request" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/ request$" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
 
         { "type": "row", "title": "2. 확장 — HPA (4-8대)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "collapsed": false, "panels": [] },
@@ -77,20 +85,20 @@ data:
           "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "CPU / request (평균)" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
         {
-          "id": 5, "type": "timeseries", "title": "Pending 파드 — 늘릴 자리가 있나",
-          "description": "HPA 가 늘린 파드가 노드에 자리가 없어 못 뜨면 여기 쌓인다. 0 이 정상이다.",
+          "id": 5, "type": "timeseries", "title": "배경 루프 — 마지막 완주로부터 지난 시간",
+          "description": "★ 이 선이 자기 주기보다 크게 올라가면 그 루프가 멈춘 것이다. 멈추면 화면에 아무 오류도 안 나오는데 일이 진행되지 않는다 — 요청은 전부 200 이고 CPU 도 한가한데 대기자가 안 줄어든다.\n\npromote           승격. 멈추면 빈자리가 있는데 아무도 안 들어간다(주기 0.5초)\nsession_timeout   입장 만료 회수. 멈추면 자리가 안 돌아와 대기가 쌓인다(주기 10초)\nwaiting_timeout   폴링이 끊긴 대기자 정리. 멈추면 유령이 줄에 남는다(주기 10초)\n\n도장은 틱이 끝날 때 찍는다 — 시작에 찍으면 도는 중에 멈춘 것을 못 잡는다.\n루프가 도는데도 승격이 안 되면 발행 실패로 승격을 쉬는 중일 수 있다(아래 Kafka 발행 실패).",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
           "targets": [
-            { "refId": "A", "expr": "sum(kube_pod_status_phase{namespace=\"app\", phase=\"Pending\"}) or vector(0)", "legendFormat": "Pending(app)" }
+            { "refId": "A", "expr": "time() - max by (loop) (queue_loop_last_tick_timestamp_seconds)", "legendFormat": "{{loop}}" }
           ],
-          "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+          "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 30 } ] } }, "overrides": [] }
         },
 
         { "type": "row", "title": "3. 기다리는 것 — 늘면 stg · 데이터", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "collapsed": false, "panels": [] },
         {
           "id": 6, "type": "timeseries", "title": "Redis 풀 — 대기 · 타임아웃 · 연결",
-          "description": "풀 대기(초/초)가 늘면 queue 가 Redis 연결을 기다린다. 타임아웃이 생기면 명령이 500ms 안에 안 끝났다. 받는 쪽(ElastiCache)이 찼는지는 데이터 장 1행.",
+          "description": "풀 대기(초/초)가 늘면 queue 가 Redis 연결을 기다린다.\n★ 풀 타임아웃은 명령이 느린 것이 아니라 풀에서 연결을 못 얻은 것이다. 둘은 원인이 다르다 — 연결을 못 얻는 것은 풀이 좁은 것(REDIS_POOL_SIZE 50)이고, 명령이 느린 것은 Redis 가 느린 것(명령 타임아웃 500ms)이다. 명령 자체가 느린지는 데이터 장 1행의 trace 와 booking 의 명령 시간으로 본다.\n받는 쪽(ElastiCache)이 찼는지도 데이터 장 1행.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
           "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" } ],

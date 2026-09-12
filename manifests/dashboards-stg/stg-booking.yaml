@@ -33,7 +33,7 @@ data:
         { "type": "row", "title": "1. booking 파드 — 자기 자원", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
         {
           "id": 1, "type": "timeseries", "title": "메모리 — working_set / limit",
-          "description": "100% 에 닿으면 커널이 파드를 죽인다(OOMKill). 파드가 1대라 죽으면 예매가 멈춘다.",
+          "description": "100% 에 닿으면 커널이 파드를 죽인다(OOMKill). dev 에서 limit 1Gi 였을 때 오픈 버스트에 두 번 났고(exit 137, 25초 만에 재발) 그래서 1,536Mi 가 됐다. stg 는 3Gi 다.\n파드가 두 대라 하나가 죽어도 예매가 멈추지는 않지만, 남은 한 대가 회전 전부를 받는다 — 그때 CPU 와 DB 풀이 두 배로 뛴다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
           "targets": [

@@ -1,0 +1,87 @@
+{{- if .Values.metrics.enabled }}
+{{/*
+브로커 JMX 지표를 Prometheus 형식으로 바꾸는 규칙.
+  Strimzi 가 브로커 컨테이너에 JMX exporter 를 에이전트로 붙이고, 이 규칙대로 이름을 바꿔
+  9404/tcp-prometheus 로 내놓는다. 별도 파드가 생기지 않는다.
+
+규칙을 직접 적는 이유 — 상류 예시 규칙은 MBean 을 거의 전부 내보내 시리즈가 수천 개가 된다.
+  브로커 셋이면 그만큼 곱해지고, 그중 대부분은 한 번도 안 본다.
+  여기 적은 것은 "부하 판에서 Kafka 가 병목인지" 를 가리는 데 쓰는 것만이다.
+
+★ 토픽별로 쪼개는 규칙을 안 둔다. 토픽이 다섯(원본 셋 · DLT 둘)이고 파티션이 여덟이라
+  토픽 × 파티션 × 브로커로 늘어난다. 토픽별 유입은 앱 쪽 카운터
+  (queue_kafka_published_total{topic})가 이미 준다.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.cluster.name }}-metrics
+  namespace: data
+data:
+  kafka-metrics-config.yml: |
+    lowercaseOutputName: true
+    # 규칙에 안 걸린 MBean 은 버린다. 이 줄이 없으면 걸리지 않은 것이 기본 이름으로 전부 나간다.
+    rules:
+      # ── 복제 상태 — 이 셋이 "Kafka 가 건강한가" 의 답이다 ──────────────────
+      # UnderReplicatedPartitions  사본이 모자란 파티션 수. 0 이 아니면 브로커 하나가 뒤처졌다
+      # UnderMinIsrPartitions      min.insync.replicas(2) 를 못 채운 파티션. 0 이 아니면 그 파티션은 쓰기를 거부한다
+      #                            → queue 의 발행이 실패하고 사용자는 "잠시 후 다시"(503)를 본다
+      # IsrShrinks/IsrExpands      사본이 빠지고 들어온 횟수. 부하 중에 오르면 브로커가 따라오지 못하고 있다
+      - pattern: "kafka.server<type=ReplicaManager, name=(UnderReplicatedPartitions|UnderMinIsrPartitions|PartitionCount|LeaderCount)><>Value"
+        name: kafka_server_replicamanager_$1
+        type: GAUGE
+      - pattern: "kafka.server<type=ReplicaManager, name=(IsrShrinksPerSec|IsrExpandsPerSec)><>Count"
+        name: kafka_server_replicamanager_$1_total
+        type: COUNTER
+
+      # ── 브로커 처리량 — 클러스터 합계만. 토픽별로 안 쪼갠다 ────────────────
+      - pattern: "kafka.server<type=BrokerTopicMetrics, name=(MessagesInPerSec|BytesInPerSec|BytesOutPerSec|TotalProduceRequestsPerSec|TotalFetchRequestsPerSec|FailedProduceRequestsPerSec|FailedFetchRequestsPerSec)><>Count"
+        name: kafka_server_brokertopicmetrics_$1_total
+        type: COUNTER
+
+      # ── 요청 지연 — 발행(Produce)과 소비(Fetch)가 브로커 안에서 쓴 시간 ────
+      # queue_kafka_publish_duration_seconds(앱이 잰 왕복)와 겹쳐 보면
+      #   네트워크 몫과 브로커 몫이 갈린다.
+      - pattern: "kafka.network<type=RequestMetrics, name=TotalTimeMs, request=(Produce|Fetch|FetchConsumer|FetchFollower)><>(\\d+)thPercentile"
+        name: kafka_network_requestmetrics_totaltimems
+        type: GAUGE
+        labels:
+          request: "$1"
+          quantile: "0.$2"
+      - pattern: "kafka.network<type=RequestMetrics, name=RequestsPerSec, request=(Produce|Fetch|FetchConsumer|FetchFollower), version=(.+)><>Count"
+        name: kafka_network_requestmetrics_requests_total
+        type: COUNTER
+        labels:
+          request: "$1"
+
+      # ── 요청을 기다리는 줄 — 차면 브로커가 받아들이는 속도가 상한에 닿은 것 ──
+      - pattern: "kafka.network<type=(RequestChannel), name=(RequestQueueSize|ResponseQueueSize)><>Value"
+        name: kafka_network_requestchannel_$2
+        type: GAUGE
+
+      # ── 디스크 — 세그먼트를 내려쓰는 시간. EBS 가 느려지면 여기가 먼저 오른다 ──
+      - pattern: "kafka.log<type=LogFlushStats, name=LogFlushRateAndTimeMs><>Count"
+        name: kafka_log_logflushstats_total
+        type: COUNTER
+      - pattern: "kafka.log<type=LogFlushStats, name=LogFlushRateAndTimeMs><>(\\d+)thPercentile"
+        name: kafka_log_logflushstats_ms
+        type: GAUGE
+        labels:
+          quantile: "0.$1"
+
+      # ── KRaft 컨트롤러 — 브로커가 컨트롤러를 겸한다(combined). 리더가 없으면 메타데이터가 멈춘다 ──
+      - pattern: "kafka.controller<type=KafkaController, name=(ActiveControllerCount|OfflinePartitionsCount|GlobalPartitionCount|GlobalTopicCount)><>Value"
+        name: kafka_controller_kafkacontroller_$1
+        type: GAUGE
+
+      # ── JVM — 힙이 -Xmx(512m)에 붙으면 GC 가 브로커를 멈춘다 ─────────────
+      - pattern: "java.lang<type=Memory><(HeapMemoryUsage|NonHeapMemoryUsage)>(used|committed|max)"
+        name: kafka_jvm_memory_$1_$2_bytes
+        type: GAUGE
+      - pattern: "java.lang<type=GarbageCollector, name=(.+)><>CollectionTime"
+        name: kafka_jvm_gc_collection_seconds_total
+        type: COUNTER
+        labels:
+          gc: "$1"
+        valueFactor: 0.001
+{{- end }}

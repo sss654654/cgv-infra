@@ -34,6 +34,12 @@ redis:
   peers: []
   ports: [6379, 26379]
 
+# Kafka 클러스터 이름. 지표 포트(9404)를 여는 정책이 이 라벨(strimzi.io/cluster)로 브로커와
+#   kafka-exporter 를 같이 고른다. cgv-kafka 차트의 cluster.name 과 같은 값이어야 한다 —
+#   다르면 정책이 아무 파드도 안 골라 Alloy 가 조용히 못 긁는다.
+kafka:
+  clusterName: cgv
+
 # demo-reset CronJob. 데모 데이터를 주기적으로 비운다. dev 전용이다.
 demoReset: false
 

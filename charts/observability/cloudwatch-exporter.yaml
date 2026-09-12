@@ -43,6 +43,8 @@ config: |-
         - kubernetes.io/created-for/pvc/name
     jobs:
       # 입구 — 요청 수 · 응답 시간 · 5xx(ALB 자신과 대상을 가른다) · 연결 · LCU(요금 단위)
+      # ★ 로드밸런서 단위다. ALB 하나가 frontend · queue · booking 셋으로 가르므로
+      #   여기 값은 셋의 합이다. 서비스별로 가르려면 아래 대상그룹 job 을 봐야 한다.
       - type: AWS/ApplicationELB
         regions: [ap-northeast-2]
         period: 60
@@ -56,7 +58,29 @@ config: |-
           - { name: ActiveConnectionCount,     statistics: [Sum] }
           - { name: NewConnectionCount,        statistics: [Sum] }
           - { name: RejectedConnectionCount,   statistics: [Sum] }
-          - { name: ConsumedLCUs,              statistics: [Sum] }
+          # ConsumedLCUs 는 뺐다 — ALB 요금 단위라 "어디가 막혔나" 와 무관하고,
+          #   비용은 예산 경보와 Cost Explorer 가 본다. 판정에 안 쓰는 선이 화면 자리를 차지했다.
+      # 대상그룹 — 서비스별로 가른다. 위 job 이 ALB 하나의 합계라 frontend · queue · booking 을
+      #   구분하지 못한다. 서비스 수준 목표(SLO)는 사용자 여정의 관문마다 따로 세우므로
+      #   그 관문을 가르는 차원이 필요하다.
+      #   로비 가용률(SLO 1)의 원천이 이 job 의 frontend 대상그룹이다 — 로비 요청은
+      #   frontend nginx 가 캐시로 받아 booking 지표에 안 잡히고, ALB 합계로는 queue · booking 과
+      #   섞여서 어느 쪽도 원천이 못 된다.
+      # TargetGroup 라벨은 자원 이름(k8s-app-frontend-…)이라 대상그룹이 다시 만들어져도
+      #   이름 규칙이 같아 쿼리가 유지된다.
+      - type: AWS/ApplicationELB
+        regions: [ap-northeast-2]
+        period: 60
+        length: 300
+        dimensionNameRequirements: [TargetGroup, LoadBalancer]
+        metrics:
+          - { name: RequestCountPerTarget,        statistics: [Sum] }
+          - { name: TargetResponseTime,           statistics: [Average, p99] }
+          - { name: HTTPCode_Target_2XX_Count,    statistics: [Sum] }
+          - { name: HTTPCode_Target_4XX_Count,    statistics: [Sum] }
+          - { name: HTTPCode_Target_5XX_Count,    statistics: [Sum] }
+          - { name: HealthyHostCount,             statistics: [Average, Minimum] }
+          - { name: UnHealthyHostCount,           statistics: [Maximum] }
       # MySQL — dev 의 mysqld_exporter 자리. CPU · 연결 · 메모리 · 디스크 대기
       - type: AWS/RDS
         regions: [ap-northeast-2]
@@ -86,6 +110,8 @@ config: |-
           - { name: NetworkBytesOut,               statistics: [Sum] }
           - { name: Evictions,                     statistics: [Sum] }
       # 볼륨 — Kafka · Mimir · Loki · Tempo 의 EBS. 대기열 길이가 디스크 포화를 가리킨다
+      # VolumeIdleTime 은 뺐다 — 긁고 있었는데 대시보드 어디에서도 안 쓴다.
+      #   CloudWatch 는 호출 수로 요금을 받으므로 안 쓰는 값은 요금만 낸다.
       - type: AWS/EBS
         regions: [ap-northeast-2]
         period: 60
@@ -94,4 +120,3 @@ config: |-
           - { name: VolumeReadOps,     statistics: [Sum] }
           - { name: VolumeWriteOps,    statistics: [Sum] }
           - { name: VolumeQueueLength, statistics: [Average] }
-          - { name: VolumeIdleTime,    statistics: [Sum] }

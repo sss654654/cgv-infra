@@ -70,6 +70,20 @@ spec:
     # resources 는 여기 못 적는다 — v1 스키마에 없다. 노드풀 쪽에 있다.
     jvmOptions:
       "-Xmx": {{ .Values.cluster.heap }}
+    {{- if .Values.metrics.enabled }}
+    # 브로커 JMX 지표. Strimzi 가 브로커 컨테이너에 exporter 를 에이전트로 붙여
+    #   9404(tcp-prometheus)로 내놓는다. 규칙은 metrics-configmap.yaml.
+    # 이걸 켜기 전에는 Kafka 에 대해 아는 것이 전부 앱 쪽 값이었다 — queue 가 "보냈다",
+    #   booking 이 "받았다". 브로커 자신이 말하는 것은 하나도 없어서, 부하에서 Kafka 가
+    #   병목이어도 그것을 지목할 수단이 없었다.
+    # ★ 이 값을 넣거나 빼면 브로커가 롤링 재시작된다.
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: {{ .Values.cluster.name }}-metrics
+          key: kafka-metrics-config.yml
+    {{- end }}
     listeners:
       - name: plain
         port: 9092
@@ -105,6 +119,19 @@ spec:
       # 클러스터 기본값이라 KafkaTopic CR 에 config 가 없는 토픽(앱 auto-create 포함)에 적용된다.
       log.retention.hours: 72
       log.roll.ms: 86400000          # 24h
+  {{- if .Values.metrics.enabled }}
+  # 컨슈머 그룹이 얼마나 밀렸나(lag). 브로커 JMX 에는 이 값이 없다 — 오프셋 두 개(로그 끝 ·
+  #   그룹이 커밋한 자리)의 차라서, 따로 도는 프로그램이 둘을 읽어 빼야 한다.
+  # 이 값이 필요한 이유: 사용자가 입장했는데 예매 화면이 안 열릴 때(전파 지연) 원인이
+  #   "브로커가 느리다" 인지 "booking 이 못 따라간다" 인지 가른다. 앞은 발행 지연이,
+  #   뒤는 이 lag 가 오른다.
+  # 파티션이 여덟이라 파티션별로 나온다 — 한 파티션만 밀리면 그 파티션을 맡은 컨슈머 하나가
+  #   막힌 것이고, 전부 밀리면 booking 전체가 느린 것이다.
+  kafkaExporter:
+    topicRegex: "{{ .Values.metrics.exporter.topicRegex }}"
+    groupRegex: "{{ .Values.metrics.exporter.groupRegex }}"
+    resources: {{- toYaml .Values.metrics.exporter.resources | nindent 6 }}
+  {{- end }}
   entityOperator:
     # topicOperator 만 둔다. resources 를 비우면 BestEffort 가 되어 노드 메모리 압박 시 가장 먼저
     #   퇴거되고, 그러면 KafkaTopic CR 반영이 조용히 멈춘다.

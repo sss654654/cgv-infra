@@ -24,6 +24,26 @@ cluster:
     requests: { cpu: 250m, memory: 768Mi }
     limits: { cpu: "1", memory: 1536Mi }
 
+# 지표. 두 환경 모두 켠다 — 브로커 조건을 갈라 두면 부하 결과에서 무엇이 달랐는지
+#   하나 더 따져야 한다(보존을 두 환경 같게 둔 것과 같은 이유).
+#
+# 켜기 전에는 Kafka 에 대해 아는 것이 전부 앱 쪽 값이었다 — queue 가 "보냈다",
+#   booking 이 "받았다". 브로커 자신이 말하는 것은 하나도 없었다.
+# 켜면 셋이 보인다.
+#   복제      UnderMinIsrPartitions 가 0 이 아니면 그 파티션은 쓰기를 거부한다 → 발행 실패 → 503
+#   브로커    요청 지연 · 요청 대기줄 · 로그 플러시 시간
+#   컨슈머    그룹 lag(토픽 · 파티션별) — booking 이 따라오는지
+metrics:
+  enabled: true
+  exporter:
+    # 토픽 다섯 · 그룹 둘뿐이라 전부 본다. 늘어나면 여기서 좁힌다.
+    topicRegex: ".*"
+    groupRegex: ".*"
+    # 오프셋 두 개를 주기로 읽어 빼는 일만 한다. dev 실측이 없어 넉넉히 잡고 첫 판에 본다.
+    resources:
+      requests: { cpu: 25m, memory: 64Mi }
+      limits: { memory: 192Mi }
+
 # 브로커 볼륨 — 환경이 준다.
 #   dev  정적 PV(bootstrap/k3s/storage/) 를 미리 만들어 뒀다.  노드당 하나, 디스크 통마운트
 #   stg  EBS CSI 가 동적으로 만든다.  gp3 StorageClass 는 애드온이 안 만들어서 허브가 넣는다(manifests/storage-ebs)

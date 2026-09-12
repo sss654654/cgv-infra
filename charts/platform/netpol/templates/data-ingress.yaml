@@ -50,6 +50,31 @@ spec:
       ports:
         - port: 9104
 {{- end }}
+---
+# Kafka 지표. 9092 등 서비스 포트는 Strimzi 가 자기 NetworkPolicy(cgv-network-policy-kafka)로
+#   출처까지 지정하는데, 지표 포트는 그 정책에 없다. 정책이 하나라도 파드를 고르면 나머지는
+#   전부 막히므로(default-deny), 여기서 명시적으로 연다.
+#   같은 파드를 고르는 정책이 둘이면 규칙은 합쳐진다 — Strimzi 것과 부딪히지 않는다.
+# 9404 를 브로커와 kafka-exporter 둘 다 쓴다. 셀렉터를 strimzi.io/cluster 하나로 두어
+#   둘을 같이 고른다 — 이름(strimzi.io/name)이 서로 달라서다.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-metrics-ingress
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      strimzi.io/cluster: {{ .Values.kafka.clusterName }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: observability}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: alloy}
+      ports:
+        - port: 9404
 {{- if .Values.redis.inCluster }}
 ---
 apiVersion: networking.k8s.io/v1

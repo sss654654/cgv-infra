@@ -1,0 +1,43 @@
+{{- if .Values.metrics.enabled }}
+{{/*
+Alloy 가 무엇을 긁을지 알려 주는 두 장.
+  브로커    파드에 직접 붙어 9404 를 긁는다. Service 가 없어서 PodMonitor 다
+  exporter  Strimzi 가 만드는 kafka-exporter 파드. 이쪽도 파드 직접이다
+
+포트 이름으로 가리킨다 — 숫자로 적으면 Strimzi 가 포트를 바꿀 때 조용히 안 긁는다.
+  Strimzi 가 두 파드에 다는 이름은 둘 다 tcp-prometheus 다.
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ .Values.cluster.name }}-kafka
+  namespace: data
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/cluster: {{ .Values.cluster.name }}
+      strimzi.io/kind: Kafka
+      strimzi.io/name: {{ .Values.cluster.name }}-kafka
+  podMetricsEndpoints:
+    - port: tcp-prometheus
+      path: /metrics
+      # 브로커 지표는 순간값이 많아 15초로는 과하다. 부하 판의 다른 수집 주기(15초)보다
+      #   느슨하게 두되, CloudWatch(60초)보다는 촘촘하게 둔다.
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ .Values.cluster.name }}-kafka-exporter
+  namespace: data
+spec:
+  selector:
+    matchLabels:
+      strimzi.io/cluster: {{ .Values.cluster.name }}
+      strimzi.io/kind: Kafka
+      strimzi.io/name: {{ .Values.cluster.name }}-kafka-exporter
+  podMetricsEndpoints:
+    - port: tcp-prometheus
+      path: /metrics
+      interval: 30s
+{{- end }}
