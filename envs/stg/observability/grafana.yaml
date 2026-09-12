@@ -37,8 +37,11 @@ ingress:
     alb.ingress.kubernetes.io/healthcheck-path: /api/health
   path: /
   pathType: Prefix
-  # host 를 안 적는다. 도메인이 없고, 적으면 그 이름의 Host 헤더로 온 것만 받아
+  # host 를 비운다. 도메인이 없고, host 가 있으면 그 이름의 Host 헤더로 온 것만 받아
   #   ALB 기본 DNS 이름으로 들어오는 접근이 끊긴다.
+  # ★ 안 적는 것과 비우는 것은 다르다 — 차트 기본값이 hosts: [chart-example.local] 이라 안 적으면
+  #   그 host 가 규칙에 들어가고 ALB 가 다른 Host 헤더를 전부 404 로 돌려보낸다(2026-09-12 stg 첫 기동).
+  hosts: []
 
 # 알림을 안 쓴다 → 렌더러도 안 띄운다.
 imageRenderer:
