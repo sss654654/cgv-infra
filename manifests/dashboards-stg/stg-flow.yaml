@@ -1,16 +1,28 @@
 # stg · 흐름 — 통과했나(0행), 아니라면 어디서 막혔나(1-4행).
 #
 # 화면 구성
-#   0행  판정        관문 다섯 + 불변식. 그 아래 설명표 하나. 여기만 보면 통과 여부가 끝난다
+#   0행  판정        관문 다섯 + 불변식. 여기만 보면 통과 여부가 끝난다
 #   1행  입구(ALB)   요청이 들어왔나 · 입구가 버린 것이 있나
 #   2행  대기열      줄에 섰나 · 대기 화면이 살아 있나
-#   3행  전달(Kafka) 준 자리가 도착했나 · 쓴 자리가 돌아왔나
+#   3행  전달(Kafka) 자리를 주고받는 데 얼마나 걸렸나
 #   4행  예매        어느 단계가 느린가 · 왜 실패했나
 #   5행  노드        접어 둔다. 서비스 지표가 전부 정상인데 느릴 때만 연다
 #
-# 행마다 패널을 둘로 줄였다(2026-09-13). 그 전에는 행마다 셋이었고 한 패널에 선이 여섯까지
+# 행마다 패널을 최대 둘로 줄였다(2026-09-13). 그 전에는 행마다 셋이었고 한 패널에 선이 열하나까지
 #   들어가, 판 도중에 어디를 봐야 하는지 고르는 데 시간이 걸렸다. 행 제목이 그 행에서
-#   답할 질문을 적고, 패널 둘이 그 질문의 앞뒤를 나눈다.
+#   답할 질문을 적고, 패널이 그 질문의 앞뒤를 나눈다.
+#
+# 뺀 것과 그 근거 (전부 다른 자리가 같은 것을 더 정확하게 본다)
+#   enter 상태별 막대(200·202·400·503)  0행 2번이 성공률로 판정하고, 503 의 원인은 3행의 발행 실패다.
+#                                        막대가 오른쪽 축을 차지해 enter 의 exemplar 점이 묻혔다
+#   줄서기 누적 참고 칸                   0행 2번이 빌 때 읽던 예비였다. PrewarmHTTPSeries 배포 뒤
+#                                        0행이 정상으로 차는 것을 확인해(2026-09-13) 근거가 없어졌다
+#   Kafka 건수 넷(준 수·발급·확정·반환)   준 것과 받은 것이 안 맞는 것은 0행 불변식(컨슈머 랙)이 더
+#                                        정확하다 — 앱 카운터 뺄셈은 파드 재시작에 흔들린다.
+#                                        자리가 안 돌아오는 것은 2행의 대기·입장이 직접 보여 준다
+#   ALB 5xx·비정상 대상의 대상그룹 분해   0 인 선이 대상그룹마다 세 줄씩이라 범례가 열한 줄이 됐고,
+#                                        이름 치환이 접두사까지 지워 booking·frontend·queue 가
+#                                        세 번씩 겹쳐 찍혔다. 합으로 두고, 갈라 볼 일은 0행이 가른다
 #
 # 0행 = 서비스 수준 목표(SLO). 사용자가 겪는 것만 있다 — CPU · 메모리 · 풀은 없다.
 #   SLI = 좋은 사건 ÷ 유효한 사건. 지연도 "기준 안에 든 비율" 로 쓴다. 그래야 다섯이 같은 꼴이
@@ -19,7 +31,9 @@
 #     1 로비 99.9% · 2 줄서기 99.9% · 3 순번 조회 99% · 4 전파 99.9% · 5 예매 여정 99%
 #   ★ SLO 가 아닌 값은 0행에 두지 않는다. "1초 이내 비율" 같은 참고 지표를 옆에 두었더니
 #     그 칸만 빨강이라 판정이 깨진 것처럼 보였다 — 줄서기 SLO 는 성공률이고 시간이 아니다.
-#     참고 지표는 2행으로 내렸다.
+#     시간은 2행의 enter p99 선으로 본다.
+#   ★ 불변식만 예외로 0행에 남긴다. SLO 는 아니지만 "이 판이 유효한가" 라서, 캡처 한 장에
+#     판정과 유효성이 같이 있어야 한다. 제목이 그 차이를 적는다.
 #   ★ 분모에서 빼는 것이 목표값보다 중요하다.
 #     400  형식이 틀린 요청. 클라이언트 잘못이지 서비스 품질이 아니다
 #     409  좌석이 실제로 없어서 실패한 것. 정상 결과다
@@ -49,7 +63,8 @@
 #     계산할 앞 표본이 없다. 그 뒤로는 카운터가 평평해서 rate 가 0 이다 — 2026-09-13 5만 명
 #     판에서 enter 50,000건이 0행 2번과 2행 어디에도 안 나타났다. 앱이 기동할 때 그 조합의
 #     시계열을 0 으로 만들어 두면 해결된다(queue-go metrics.PrewarmHTTPSeries).
-#     그 배포 전에 찍은 판은 2행 오른쪽의 누적 칸으로 읽는다.
+#     2026-09-13 16:11 판에서 0행 2번이 정상으로 차는 것을 확인했다. 그 배포 앞의 판
+#     (14:50)은 이 칸이 영영 안 찬다 — 시계열에 "0 이었던 순간" 이 아예 없어서다.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -84,7 +99,7 @@ data:
         },
         {
           "id": 21, "type": "stat", "title": "2. 줄서기 — 누르면 줄에 선다",
-          "description": "대기열이 존재하는 이유다. 대기열이 없으면 오픈 순간 전원이 booking 으로 몰려 서버가 죽고 모두 실패한다. 줄을 세우는 대신 \"전원을 받아 준다\" 를 약속한 것이므로 여기가 가장 엄격하다.\n\n좋은 사건 = 200(즉시 입장) · 202(대기 등록) · 유효한 사건 = enter 전체 − 400\n503(발행 실패 RETRY_LATER)은 실패로 센다 — 사용자 눈에는 줄서기 실패다.\n목표 99.9%. 깨지면 2행의 상태별 막대와 3행의 발행 실패를 본다.\n\n★ 이 값은 \"줄에 섰나\" 만 본다 — 이것이 SLO 다. 얼마나 기다려 섰는지는 2행 오른쪽의 참고 칸이 본다. 9초 걸려 선 것과 50ms 에 선 것이 여기서는 같은 100% 다.\n★ 칸이 비어 있으면 enter 시계열이 오픈 봉우리에서 처음 생긴 것이다(increase 가 앞 표본을 못 찾는다). 그 판은 2행 오른쪽의 누적 칸으로 읽고, 앱에 PrewarmHTTPSeries 가 들어간 뒤로는 이 칸이 정상으로 찬다.",
+          "description": "대기열이 존재하는 이유다. 대기열이 없으면 오픈 순간 전원이 booking 으로 몰려 서버가 죽고 모두 실패한다. 줄을 세우는 대신 \"전원을 받아 준다\" 를 약속한 것이므로 여기가 가장 엄격하다.\n\n좋은 사건 = 200(즉시 입장) · 202(대기 등록) · 유효한 사건 = enter 전체 − 400\n503(발행 실패 RETRY_LATER)은 실패로 센다 — 사용자 눈에는 줄서기 실패다.\n목표 99.9%. 깨지면 3행의 발행 실패를 본다 — 503 이 나는 경로는 그것뿐이다.\n\n★ 이 값은 \"줄에 섰나\" 만 본다 — 이것이 SLO 다. 얼마나 기다려 섰는지는 2행의 enter p99 선이 본다. 9초 걸려 선 것과 50ms 에 선 것이 여기서는 같은 100% 다.\n★ 칸이 비어 있으면 enter 시계열이 오픈 봉우리에서 처음 생긴 것이다(increase 가 앞 표본을 못 찾는다). 앱에 PrewarmHTTPSeries 가 들어간 뒤로는 이 칸이 정상으로 찬다(2026-09-13 확인).",
           "datasource": { "type": "prometheus", "uid": "mimir" },
           "gridPos": { "h": 6, "w": 4, "x": 4, "y": 1 },
           "targets": [
@@ -138,35 +153,26 @@ data:
           "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name", "graphMode": "none", "orientation": "vertical" },
           "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] }
         },
+        { "type": "row", "title": "1. 입구 (ALB) — 요청이 들어왔나 · 입구가 버린 것이 있나 | CloudWatch 라 1분 단위이고 몇 분 늦게 들어온다", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 }, "collapsed": false, "panels": [] },
         {
-          "id": 30, "type": "text", "title": "관문 다섯이 무엇을 세는가",
-          "gridPos": { "h": 6, "w": 24, "x": 0, "y": 7 },
-          "options": {
-            "mode": "markdown",
-            "content": "| 관문 | 좋은 사건 (분자) | 유효한 사건 (분모) | 목표 | 어디서 재나 |\n|---|---|---|---|---|\n| **1 로비** | 2xx | 2xx + 5xx | 99.9% | ALB frontend 대상그룹 |\n| **2 줄서기** | `enter` 200(즉시 입장) · 202(대기 등록) | `enter` 전체 − 400 | 99.9% | queue 앱 |\n| **3 순번 조회** | `position` 200 을 **1초 안에** | `position` 전체 | 99% | queue 앱 |\n| **4 전파** | 입장이 booking 에 **1초 안에** 도달 | 입장 확정 전체 | 99.9% | booking 앱 |\n| **5 예매 여정** | 회차·좌석·선점·확정 2xx 를 **1초 안에** | 넷 전체 − 409 | 99% | booking 앱 |\n\n**분모에서 뺀 것** — `400` 은 형식이 틀린 요청이라 클라이언트 잘못이고, `409` 는 좌석이 실제로 없어서 실패한 것이라 정상 결과다. 409 를 넣으면 좌석 4,000 에 16만 명이 올 때 성공률이 2.5% 로 나온다.\n**줄서기는 성공률이지 시간이 아니다** — 9초 걸려 선 것과 50ms 에 선 것이 같은 100% 다. 시간은 2행 오른쪽의 참고 칸에 있다.\n**불변식**은 SLO 가 아니다. 0 이 아니면 판 자체가 무효다.\n**창**은 대시보드의 시간 범위다. 판을 판정할 때는 **오픈 −60초에서 +5분**으로 맞춰야 판정 스크립트와 같은 숫자가 나온다."
-          }
-        },
-
-        { "type": "row", "title": "1. 입구 (ALB) — 요청이 들어왔나 · 입구가 버린 것이 있나 | CloudWatch 라 1분 단위이고 몇 분 늦게 들어온다", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 }, "collapsed": false, "panels": [] },
-        {
-          "id": 1, "type": "timeseries", "title": "처리량과 실패 (분당) — 요청만 오른쪽 축, 나머지는 전부 0 이어야 한다",
-          "description": "ALB 하나가 frontend · queue · booking 셋으로 가른다. 합계만 보면 어느 서비스가 실패했는지 모르므로 대상그룹으로 가른다 — 0행 1번(로비)의 원천도 이 차원이다.\n\n왼쪽 축의 선 넷은 전부 0 이어야 하고, 오르면 각각 다른 곳을 가리킨다.\n· 대상 5xx — 그 서비스의 파드가 5xx 를 돌려줬다\n· ALB 자신의 5xx — 대상그룹이 없다. 503 은 건강한 대상이 없다는 뜻이고 504 는 대상이 시간 안에 답을 못 했다는 뜻이다. 파드가 아니라 입구를 본다\n· 거부된 연결 — ALB 가 연결 자체를 못 받았다\n· 비정상 대상 — 헬스체크가 떨어진 파드가 있다. 그만큼 남은 파드에 부하가 몰린다",
+          "id": 1, "type": "timeseries", "title": "처리량과 실패 (분당) — 요청만 오른쪽 축, 왼쪽 넷은 전부 0 이어야 한다",
+          "description": "요청은 대상그룹으로 가른다 — ALB 하나가 frontend · queue · booking 셋으로 보내고, 0행 1번(로비)의 원천도 이 차원이다.\n\n왼쪽 축의 선 넷은 전부 0 이어야 하고, 오르면 각각 다른 곳을 가리킨다.\n· 대상 5xx — 파드가 5xx 를 돌려줬다. 어느 서비스인지는 0행 다섯 칸이 이미 가르므로 여기서는 합으로 둔다\n· ALB 자신의 5xx — 대상그룹이 없다. 503 은 건강한 대상이 없다는 뜻이고 504 는 대상이 시간 안에 답을 못 했다는 뜻이다. 파드가 아니라 입구를 본다\n· 거부된 연결 — ALB 가 연결 자체를 못 받았다\n· 비정상 대상 — 헬스체크가 떨어진 파드 수다. 그만큼 남은 파드에 부하가 몰린다\n\n★ 0 인 선을 대상그룹마다 세 줄씩 두면 범례가 열한 줄이 되고 이름이 겹쳐 못 읽는다. 실패는 합으로 보고, 갈라 볼 일이 생기면 그때 상세 장으로 간다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
           "targets": [
             { "refId": "A", "expr": "sum by (dimension_TargetGroup) ({__name__=~\"aws_applicationelb_request_count_per_target_sum\", dimension_TargetGroup=~\".*k8s-app-.*\"})", "legendFormat": "요청 {{dimension_TargetGroup}}" },
-            { "refId": "B", "expr": "sum by (dimension_TargetGroup) ({__name__=~\"aws_applicationelb_httpcode_target_5_?xx_count_sum\", dimension_TargetGroup=~\".*k8s-app-.*\"})", "legendFormat": "5xx {{dimension_TargetGroup}}" },
+            { "refId": "B", "expr": "sum({__name__=~\"aws_applicationelb_httpcode_target_5_?xx_count_sum\", dimension_TargetGroup=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "대상 5xx (합)" },
             { "refId": "C", "expr": "sum({__name__=~\"aws_applicationelb_httpcode_elb_5_?xx_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "ALB 자신의 5xx" },
             { "refId": "D", "expr": "sum({__name__=~\"aws_applicationelb_rejected_connection_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "거부된 연결" },
-            { "refId": "E", "expr": "sum by (dimension_TargetGroup) ({__name__=~\"aws_applicationelb_un_?healthy_host_count_maximum\", dimension_TargetGroup=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "비정상 대상 {{dimension_TargetGroup}}" }
+            { "refId": "E", "expr": "sum({__name__=~\"aws_applicationelb_un_?healthy_host_count_maximum\", dimension_TargetGroup=~\".*k8s-app-.*\"}) or vector(0)", "legendFormat": "비정상 대상 (합)" }
           ],
-          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "요청 .*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" }, { "id": "custom.fillOpacity", "value": 8 } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*?)arn:.*targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "$1$2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "요청 .*" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" }, { "id": "custom.fillOpacity", "value": 8 } ] } ] }
         },
         {
           "id": 2, "type": "timeseries", "title": "지연과 연결 (분당) — 입구에서 본 값",
           "description": "ALB 가 잰 대상그룹별 p99 와, ALB 가 받아낸 연결 수.\n\n★ 앱이 잰 지연은 2행 · 4행에 있다(그쪽은 5초 · 15초 눈금이다). 여기 값이 그것보다 크게 높으면 느린 구간이 파드 안이 아니라 ALB 와 파드 사이다. 두 값을 한 패널에 겹치지 않는 이유는 눈금이 달라서다 — 1분 평균은 오픈 봉우리를 뭉개서 낮게 보이고, 그 차이가 구간 몫인 것처럼 읽힌다.\n\n연결은 dev 3만 판에서 origin 연결이 23,000 까지 올라 Traefik 이 무너진 적이 있어 같이 본다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
           "targets": [
             { "refId": "A", "expr": "max by (dimension_TargetGroup) ({__name__=~\"aws_applicationelb_target_response_time_p99\", dimension_TargetGroup=~\".*k8s-app-.*\"})", "legendFormat": "p99 {{dimension_TargetGroup}}" },
             { "refId": "B", "expr": "sum({__name__=~\"aws_applicationelb_active_connection_count_sum\", dimension_LoadBalancer=~\".*k8s-app-.*\"})", "legendFormat": "활성 연결" },
@@ -175,25 +181,24 @@ data:
           "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*연결$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
         },
 
-        { "type": "row", "title": "2. 대기열 (queue) — 줄에 섰나 · 대기 화면이 살아 있나 | 0행 2 · 3 이 깨지면 여기. 더 파려면 stg · queue", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }, "collapsed": false, "panels": [] },
+        { "type": "row", "title": "2. 대기열 (queue) — 줄에 섰나 · 대기 화면이 살아 있나 | 0행 2 · 3 이 깨지면 여기. 더 파려면 stg · queue", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 }, "collapsed": false, "panels": [] },
         {
-          "id": 4, "type": "timeseries", "title": "지연 p99 · 줄서기 상태별 (통과선 1초)",
-          "description": "기다리는 사람이 겪는 시간(앱 구간). 통과선은 순번 조회(position)에만 해당한다 — 0행 3번의 기준이다.\n★ enter 에는 지연 목표가 없다. 0행 2번에서 enter 는 성공률로 판정한다 — 오픈 순간에 느린 것보다 실패하는 것이 훨씬 나쁘고, 느린 enter 는 사용자가 한 번 더 누르면 되기 때문이다. 여기 enter 선은 참고값이다.\n\n막대는 enter 의 상태 분해다 — 200 은 즉시 입장, 202 는 대기 등록, 둘 다 성공이다. 503 이 오르면 Kafka 발행이 실패해 RETRY_LATER 를 준 것이다 → 3행 왼쪽의 발행 실패를 본다.\n점(exemplar)을 누르면 그 요청의 trace 가 열린다.",
+          "id": 4, "type": "timeseries", "title": "지연 p99 — 순번 조회(position) · 줄서기(enter) · 통과선 1초",
+          "description": "기다리는 사람이 겪는 시간(앱 구간). 선 둘은 0행의 관문 둘과 같은 경로다.\n· 순번 조회 = GET /api/admission/position — 0행 3번의 판정 대상이고 통과선 1초가 그 기준이다\n· 줄서기 = POST /api/admission/enter — 0행 2번은 이 경로를 성공률로 판정하므로 여기 선은 참고값이다. 오픈 순간에 느린 것보다 실패하는 것이 훨씬 나쁘고, 느린 enter 는 사용자가 한 번 더 누르면 된다\n\n★ 점(exemplar)은 enter 선에만 붙는다. 누르면 그 요청의 trace 가 열린다.\n  position 에는 안 붙는다 — 대기 화면이 1-5초마다 부르는 경로라 트레이스 샘플러가 통째로 제외한다(queue-go tracing.go). 지표는 전수로 세고 trace 만 안 남긴다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 9, "x": 0, "y": 23 },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
           "links": [ { "title": "→ stg · queue", "url": "/d/stg-queue/?${__url_time_range}" } ],
           "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/position\"}[$__rate_interval])))", "legendFormat": "순번 조회 p99(판정 대상)", "exemplar": true },
-            { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/enter\"}[$__rate_interval])))", "legendFormat": "enter p99(참고)", "exemplar": true },
-            { "refId": "C", "expr": "sum by (status) (rate(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"}[$__rate_interval]))", "legendFormat": "enter {{status}}/초" }
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/position\"}[$__rate_interval])))", "legendFormat": "순번 조회 position p99 — 판정 대상", "exemplar": false },
+            { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_http_request_duration_seconds_bucket{path=\"/api/admission/enter\"}[$__rate_interval])))", "legendFormat": "줄서기 enter p99 — 참고", "exemplar": true }
           ],
-          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "enter p99(참고)" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] }, { "matcher": { "id": "byRegexp", "options": "enter .*/초" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" }, { "id": "custom.drawStyle", "value": "bars" }, { "id": "custom.fillOpacity", "value": 40 } ] } ] }
+          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "줄서기 enter p99 — 참고" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] } ] }
         },
         {
           "id": 5, "type": "timeseries", "title": "인원 — 대기 · 입장 vs 정원",
           "description": "입장이 정원에 붙은 채 대기가 줄지 않으면 자리가 안 돌아오는 것이다 → 3행 오른쪽(돌려받는 방향)을 본다. 입장에 여유가 있는데 대기가 쌓이면 승격이 막힌 것이다 → stg · queue 의 루프 완주 도장.\n★ 입장이 정원을 넘으면 불변식 위반이다(0행 오른쪽 끝). 이 패널에서는 두 선이 겹치는 것까지가 정상이고 넘어서는 안 된다.\n★ 파드 넷이 Redis 의 같은 값을 각각 보고하므로 max 로 읽는다. sum 이면 네 배가 된다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 9, "x": 9, "y": 23 },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
           "links": [ { "title": "→ stg · queue", "url": "/d/stg-queue/?${__url_time_range}" } ],
           "targets": [
             { "refId": "A", "expr": "max(queue_waiting)", "legendFormat": "대기" },
@@ -202,55 +207,28 @@ data:
           ],
           "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [ { "matcher": { "id": "byName", "options": "정원" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } } ] } ] }
         },
+        { "type": "row", "title": "3. 서비스 사이 전달 (Kafka) — 자리를 주고받는 데 얼마나 걸렸나 | 0행 4 가 깨지면 여기. 더 파려면 stg · 데이터 3행", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }, "collapsed": false, "panels": [] },
         {
-          "id": 26, "type": "stat", "title": "줄서기 (참고) — 파드 기동 이후 누적",
-          "description": "0행 2번은 창(대시보드 시간 범위)의 달성률이고, 이 칸은 카운터 원값의 비율이라 **파드가 기동한 뒤 전부**를 센다. 둘의 쓰임이 다르다.\n\n· 성공률 — 0행 2번과 같은 정의(2xx ÷ 전체 − 400). 0행이 비어 있을 때 이 칸으로 읽는다\n· 1초 이내 — 얼마나 기다려 섰나. **이것은 SLO 가 아니다.** 그래서 0행에 두지 않는다\n\n★ 이 칸은 rate·increase 를 안 쓴다. 시계열이 창 중간에 처음 생기면 앞 표본이 없어 그 둘은 0 을 내고 칸이 빈다 — 2026-09-13 5만 명 판에서 enter 50,000건이 스크레이프 한 주기 안에 전부 들어와 실제로 그 일이 났다. 그 판의 1초 이내 비율은 66.740%(초과 16,630건)였다.\n★ 대신 창을 안 본다는 한계가 있다. 판 값과 같으려면 파드가 그 판을 위해 기동했어야 한다.",
+          "id": 7, "type": "timeseries", "title": "전달 지연 — 승격→인증 · 확정→반환 (통과선 1초)",
+          "description": "0행 4번(전파)의 진단이다. 통과선 1초는 그 SLO 와 같은 값이다.\n\n주는 방향 — 선 둘이 갈라 준다. 전체(승격→인증)만 오르고 발행이 멀쩡하면 브로커나 booking 의 소비 쪽이다. 발행도 같이 오르면 queue → 브로커 구간이다.\n돌려받는 방향 — 확정→반환. 여기에는 통과선을 안 둔다. 사용자가 직접 겪는 구간이 아니라(뒷사람이 늦게 들어올 뿐) SLO 가 아니고, 늦어진 영향은 2행의 대기 인원이 안 줄어드는 것으로 나타난다.\n\n발행 실패(오른쪽 축)는 0 이어야 한다. 오르면 queue 가 RETRY_LATER(503)를 준 것이고, 그것이 0행 2번 줄서기가 깨지는 유일한 경로다.\n\n★ 건수 넷(자리 준 수 · 인증 발급 · 확정 · 반환)을 뺐다. 준 것과 받은 것이 안 맞는 것은 0행의 불변식(미소비 잔량 = 컨슈머 랙)이 더 정확하게 보고 — 앱 카운터 뺄셈은 파드 재시작에 흔들린다 — 자리가 안 돌아오는 것은 2행의 대기·입장 패널이 직접 보여 준다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 23 },
-          "targets": [
-            { "refId": "A", "expr": "sum(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\", status=~\"2..\"}) / sum(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\", status!=\"400\"})", "legendFormat": "성공률 (SLO 정의)" },
-            { "refId": "B", "expr": "sum(queue_http_request_duration_seconds_bucket{path=\"/api/admission/enter\", le=\"1.0\"}) / sum(queue_http_request_duration_seconds_count{path=\"/api/admission/enter\"})", "legendFormat": "1초 이내 (SLO 아님)" }
-          ],
-          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value_and_name", "graphMode": "none", "orientation": "vertical" },
-          "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3, "thresholds": { "mode": "absolute", "steps": [ { "color": "text", "value": null } ] } }, "overrides": [] }
-        },
-
-        { "type": "row", "title": "3. 서비스 사이 전달 (Kafka) — 준 자리가 도착했나 · 쓴 자리가 돌아왔나 | 0행 4 가 깨지면 여기. 더 파려면 stg · 데이터 3행", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 }, "collapsed": false, "panels": [] },
-        {
-          "id": 7, "type": "timeseries", "title": "주는 방향 — queue 가 자리를 주고 booking 이 인증을 만든다 (통과선 1초)",
-          "description": "0행 4번(전파)의 진단이다. 통과선 1초는 그 SLO 와 같은 값이다.\n\n선 셋이 갈라 주는 것: 전체(승격→인증)만 오르고 발행이 멀쩡하면 브로커나 소비 쪽이다. 발행도 같이 오르면 queue → 브로커 구간이다.\n막대 둘은 건수다 — 자리를 준 수와 booking 이 받은 수가 겹쳐야 정상이다.\n★ 준 수는 발행 건수로 센다. 승격 카운터로 세면 정원이 비어 enter 가 바로 입장시킨 몫이 빠져, 정상인데도 쌍이 안 맞는다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 26 },
           "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" } ],
           "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(booking_admission_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "승격→인증 p99", "exemplar": true },
+            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(booking_admission_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "승격→인증 p99 — 판정 대상", "exemplar": true },
             { "refId": "B", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_kafka_publish_duration_seconds_bucket{topic=\"admissions\"}[$__rate_interval])))", "legendFormat": "그중 queue 발행 p99", "exemplar": true },
-            { "refId": "C", "expr": "sum(rate(queue_kafka_published_total{topic=\"admissions\"}[$__rate_interval])) or vector(0)", "legendFormat": "자리 준 수/초" },
-            { "refId": "D", "expr": "sum(rate(booking_admissions_total{result=\"ok\"}[$__rate_interval])) or vector(0)", "legendFormat": "인증 발급/초" },
-            { "refId": "E", "expr": "sum(rate(queue_kafka_publish_failures_total[$__rate_interval])) or vector(0)", "legendFormat": "발행 실패/초" }
+            { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_completed_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "확정→반환 p99 — 참고", "exemplar": true },
+            { "refId": "D", "expr": "sum(rate(queue_kafka_publish_failures_total[$__rate_interval])) or vector(0)", "legendFormat": "발행 실패/초" }
           ],
-          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
-        },
-        {
-          "id": 8, "type": "timeseries", "title": "돌려받는 방향 — booking 이 확정하고 queue 가 자리를 회수한다",
-          "description": "주는 방향과 뜻이 반대라 패널을 나눴다 — 같은 축에 겹쳐 두면 어느 쌍이 벌어졌는지 눈으로 못 가른다.\n\n확정과 반환이 벌어지면 자리가 안 돌아와 2행의 대기가 쌓인다. 흐름이 원형이라 여기가 막히면 앞이 멈춘다.\n반환 지연에 통과선을 안 둔다 — 사용자가 직접 겪는 구간이 아니라(뒷사람이 늦게 들어올 뿐) SLO 가 아니고, 그 영향은 2행의 대기 인원으로 나타난다.",
-          "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
-          "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" } ],
-          "targets": [
-            { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_completed_lag_seconds_bucket[$__rate_interval])))", "legendFormat": "확정→반환 p99", "exemplar": true },
-            { "refId": "B", "expr": "sum(rate(booking_confirm_total{result=\"success\"}[$__rate_interval])) or vector(0)", "legendFormat": "확정/초" },
-            { "refId": "C", "expr": "sum(rate(queue_completed_total[$__rate_interval])) or vector(0)", "legendFormat": "반환/초" }
-          ],
-          "transformations": [ { "id": "renameByRegex", "options": { "regex": "(.*)targetgroup/k8s-app-([a-z]+)-.*", "renamePattern": "          $2" } } ], "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [ { "matcher": { "id": "byRegexp", "options": ".*/초$" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] }
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }, "fieldConfig": { "defaults": { "unit": "s", "custom": { "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [ { "matcher": { "id": "byName", "options": "확정→반환 p99 — 참고" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] }, { "matcher": { "id": "byName", "options": "발행 실패/초" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.axisPlacement", "value": "right" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] }
         },
 
-        { "type": "row", "title": "4. 예매 (booking) — 어느 단계가 느린가 · 왜 실패했나 | 0행 5 가 깨지면 여기. 더 파려면 stg · booking", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 }, "collapsed": false, "panels": [] },
+        { "type": "row", "title": "4. 예매 (booking) — 어느 단계가 느린가 · 왜 실패했나 | 0행 5 가 깨지면 여기. 더 파려면 stg · booking", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }, "collapsed": false, "panels": [] },
         {
           "id": 9, "type": "timeseries", "title": "단계별 p99 — 회차 · 좌석 · 선점 · 확정 (통과선 1초)",
           "description": "0행 5번(예매 여정)의 진단이다. 넷이 그 SLO 의 분모이고 통과선 1초가 그 기준이다.\n어느 단계가 느린가 — 확정(/api/bookings)만 느리면 MySQL 쪽, 전부 같이 느리면 파드나 Redis 쪽을 먼저 본다.\n★ 로비 폴링(/api/screenings/board)은 점선으로 따로 둔다. 그건 1번 관문이라 이 SLO 의 분모가 아니다 — 싸고 많아서 같이 세면 느린 확정을 가린다.\n점(exemplar)을 누르면 trace 가 열린다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
           "links": [ { "title": "→ stg · booking", "url": "/d/stg-booking/?${__url_time_range}" } ],
           "targets": [
             { "refId": "A", "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{application=\"cgv-booking\", uri=~\"/api/screenings|/api/seats|/api/seats/select|/api/bookings\"}[$__rate_interval])))", "legendFormat": "{{uri}}", "exemplar": true },
@@ -262,7 +240,7 @@ data:
           "id": 10, "type": "timeseries", "title": "왜 실패했나 (초당) — 확정 결과 · 403 · 409",
           "description": "확정 결과와 거절 응답을 한자리에서 본다. 어느 것도 5xx 가 아니라 0행 1번에는 안 잡힌다.\n\n· redis_error → stg · 데이터 1행(Redis)\n· lock_contention → stg · 데이터 2행(MySQL)\n· seat_conflict · 409 — 좌석 경쟁이라 정상이고 0행 5번의 분모에서도 뺀다. 안 빼면 매진될수록 SLO 가 나빠진다\n· forbidden · /api/screenings 의 403 — 입장 인증이 아직 안 온 것이다. 0행 4번(전파)이 밀린 증상\n· /api/seats/select 의 403 — 그 좌석이 남의 것이라는 뜻이다\n· error — 그 밖의 커밋 실패\n\n초기화 API 차단 403 은 여기 안 나온다 — ALB 가 고정 응답으로 돌려주므로 파드까지 오지 않는다.",
           "datasource": { "type": "prometheus", "uid": "mimir" },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
           "links": [ { "title": "→ stg · 데이터", "url": "/d/stg-data/?${__url_time_range}" }, { "title": "→ stg · booking", "url": "/d/stg-booking/?${__url_time_range}" } ],
           "targets": [
             { "refId": "A", "expr": "sum by (result) (rate(booking_confirm_total[$__rate_interval]))", "legendFormat": "확정 {{result}}" },
@@ -274,13 +252,13 @@ data:
         {
           "type": "row", "collapsed": true,
           "title": "5. 노드 — 접어 둔다. 위 네 행이 전부 정상인데 느릴 때만 연다",
-          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 43 },
           "panels": [
             {
               "id": 12, "type": "timeseries", "title": "노드별 CPU 코어 · 런큐 대기 · CPU 압력 (3분 창)",
               "description": "파드의 CPU 스로틀이 0 인데 응답이 느릴 때 보는 자리다. 스로틀 0 은 \"한도에 안 닿았다\" 이지 \"안 기다렸다\" 가 아니다 — 노드의 런큐가 차면 몫이 있어도 차례를 기다린다.\n\n· CPU 코어 — 노드가 실제로 쓴 코어 수(idle 제외). allocatable 3.92 가 상한처럼 보이지만 커널(system + softirq)이 약 1.07, 로그 수집기가 약 0.5 를 가져가므로 서비스 파드 몫은 약 2.3 이다\n· 런큐 대기 초/초 — 실행할 준비가 된 스레드가 CPU 를 기다린 시간의 합. 1 을 넘으면 매 초 한 스레드분 이상이 기다린 것이다\n· CPU 압력(PSI some) — 같은 것을 커널이 비율로 잰 값\n\n실제로 두 번 여기서 원인이 나왔다. booking 의 새 JVM 이 JIT 컴파일로 노드를 채웠을 때(런큐 15.2 · PSI 66%) 같은 노드의 Kafka 브로커가 밀렸고, queue 파드 둘이 한 노드에 앉았을 때(런큐 4.16) 그 둘만 enter 1초 초과를 냈다.\n\n★ node-exporter 스크랩이 60초라 창을 3분으로 둔다. [1m] 이면 표본이 하나여서 빈다.\n★ 라벨은 노드 IP 다. 역할(workload=app · booking · observability)은 여기 안 붙는다 — 노드 이름과 IP 의 대응은 kubectl get nodes -o wide 로 본다.",
               "datasource": { "type": "prometheus", "uid": "mimir" },
-              "gridPos": { "h": 10, "w": 24, "x": 0, "y": 50 },
+              "gridPos": { "h": 10, "w": 24, "x": 0, "y": 44 },
               "targets": [
                 { "refId": "A", "expr": "sum by (instance) (rate(node_cpu_seconds_total{mode!=\"idle\"}[3m]))", "legendFormat": "CPU 코어 {{instance}}" },
                 { "refId": "B", "expr": "sum by (instance) (rate(node_schedstat_waiting_seconds_total[3m]))", "legendFormat": "런큐 대기 {{instance}}" },
