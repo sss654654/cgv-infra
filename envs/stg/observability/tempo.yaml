@@ -11,6 +11,13 @@
 #   볼륨     정적 PV → EBS.  노드 고정도 없어진다 — 어느 노드에 떠도 볼륨이 따라온다.
 
 tempo:
+  # ★ CPU limit 500m → 2000m (2026-09-13). 2.5만 명 판에서 이 파드가 1.62 초/초 스로틀됐다.
+  #   같은 시각 관측 노드는 CPU 1.17 / 3.92 코어라 막은 것은 노드가 아니라 이 한도다.
+  #   트레이스가 밀리면 부하 판에서 지연 구간을 가르는 근거가 같이 밀린다.
+  #   메모리는 그대로 둔다 — 실측 working set 이 limit 근처라 CPU 만 풀고 다음 판에서 다시 본다.
+  resources:
+    requests: { cpu: 200m, memory: 2Gi }
+    limits: { cpu: 2000m, memory: 5Gi }
   storage:
     trace:
       s3:

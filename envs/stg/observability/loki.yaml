@@ -32,6 +32,13 @@ serviceAccount:
 # 관측 노드에만 놓는다 — 노드그룹이 taint 로 앱 파드를 막고(cgv-terraform modules/eks),
 #   관측 파드는 toleration 으로 들어가 nodeSelector 로 거기에만 선다. 이유는 mimir.yaml 머리말.
 singleBinary:
+  # ★ CPU limit 500m → 1500m, 메모리 512Mi → 1Gi (2026-09-13).
+  #   2.5만 명 판에서 1.28 초/초 스로틀됐고 working set 이 797Mi 로 limit 512Mi 를 넘었다.
+  #   관측 노드는 같은 시각 CPU 1.17 / 3.92 · 메모리 5,146Mi / 14Gi 라 노드에는 여유가 있다.
+  #   로그가 밀리면 판정에서 대기(브로커)와 처리(booking)를 가르는 로그가 늦게 들어온다.
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: 1500m, memory: 1Gi }
   # WAL 볼륨. gp3 StorageClass 는 EBS CSI 애드온이 안 만든다 — 허브가 cluster-stg 로 넣는다.
   persistence:
     enabled: true
