@@ -51,6 +51,9 @@ metrics:
   containerPort: 0          # PodMonitor일 때 노출할 별도 포트 (0=미노출)
   path: /metrics
   interval: 15s
+  # 비우면 스크레이퍼 기본값(10초)을 쓴다. interval 을 10초보다 짧게 줄이는 환경은
+  #   이 값도 같이 줄여야 한다 — 타임아웃이 주기보다 길면 설정이 거부된다.
+  scrapeTimeout: ""
 
 serviceAccount:
   create: true

@@ -18,6 +18,17 @@ imagePullSecrets: []
 service:
   annotations:
     alb.ingress.kubernetes.io/healthcheck-path: /health/ready
+# ★ 스크레이프 15초 → 5초 (2026-09-13). 부하 판의 봉우리가 한 주기 안에 끝나기 때문이다.
+#   5만 명 판에서 enter 50,000건이 스크레이프 한 주기(15초) 안에 전부 들어왔다. 그러면 그
+#   경로의 시계열에 표본이 하나만 남아 봉우리의 높이도 폭도 그래프에 안 나타난다.
+#   5초면 같은 봉우리가 표본 두셋에 걸린다.
+#   대상은 queue 파드 넷뿐이고(파드당 약 2,000 시리즈) 나머지 앱은 15초 그대로다.
+#   봉우리가 안 보이는 것과 별개로, 그 경로의 첫 요청이 봉우리일 때 rate·increase 가 0 을
+#   내는 것은 주기를 줄여도 안 고쳐진다 — 그쪽은 앱이 기동 때 시계열을 만들어 해결한다
+#   (queue-go metrics.PrewarmHTTPSeries).
+metrics:
+  interval: 5s
+  scrapeTimeout: 5s
 resources:
   # request 는 실사용에 맞춘다 — 5만 기준 파드당 0.39 코어.
   #   3만 판이 무너진 원인이 request(320Mi)와 실사용(1.7GB)의 괴리였다.

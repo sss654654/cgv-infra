@@ -11,4 +11,7 @@ spec:
     - port: http
       path: {{ .Values.metrics.path }}
       interval: {{ .Values.metrics.interval }}
+      {{- with .Values.metrics.scrapeTimeout }}
+      scrapeTimeout: {{ . }}
+      {{- end }}
 {{- end }}
