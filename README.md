@@ -4,6 +4,8 @@ CGV 티켓팅 폴리글랏 MSA([cgv-onprem](https://github.com/sss654654/cgv-onp
 온프레미스 k3s 클러스터에 GitOps로 배포·운영하는 인프라 코드.
 물리 노드부터 CNI·LB·Ingress·스토리지·관측·미들웨어·시크릿까지 직접 구성한다.
 
+같은 저장소 · 같은 차트 · 같은 이미지가 **AWS EKS(stg)** 도 배달한다 — 환경이 갈리는 자리는 `envs/<환경>/` 뿐이다. AWS 자원은 [cgv-terraform](https://github.com/sss654654/cgv-terraform) 이 만든다. → [stg — AWS EKS](#stg--aws-eks)
+
 이 repo로 노드 프로비저닝부터 CGV 서비스 기동까지 재현한다: 노드 프로비저닝 스크립트(`bootstrap/k3s/cluster/`) → 플랫폼 부트스트랩(`bootstrap/k3s/install.sh`) → GitOps 선언(`argocd/` + `charts`·`manifests`·`envs`).
 
 **동작 중인 서비스: [ticket.subinhong.dev](https://ticket.subinhong.dev)** — 클러스터가 노트북 한 대 위에 있어 23:30에 꺼지고 07:30에 켜진다. 그 사이에는 응답하지 않는다.
@@ -75,6 +77,66 @@ kubelet이 파드를 축출했다 — 애플리케이션 한계가 아니라 물
 
 공개 사이트에서 보이는 대기열 정원은 위 표의 실측값(1,000)이 아니라 더 낮은 값이다 —
 1,000이면 방문자가 가상 관객을 넣어도 전원이 즉시 입장해 대기열이 화면에 안 나타난다.
+
+---
+
+## stg — AWS EKS
+
+집 k3s 의 ArgoCD(허브)가 AWS EKS 클러스터 `cgv-stg` 를 두 번째 목적지로 배달한다. **차트 · 이미지 · 파이프라인은 dev 와 같고, 갈리는 것은 `envs/stg/` 의 값뿐이다.** AWS 자원(VPC · EKS · RDS · ElastiCache · ECR · IAM)은 [cgv-terraform](https://github.com/sss654654/cgv-terraform) 이 만들고, 하루 켜서 부하 판을 돌린 뒤 지운다.
+
+```
+집 GitLab CI ── publish-ecr(수동 버튼) ──▶ ECR ◀── image-updater(집) ──▶ envs/stg/<서비스>.yaml 태그 커밋
+집 ArgoCD(허브) ── destination.name: cgv-stg ──▶ EKS
+인터넷 ──▶ ALB (ACM · HTTPS · 접근 로그) ──▶ frontend · queue · booking (파드 IP 를 대상으로)
+```
+
+| 층 | dev (k3s) | stg (EKS) |
+|---|---|---|
+| LB · Ingress · TLS | MetalLB · Traefik · cert-manager | ALB Controller · ACM (Traefik 없음) |
+| 스토리지 | 정적 PV · StorageClass 6종 | EBS CSI · gp3 (`manifests/storage-ebs`) |
+| MySQL · Redis | 파드 (Redis Sentinel · 평문) | RDS Multi-AZ · ElastiCache 주 + 복제본 · TLS + AUTH |
+| 이미지 태그 | GitLab 레지스트리 `main-<파이프라인>-<커밋>` | ECR `<커밋 해시>` — 같은 이미지에 이름만 더 단다 |
+| 시크릿 | SealedSecret | Secrets Manager → `bootstrap/eks/secrets.sh` (봉인이 클러스터 개인키에 묶여 옮기지 않는다) |
+| 관측 백엔드 | MinIO | S3 (IRSA) + CloudWatch exporter(ALB · RDS · ElastiCache) |
+| 파드 → 클라우드 자격 | — | IRSA |
+
+**stg 로 가는 선언**
+
+- `argocd/applicationsets/apps.yaml` · `observability.yaml` 의 환경 목록에 stg 한 줄 — `cluster: cgv-stg` · ECR 주소 · `allowTags: ^[0-9a-f]{8}$`
+- 단일 Application 7개 — `cluster-stg`(네임스페이스 · gp3) · `prometheus-crds-stg` · `strimzi-stg` · `alb-controller-stg` · `kafka-stg` · `netpol-stg` · `dashboards-stg`
+- 대상을 주소가 아니라 **클러스터 이름**으로 가리킨다. `bootstrap/eks/register.sh` 가 그 이름으로 허브에 등록하므로 켜는 날 옮겨 적을 주소가 없다
+- 허브에 Application 헬스 체크가 없어 sync-wave 가 앞 단계의 sync 를 기다리지 않는다. 그래서 stg Application 전부에 `retry` 가 있다
+- 켜는 날 순서는 [`bootstrap/eks/README.md`](bootstrap/eks/README.md)
+
+**부하 판이 정한 stg 값** — 각 값의 근거 수치는 해당 `envs/stg/*.yaml` 주석에 있다.
+
+| 값 | 무엇이 나왔나 |
+|---|---|
+| booking 전용 노드(AZ 마다 한 대 · taint) · CPU limit 4000m | 1만 명 판 오픈 순간 새로 뜬 JVM 의 컴파일이 노드를 채워(런큐 대기 15 초/초 · CPU 압력 66%) 같은 노드의 Kafka 브로커가 밀렸다. 입장 전파 SLO 78–90% → 100% |
+| Kafka 브로커 Guaranteed (1코어) | 경합 때 브로커 몫이 250 ÷ (1500 + 1500 + 250) = 7% 였다 |
+| queue 를 노드마다 하나 (`DoNotSchedule` · `matchLabelKeys`) | 둘이 한 노드에 앉은 2.5만 명 판에서 그 둘만 줄서기 1초 초과 5,055 · 5,142건, 다른 둘은 0 |
+| 폴링 경로의 성공 응답은 접근 로그 제외 | 2.5만 명 판 Loki 초당 4,256줄 · 로그 수집기가 노드마다 0.37–0.54코어를 써 booking 의 Kafka 소비가 밀렸다(전파 97.4%). 뒤: 741줄 · 전파 100% |
+| queue CPU limit 4000m · Redis 풀 100 · 메모리 2Gi | 5만 명 판에서 GOMAXPROCS 2 에 고루틴 1만 개 · 필요한 풀 54.3 > 설정 50 |
+| Tempo · Loki CPU 한도 상향 | 2.5만 명 판에서 스로틀 |
+| queue 스크레이프 5초 | 5만 명 오픈 봉우리가 15초 한 주기 안에 끝나 표본이 하나였다 |
+
+**결과**
+
+| | 1만 | 2.5만 | 5만 |
+|---|---|---|---|
+| SLO 다섯 (로비 · 줄서기 · 순번 조회 · 입장 전파 · 예매 여정) | 전부 통과 | 전부 통과 | 전부 통과 (순번 조회 99.501%) |
+| 입장 뒤 403 · 5xx | 0 · 0 | 0 · 0 | 0 · 0 |
+| 순번 조회 요청 | 215,536 | 1,015,311 | 2,417,714 |
+| 예매 여정 요청 | 29,519 | 46,208 | 45,468 |
+
+- 사용자가 5배가 되는 동안 예매 여정 요청은 1.54배다 — 정원 1,000 이 예매 서버를 묶는다.
+- 배포 한 사이클(머지 → 브라우저) 19분 41초.
+- 5만에서 줄서기 1초 이내 비율은 73.1% 였다(SLO 는 성공률). 1초를 넘긴 13,641건은 queue 파드 넷 중 둘에서만 났다 — 요청 수는 같았고 그 둘이 받은 연결 수가 27배(427 대 11,631)였다. 원인은 확인하지 못했다.
+- 5만 위는 부하 발생기 쪽 계정 vCPU 한도로 재지 못했다.
+
+**대시보드** — `manifests/dashboards-stg/` 넷(흐름 · queue · booking · 데이터). 흐름 대시보드 0행이 SLO 판정이고, 시간 범위를 판의 오픈 −60초에서 +5분으로 맞추면 판정 값과 같다.
+
+**한계** — 하루 켰다 지우는 환경이라 운영을 거치지 않았다. 인프라 쪽 한계는 cgv-terraform README 에 있다.
 
 ---
 
@@ -287,7 +349,7 @@ operator  Strimzi                  CR 을 감시할 주체가 먼저 있어야 �
             queue = NewFailoverClient · booking = redis-sentinel 프로파일
   접속      sentinel  redis.data.svc:26379
   ```
-- **Kafka** ([Strimzi CR](manifests/kafka)) — queue ↔ booking 이벤트. 3브로커 RF3, 오퍼레이터가 CR을 실브로커로 만든다.
+- **Kafka** ([Strimzi CR](charts/data/cgv-kafka)) — queue ↔ booking 이벤트. 3브로커 RF3, 오퍼레이터가 CR을 실브로커로 만든다.
 
   ```
   admissions           입장
@@ -436,7 +498,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
 
 - **PodSecurity** — 위 [k3s 클러스터 아키텍처](#k3s-클러스터-아키텍처)의 ns별 표대로 집행한다. 호스트 접근이 필요한 node-exporter만 별도 ns로 격리해 나머지를 baseline 이상으로 유지한다.
 - **네트워크 격리** — 클러스터가 물리 NIC 없는 브리지에 있어 밖으로 나가는 길이 OPNsense 하나다. 들어오는 문 둘, 나가는 규칙 넷, 엣지 우회 차단은 위 [네트워크](#네트워크)에 있다.
-- **NetworkPolicy 24건 — 네 네임스페이스.** 21건은 이 저장소의 매니페스트([netpol-data](manifests/netpol-data/) · [netpol-app](manifests/netpol-app/) · [netpol-observability](manifests/netpol-observability/))가, 3건은 오퍼레이터·차트가 만든다
+- **NetworkPolicy 24건 — 네 네임스페이스.** 21건은 이 저장소의 차트([charts/platform/netpol](charts/platform/netpol/))가, 3건은 오퍼레이터·차트가 만든다
   ```
   app             10   기본 차단(ingress·egress) + 앱 3종의 인·아웃 + DNS + demo-reset
   data             5   MySQL 3306 · Redis 6379 (netpol-data 3) + Kafka 리스너·entity-operator (Strimzi 가 만든 2)
@@ -513,7 +575,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
   가려면      리스너에 authentication 을 켜고 KafkaUser CR 을 만들 userOperator 를 되살린다
   안 한 이유   발급할 자격증명이 0건이라 2026-08-15 에 내렸다
   ```
-  ([kafka-cluster.yaml](manifests/kafka/kafka-cluster.yaml) 주석)
+  ([cgv-kafka](charts/data/cgv-kafka) 주석)
 - **JDBC 평문** — `useSSL=false`가 앱의 URL에 리터럴로 있어 인프라에서 끌 수 없다. 바꾸려면 앱 이미지를 다시 구워야 한다.
 - **etcd 메트릭 포트(:2381) 무인증** — 인증 없이 읽힌다. 노드가 격리망으로 옮겨져 닿을 수 있는 범위는 `10.0.0.0/24` 안으로 줄었지만, 그 안에서는 여전히 열려 있다(노드 방화벽 미설정).
 - **공개 API에 인증·rate limit 없음** — 익명 접속을 받는 것이 이 서비스의 목적이라 접수 단계에서 거를 수 없다.
@@ -526,7 +588,7 @@ manifests/dashboards/  ─ ConfigMap(label: grafana_dashboard=1)
   ```
   대신 좌석 오염은 주기 초기화(CronJob)가 받고 대량 트래픽은 엣지가 앞에서 받는다. 이 결정은 **엣지를 우회할 수 없다는 전제** 위에 서고, 그 전제는 OPNsense의 출발지 제한이 지킨다.
 - **관리 UI에 다중 인증 없음** — Grafana·ArgoCD는 443에서 빠져 있고 WireGuard 터널로만 닿지만, 터널 안에서는 계정 비밀번호 하나가 방어선이다.
-- **stg 배포 대상 클러스터 없음** — dev는 CI가 만드는 불변 태그(`main-<파이프라인번호>-<커밋해시>`) + image-updater write-back으로 전환 완료. stg로 이미지를 올리는 경로는 만들어 검증했다(`publish-ecr` 수동 job이 같은 이미지를 커밋 해시 이름으로 ECR에 올린다). 그 이미지를 받을 클러스터가 아직 없다.
+- **stg 는 하루 환경이다** — EKS 를 켜서 부하 판을 돌리고 지운다. 이 절의 보안 항목은 dev(온프레미스) 기준이고, stg 의 한계(퍼블릭 서브넷 · 노드 단위 데이터 보안 그룹 · CI 의 장기 액세스 키)는 cgv-terraform README 에 있다.
 - **sealed-secrets 개인키 자동 백업 미구현** — 수동 반출 사본은 확보(2026-08-09). 재설치 절차에 반출 단계가 코드로 없어, 잊으면 Git의 봉인본 전체가 복호화 불가다.
 
 ---
@@ -557,27 +619,25 @@ cgv-infra/
 │   └── root-app.yaml       app-of-apps 루트 → argocd/ 인계
 ├── argocd/             GitOps 배선 (제어면 — "무엇을·어디에·누가")
 │   ├── projects/           bootstrap · argocd · apps · data · platform · secrets · cert  (AppProject = 울타리)
-│   ├── applicationsets/    반복 축(대상 또는 환경)이 있는 것 —
-│   │                       apps · data · manifests · platform  (대상 × 환경 matrix)
-│   │                       observability                        (대상만. 온프레미스 전용)
-│   │                       ★ 이 AppSet 이 만드는 Application 만 이름에 -dev 접미사가 붙는다
-│   └── applications/       반복 축이 없는 것 9개 (온프레미스 전용 또는 단일) —
-│                           argocd · argocd-image-updater · mysql
-│                           metallb · metallb-pool · dashboards · alerting
-│                           public-guard · reset-app
-├── charts/             배포 대상 — 값이 필요한 것
+│   ├── applicationsets/    반복 축(대상 × 환경)이 있는 것 — apps · data · manifests · platform · observability
+│   │                       만드는 Application 이름은 <대상>-<환경>.  대상 클러스터는 이름으로(in-cluster · cgv-stg)
+│   └── applications/       반복 축이 없는 것 18개 —
+│                           온프레미스 · 공통 11   argocd · argocd-image-updater · mysql · kafka-dev · netpol-dev
+│                                                 metallb · metallb-pool · dashboards · alerting · public-guard · reset-app
+│                           stg 7                 cluster-stg · prometheus-crds-stg · strimzi-stg · alb-controller-stg
+│                                                 kafka-stg · netpol-stg · dashboards-stg
+├── charts/             배포 대상 — 값이 필요한 것.  환경마다 달라지는 것은 전부 여기(값은 envs/)
 │   ├── apps/               cgv-app(공통 틀) + queue · booking · frontend(서비스 값)
-│   ├── data/               cgv-mysql · cgv-redis (bitnami 래퍼)
-│   ├── observability/      loki · mimir · tempo · grafana · alloy · minio · ksm · node-exporter
-│   └── platform/           metallb · traefik · argocd-image-updater
-├── manifests/          배포 대상 — 정적인 것 (12 디렉터리)
-│   ├── kafka/              Strimzi CR (클러스터·노드풀·토픽 4종)
+│   ├── data/               cgv-mysql · cgv-redis (bitnami 래퍼) · cgv-kafka (Strimzi CR) · strimzi
+│   ├── observability/      loki · mimir · tempo · grafana · alloy · minio · kube-state-metrics · node-exporter · cloudwatch-exporter(stg)
+│   └── platform/           metallb · traefik · argocd-image-updater · aws-load-balancer-controller(stg) · netpol
+├── manifests/          배포 대상 — 정적인 것 · 환경이 없는 것 (12 디렉터리)
+│   ├── namespaces/         네임스페이스 · PodSecurity 라벨
+│   ├── storage-ebs/        gp3 StorageClass (stg)
 │   ├── metallb-pool/       주소 풀 CR (10.0.0.240-250)
 │   ├── secrets/            SealedSecret 19종
-│   ├── dashboards/         Grafana 대시보드 ConfigMap 7장
-│   ├── netpol-data/        data 네임스페이스로 들어오는 접속 제한
-│   ├── netpol-app/         app 네임스페이스 인·아웃
-│   ├── netpol-observability/  observability 네임스페이스로 들어오는 접속 제한
+│   ├── dashboards/         Grafana 대시보드 ConfigMap 7장 (dev)
+│   ├── dashboards-stg/     Grafana 대시보드 ConfigMap 4장 (stg)
 │   ├── rbac/               읽기 전용 ClusterRole
 │   ├── alerting/           Grafana 알림 규칙·연락처
 │   ├── cert-issuers/       Let's Encrypt ClusterIssuer 둘
@@ -586,7 +646,7 @@ cgv-infra/
 │   └── reset-app/          데모 데이터 주기 초기화 CronJob
 ├── envs/               환경값 — 배포되지 않는다.  valueFiles 로만 참조된다
 │   ├── dev/                실물 (온프레미스 k3s)
-│   └── stg/                값 골격.  배포 배선 없음
+│   └── stg/                실물 (AWS EKS · 하루 환경)
 ├── schemas/            CI 가 쓰는 CRD 스키마 11종 (kubeconform)
 └── docs/               구조-기준 · 시크릿-계약 · 공개-차단절차
 ```
@@ -701,6 +761,7 @@ syncPolicy:
 | 14 | **인터넷 공개** — 도메인·DNS·DDNS · cert-manager 되살림 · Let's Encrypt 인증서 · 보안 헤더 · 관리 UI를 443에서 제외 · 초기화 API 차단 · CDN 프록시 · 공유기·OPNsense의 443 | ✅ 완료 (`https://ticket.subinhong.dev`) |
 | 15 | **공개 서비스 감시** — 공개 서비스 판 · 알림 · 데모 데이터 주기 초기화 CronJob · 호스트 하드웨어 판 | ✅ 완료 |
 | 16 | **공개 경로 부하 실측** — 엣지·공유기·OPNsense를 지나는 경로에서 판 13회. 스펙 재확정 | ✅ 완료 |
+| 17 | **stg — AWS EKS** — 같은 허브가 두 번째 클러스터를 배달 · ECR 승격 · ALB · RDS · ElastiCache · 부하 판 1만 · 2.5만 · 5만 · 부하가 노드 구조를 바꿈(booking 전용 노드) | ✅ 완료 (지우기 전) |
 
 **실행 위치는 노드로 한정되지 않는다.** `kubectl`·`helm`이 있고 클러스터에 닿으면 어디서든 된다 — 두 도구는 API 서버로 HTTPS 요청을 보낼 뿐이다.
 

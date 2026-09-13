@@ -20,7 +20,7 @@ k3s 쪽이 9단계인데 여기가 둘인 이유는 [../README.md](../README.md)
 1  terraform apply                               cgv-terraform/envs/stg
 2  aws eks update-kubeconfig --region ap-northeast-2 --name cgv-stg --alias cgv-stg
 3  HUB_CONTEXT=<허브 컨텍스트> ./register.sh        ← 이 폴더
-4  stg 를 켜는 커밋 → main                        아래 「stg 를 켜는 커밋」
+4  데이터 주소 대조 → 다르면 main                        아래 「데이터 주소 대조」
 5  허브가 배달한다 (sync-wave 순)
      -5 AppProject
      -4 네임스페이스 · gp3 StorageClass · prometheus CRD      cluster-stg · prometheus-crds-stg
@@ -33,16 +33,20 @@ k3s 쪽이 9단계인데 여기가 둘인 이유는 [../README.md](../README.md)
 6  ./secrets.sh                                  ← 이 폴더.  네임스페이스가 생길 때까지 기다린다
 ```
 
-### stg 를 켜는 커밋
+### 데이터 주소 대조
 
-stg 를 가리키는 선언(위 5의 Application 과 AppProject 의 stg 자리)은 대상 주소가 `https://STG_EKS_ENDPOINT` 로 적혀 있다. EKS API 주소는 클러스터를 만들어야 정해져서, 그날 이 자리를 바꾸고 main 에 넣는다. 주소가 없는 채로 main 에 있으면 허브에 대상 없는 Application 이 오류로 떠 있게 된다.
+stg 를 가리키는 선언은 대상을 주소가 아니라 **클러스터 이름**(`destination.name: cgv-stg`)으로 가리킨다. EKS API 주소는 클러스터를 만들어야 정해지지만 저장소에 적을 곳이 없다 — `register.sh` 가 그 이름으로 허브에 주소를 등록한다.
+
+클러스터를 새로 만들었을 때 저장소에서 확인할 값은 데이터 엔드포인트 둘이다. 다르면 고쳐 main 에 넣는다.
 
 ```bash
-EKS=$(kubectl config view --context cgv-stg --minify -o jsonpath='{.clusters[0].cluster.server}')
-grep -rl 'https://STG_EKS_ENDPOINT' argocd | xargs sed -i "s#https://STG_EKS_ENDPOINT#${EKS}#g"
-grep -rn STG_EKS_ENDPOINT argocd       # 아무것도 안 나와야 한다
-grep -rn PLACEHOLDER envs/stg          # 그날 값 — terraform output handoff · expected 로 채운다
+terraform -chdir=<cgv-terraform>/envs/stg output handoff     # mysql_host · redis_host
+grep -n 'MYSQL_HOST\|REDIS_HOST' envs/stg/booking.yaml envs/stg/queue.yaml
 ```
+
+Redis 는 전송 구간 암호화가 켜져 있어 주 엔드포인트가 `master.<이름>.<조각>.<리전>…` 형태다. 평문 시절의 `<이름>.<조각>.ng.0001.<리전>…` 을 넣으면 인증서 이름이 달라 TLS 검증에서 끊긴다.
+
+IRSA 역할 ARN · CoreDNS 주소 · 버킷 이름 · ALB 보안 그룹은 이름 · 대역만 정하면 결정되므로 이미 적혀 있다. `terraform output expected` 로 대조만 한다.
 
 wave 는 만드는 순서만 정한다. 허브에 Application 헬스 체크 설정이 없어서 앞 wave 의 sync 가 끝나기를 기다리지 않는다. 그래서 stg Application 에는 전부 `retry` 가 있다 — 앞의 것이 덜 선 채로 먼저 돌다 실패하면(ServiceMonitor 종류를 모른다 · 네임스페이스가 없다) 다시 시도한다. 자동 sync 는 실패한 커밋을 스스로 다시 시도하지 않는다.
 

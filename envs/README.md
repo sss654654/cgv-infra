@@ -5,7 +5,7 @@
 | env | 대상 클러스터 | 상태 |
 |---|---|---|
 | `dev/` | 온프레미스 k3s | **활성**. `apps`·`data` ApplicationSet의 환경 목록에 있고, `mysql` Application이 직접 읽는다 |
-| `stg/` | 미정 | 값 골격만. 환경 목록에 없어 배포되지 않는다 |
+| `stg/` | AWS EKS `cgv-stg` | **활성 (하루 환경).** `apps`·`observability` ApplicationSet 의 환경 목록에 있고, stg 전용 Application 7개(`*-stg`)가 같은 폴더를 읽는다 |
 
 `prd/`는 두지 않는다. 대상 클러스터가 생기는 시점에 신설한다 —
 아무도 참조하지 않는 폴더를 미리 만들면 "있는데 안 도는 것"이 하나 늘 뿐이다.
@@ -34,18 +34,23 @@
 
 ## 환경을 하나 더 켜려면
 
-`apps` · `data` · `manifests` · `platform` ApplicationSet은 (대상 × 환경) matrix다.
-**환경 목록에 한 줄을 더하면 그 환경의 Application이 전부 생긴다** — 파일을 새로 쓰지 않는다.
+stg 를 켤 때 두 갈래로 했다.
+
+**앱 · 관측 — 환경 목록에 한 줄.** `apps` · `observability` ApplicationSet 은 (대상 × 환경) matrix 라, 환경 목록에 한 줄을 더하면 그 환경의 Application 이 생긴다(이름 `<대상>-<환경>`).
 
 ```yaml
 # argocd/applicationsets/apps.yaml 의 환경 축
-- { env: dev, server: "https://kubernetes.default.svc", registry: "192.168.0.167:5050" }
-- { env: stg, server: "https://<새 클러스터>",           registry: "<새 레지스트리>" }   ← 이 한 줄
+- { env: dev, cluster: in-cluster, registry: "192.168.0.167:5050", allowTags: "^main-[0-9]+-[0-9a-f]+$" }
+- { env: stg, cluster: cgv-stg,    registry: "<계정>.dkr.ecr.ap-northeast-2.amazonaws.com", allowTags: "^[0-9a-f]{8}$" }
 ```
 
-그 전에 `stg/`의 값 파일이 실물이어야 한다. 지금은 `image.tag: stg` 한 줄뿐인 골격이고,
-`resources`가 없어 `charts/apps/cgv-app/values.schema.json`이 렌더 단계에서 거부한다 —
-ImagePullBackOff까지 가지 않고 ArgoCD가 ComparisonError로 멈춘다. 그 실패가 안전망이다.
+- `cluster` 는 주소가 아니라 허브에 등록한 클러스터 이름이다. 클러스터를 다시 만들어도 이 값이 안 바뀐다.
+- `registry` · `allowTags` 를 값 파일이 아니라 여기 두는 이유 — image-updater 가 쓰는 값은 ApplicationSet 이 애노테이션을 만들 때 정해지고, 그 시점에 값 파일은 아직 안 읽힌다.
+- 두 환경의 태그 형식이 달라 한 환경의 태그가 다른 환경으로 새어 들어갈 길이 구조적으로 없다.
+
+**바닥 — 환경마다 단일 Application.** 네임스페이스 · StorageClass · CRD · 오퍼레이터 · ALB Controller · Kafka · NetworkPolicy · 대시보드는 환경마다 대상이 달라(dev 에 ALB Controller 가 없고 stg 에 MetalLB 가 없다) 단일 Application(`<이름>-<환경>`)으로 둔다. stg 는 7개다.
+
+값 파일이 비어 있으면 `charts/apps/cgv-app/values.schema.json` 이 렌더 단계에서 거부한다(`resources` 필수) — ImagePullBackOff 까지 가지 않고 ArgoCD 가 ComparisonError 로 멈춘다. 그 실패가 안전망이다.
 
 `mysql`은 환경 축이 없다. 다른 환경에서는 관리형 데이터베이스를 쓸 예정이라 이 차트를 안 올린다.
 그래서 `stg/mysql.yaml`이 없는 것은 결함이 아니라 의도다.
