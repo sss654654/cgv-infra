@@ -7,7 +7,7 @@
 #   3 동작   dev 값 일부가 공개 데모용이라 부하 스펙과 다르다(MAX_SESSIONS·PROCESSING_BATCH_SIZE)
 
 image:
-  tag: 565d82a6 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
+  tag: f1e43cdd # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
 # 노드에 이미지를 받아오는 자격. stg 는 ECR 이고 노드 역할로 인증하므로 필요 없다.
 # 빈 배열로 덮지 않으면 apps/queue 의 gitlab-registry 가 그대로 내려온다.
 imagePullSecrets: []
