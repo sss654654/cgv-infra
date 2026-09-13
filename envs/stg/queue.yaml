@@ -7,7 +7,7 @@
 #   3 동작   dev 값 일부가 공개 데모용이라 부하 스펙과 다르다(MAX_SESSIONS·PROCESSING_BATCH_SIZE)
 
 image:
-  tag: 670aac42 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
+  tag: 565d82a6 # 켜는 날 ECR 에 올린 커밋 해시(cgv-onprem main 186df8d7, 2026-09-12). 그 뒤로는 image-updater 가 덮는다
 # 노드에 이미지를 받아오는 자격. stg 는 ECR 이고 노드 역할로 인증하므로 필요 없다.
 # 빈 배열로 덮지 않으면 apps/queue 의 gitlab-registry 가 그대로 내려온다.
 imagePullSecrets: []
@@ -67,7 +67,7 @@ replicaCount: 4
 #   Kafka 브로커와 노드를 같이 쓴다 — 이 파드는 버스트가 없어(Go, 1만 0.2코어 · 5만 예상 1.0코어)
 #     브로커 옆에 둘 수 있고, 브로커는 request=limit(Guaranteed, envs/stg/kafka.yaml)로 몫을 잠근다.
 #   10만은 이 노드그룹의 노드 · 파드 수로 받는다(HPA 는 요청 수 기준으로 다시 켠다).
-nodeSelector: { workload: app }
+nodeSelector: {workload: app}
 # 파드를 노드와 AZ 양쪽으로 흩는다. AZ 하나가 죽어도 남은 AZ 에 파드가 있게.
 #   스케줄러의 기본 zone 분산은 파드가 분산 규칙을 하나라도 적으면 붙지 않아서 명시한다.
 #   값 병합은 목록을 통째로 덮으므로 apps/queue 의 hostname 규칙도 다시 적는다.
