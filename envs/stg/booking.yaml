@@ -29,6 +29,16 @@ strategy:
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
+# ★ booking 전용 노드에만 선다 (2026-09-13). 노드그룹은 cgv-terraform modules/eks 의 booking(AZ 마다 1대).
+#   1만 명 판에서 이 파드가 다른 파드와 노드를 나눠 쓰는 것이 오픈 순간 지연의 공통 원인이었다.
+#   새로 뜬 JVM 은 오픈 순간 컴파일에 코어 2.4개 + 처리 1개를 써 4 vCPU 노드를 채우고(런큐 대기 15
+#   스레드초/초 · CPU 압박 66%), 같은 노드의 Kafka 브로커가 밀려 발행 p99 3.6초 · 다른 노드의 queue 까지
+#   줄서기 2.5초가 됐다. 둘이 한 노드에 앉은 판(06:42 · 07:08)은 전파 SLO 78–90%, 하나만 있고 데워진
+#   판(05:33)은 100%. 버스트하는 파드는 이것 하나라(queue 는 Go, 0.2코어) 이 파드만 노드를 혼자 쓴다.
+#   노드에 taint 가 있어 toleration 이 같이 있어야 선다 — nodeSelector 만으로는 다른 파드가 그 노드에
+#   재시작 때 옮겨 앉는 것을 못 막는다.
+nodeSelector: { workload: booking }
+tolerations: [{ key: workload, operator: Equal, value: booking, effect: NoSchedule }]
 # 노드와 AZ 양쪽으로 흩는다(envs/stg/queue.yaml 과 같은 이유). 목록을 통째로 덮으므로 hostname 규칙도 다시 적는다.
 # ★ 노드 분산은 required 이고 같은 ReplicaSet 끼리만 센다 (2026-09-13).
 #   ScheduleAnyway 였을 때 롤링 업데이트에서 새 파드 둘이 한 노드에 앉았다 — 새 파드가 뜰 때 옛 파드가
@@ -37,8 +47,8 @@ podDisruptionBudget:
 #   matchLabelKeys 로 pod-template-hash 를 셀렉터에 더하면 같은 ReplicaSet 의 파드끼리만 세므로
 #     새 파드 둘째는 첫째와 다른 노드로 간다. DoNotSchedule 이라 다른 노드가 없으면 Pending 이다 —
 #     한 노드에 둘을 두느니 PDB(minAvailable 1)로 한 대를 지키며 기다리는 쪽을 택한다.
-#   AZ 는 그대로 soft 다. queue 의 anti-affinity 로 이 파드가 앉을 수 있는 노드가 2c 둘뿐이라
-#     required 로 두면 늘 Pending 이 된다(envs/stg/queue.yaml 의 "F2 의 대가").
+#   AZ 는 그대로 soft 다. 전용 노드그룹이 AZ 별로 한 대씩(2a · 2c)이라 노드 분산이 곧 AZ 분산이고,
+#     노드 하나가 빠진 동안 required 면 Pending 이 된다.
 topologySpreadConstraints:
 - maxSkew: 1
   topologyKey: kubernetes.io/hostname
@@ -78,8 +88,9 @@ resources:
   #     이 값은 이 파드가 노드를 혼자 쓸 때만 정당하다. 처음에는 "같은 노드의 queue 는 request 로
   #     자기 몫이 보장된다" 고 적었는데 틀렸다 — request 는 CPU 시간의 비율을 보장하지 응답 지연을
   #     보장하지 않는다. 2026-09-13 판에서 이 파드의 JIT 버스트가 노드를 채우자 같은 노드의 queue 만
-  #     Redis 왕복이 0.5초를 넘겼다(다른 노드의 queue 셋은 0건). 그래서 queue 가 이 파드와 노드를
-  #     같이 쓰지 않게 했다(envs/stg/queue.yaml 의 affinity).
+  #     Redis 왕복이 0.5초를 넘겼고(다른 노드의 queue 셋은 0건), 그다음 판에서는 같은 노드의 Kafka
+  #     브로커가 밀렸다. 그래서 이 파드는 전용 노드그룹(위 nodeSelector)에서 노드를 혼자 쓴다 —
+  #     이 limit 의 전제가 그 노드그룹이다.
   #   ★ 이 값을 바꾸면 JVM 이 보는 코어 수가 2 에서 4 로 바뀐다. 컨테이너에서 JVM 은 limit 을
   #     읽어 availableProcessors 를 정하고, 그 수로 Tomcat 기본 스레드 · ForkJoinPool ·
   #     G1 의 병렬 스레드가 정해진다. dev(2 코어)와 조건이 달라지므로 dev 부하 판의

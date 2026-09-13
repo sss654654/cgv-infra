@@ -18,7 +18,10 @@
 #   관측 노드에는 taint(workload=observability:NoSchedule)가 있어서 toleration 이 없으면 거기만 빠지고,
 #   그러면 Mimir · Loki · Tempo 자신의 로그가 안 모인다. nodeSelector 는 주지 않는다 — 전 노드다.
 controller:
-  tolerations: [{ key: workload, operator: Equal, value: observability, effect: NoSchedule }]
+  # workload taint 전부를 견딘다(Exists). 관측 노드(observability)뿐 아니라 booking 전용 노드(booking,
+  #   2026-09-13)에도 이 DaemonSet 이 서야 그 노드의 파드 로그가 모인다. 값을 하나씩 적으면 노드그룹이
+  #   늘 때마다 여기도 고쳐야 하고, 빠뜨리면 그 노드만 조용히 로그가 없다.
+  tolerations: [{ key: workload, operator: Exists, effect: NoSchedule }]
 
 alloy:
   configMap:

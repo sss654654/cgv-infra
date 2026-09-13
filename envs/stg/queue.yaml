@@ -54,26 +54,20 @@ resources:
 autoscaling:
   enabled: false
 replicaCount: 4
-# ★ booking 과 같은 노드에 두지 않는다 (2026-09-13).
+# ★ 앱 노드그룹(workload=app)에만 선다 (2026-09-13). booking 은 전용 노드그룹으로 갔다.
 #   1만 명 판 실측: queue 파드 넷 중 booking 과 노드를 같이 쓴 하나만 Redis 명령 0.5초 초과 3,076건 ·
 #     순번 조회 1초 초과 317건 · enter 1초 초과 242건이었고, 나머지 셋은 전부 0 이었다.
 #   그 노드는 오픈 순간 booking 의 JIT 컴파일이 코어 1.1–2.2개를 쓰면서 4 vCPU 가 찼다 —
 #     런큐 대기 4.49 스레드초/초 · CPU 압박(PSI some) 34%. queue 의 CPU 스로틀은 0 이었다.
 #     한도에 닿은 것이 아니라 OS 스케줄러에서 차례를 못 받은 것이다. request 가 보장하는 것은
 #     CPU 시간의 비율이지 응답 지연이 아니다 — 런큐가 차면 몫이 있어도 기다린다.
-#   required 로 둔다. preferred 면 자리가 모자랄 때 조용히 같은 노드에 앉고 이 판의 원인이 돌아온다.
-#     스케줄러는 이 규칙을 대칭으로 적용하므로 booking 쪽에 적지 않아도 booking 의 새 파드가
-#     queue 가 있는 노드에 못 앉는다.
-#   앱 노드 넷(2c · 2c · 2a · 2b): booking 둘이 노드 둘, queue 넷이 나머지 둘에 2+2 로 앉는다.
-#     booking 을 세 대로 늘리면 queue 자리가 하나로 줄어 이 규칙과 부딪힌다 — 그때는 노드를 더하거나
-#     역할별 노드그룹(booking 용 · queue 용)으로 나눈다. 10만은 그쪽이다(booking 은 CPU, queue 는 연결 수).
-affinity:
-  podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-    - topologyKey: kubernetes.io/hostname
-      labelSelector:
-        matchLabels:
-          app.kubernetes.io/name: booking
+#   처음에는 booking 에 대한 podAntiAffinity 로 떼어 놓았는데, 그러면 booking 이 앉을 노드가 2c 둘뿐이라
+#     단일 AZ 가 되고 같은 노드의 Kafka 브로커는 여전히 booking 과 노드를 나눴다(발행 p99 3.6초).
+#     그래서 booking 쪽을 전용 노드그룹(taint)으로 빼고, 이 파드는 나머지 앱 노드에 라벨로 고정한다.
+#   Kafka 브로커와 노드를 같이 쓴다 — 이 파드는 버스트가 없어(Go, 1만 0.2코어 · 5만 예상 1.0코어)
+#     브로커 옆에 둘 수 있고, 브로커는 request=limit(Guaranteed, envs/stg/kafka.yaml)로 몫을 잠근다.
+#   10만은 이 노드그룹의 노드 · 파드 수로 받는다(HPA 는 요청 수 기준으로 다시 켠다).
+nodeSelector: { workload: app }
 # 파드를 노드와 AZ 양쪽으로 흩는다. AZ 하나가 죽어도 남은 AZ 에 파드가 있게.
 #   스케줄러의 기본 zone 분산은 파드가 분산 규칙을 하나라도 적으면 붙지 않아서 명시한다.
 #   값 병합은 목록을 통째로 덮으므로 apps/queue 의 hostname 규칙도 다시 적는다.

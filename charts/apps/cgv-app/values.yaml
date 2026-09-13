@@ -105,6 +105,7 @@ volumeMounts: []
 
 # 배치·가용성. 인스턴스가 지정.
 nodeSelector: {}                    # 데이터 싱글턴 핀 (예: {cgv.io/data: obj})
+tolerations: []                     # taint 가 있는 전용 노드에 서는 앱만 지정 (예: stg booking → workload=booking)
 affinity: {}
 topologySpreadConstraints: []       # replica를 노드에 분산(maxSkew/hostname)
 priorityClassName: ""
