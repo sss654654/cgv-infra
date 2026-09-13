@@ -1,4 +1,4 @@
-# tempo dev 환경값 — 오브젝트 저장소 접속과 WAL 볼륨.
+# tempo dev 환경값 — 자원 · live traces 한도 · 오브젝트 저장소 접속 · WAL 볼륨.
 #
 # 이 환경의 오브젝트 저장소는 클러스터 안의 MinIO 다. 평문 http 라 insecure 를 켜고,
 #   경로 방식 주소(버킷을 호스트가 아니라 경로에 두는 형태)를 쓴다 —
@@ -6,6 +6,23 @@
 # 자격은 SealedSecret 이 배달하고 config.expand-env 가 ${} 를 치환한다.
 
 tempo:
+  # 자원 — 이 파드는 WAL 정적 PV 가 있는 노드 하나에만 뜬다(아래 nodeSelector · PV nodeAffinity).
+  #   그 노드의 파드 몫(allocatable)은 약 4.96GiB 이고 다른 파드가 대부분을 먼저 잡고 있어,
+  #   request 가 곧 이 파드가 설 수 있느냐를 정한다.
+  # memory limit 512Mi 에서 110회 재시작했다. 종료 코드는 137이지만 OOMKilled 가 아니다 —
+  #   이벤트는 Killing(사유: failed liveness probe)이고 OOMKilling 은 0건. /ready 가 답하지 못해 kubelet 이 죽였다.
+  #   재시작할 때마다 WAL replay 로 힙이 부풀고 같은 자리에 다시 닿는 고리가 됐다.
+  # request 256Mi · limit 3Gi 는 자원이 공통 값이던 동안 dev 가 쓰던 값이다.
+  #   2026-09-12 공통 값이 stg 실측(request 2Gi)으로 바뀌자 이 노드에 설 자리가 없어 35시간 Pending 이었다.
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 3Gi }
+  # live traces 한도. 트레이스당 약 31KiB × 50,000 = 약 1.5GiB 로 limit 3Gi 안쪽이다.
+  #   dev 는 공개 데모 트래픽을 받고, 대규모 부하 판은 stg 에서 돈다.
+  overrides:
+    defaults:
+      ingestion:
+        max_traces_per_user: 50000
   extraEnvFrom:
     - secretRef:
         name: tempo-s3-credentials     # 키명 S3_ACCESS_KEY · S3_SECRET_KEY
